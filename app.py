@@ -27,7 +27,6 @@ MAX_CONTENT_LENGTH = 10 * 1024 * 1024 * 1024  # 10 GB
 ALLOWED_ORIGINS = "*"
 DEFAULT_SETTINGS = {
     "access_code": os.getenv("DROP_AIR_CODE", "").strip(),
-    "cable_access_code": os.getenv("DROP_AIR_CABLE_CODE", "").strip(),
     "auto_cleanup_minutes": int(os.getenv("DROP_AIR_AUTO_CLEANUP_MINUTES", "10") or "10"),
     "auto_cleanup_days": int(os.getenv("DROP_AIR_AUTO_CLEANUP_DAYS", "0") or "0"),
     "auto_cleanup_max_files": int(os.getenv("DROP_AIR_AUTO_CLEANUP_MAX_FILES", "0") or "0"),
@@ -52,7 +51,6 @@ def _coerce_non_negative_int(value, fallback: int) -> int:
 def _normalize_settings(raw: dict) -> dict:
     return {
         "access_code": str(raw.get("access_code", DEFAULT_SETTINGS["access_code"])).strip(),
-        "cable_access_code": str(raw.get("cable_access_code", DEFAULT_SETTINGS["cable_access_code"])).strip(),
         "auto_cleanup_minutes": _coerce_non_negative_int(
             raw.get("auto_cleanup_minutes", DEFAULT_SETTINGS["auto_cleanup_minutes"]),
             DEFAULT_SETTINGS["auto_cleanup_minutes"],
@@ -120,14 +118,6 @@ def check_code() -> bool:
         return True
     supplied = request.args.get("code", "") or request.headers.get("X-Drop-Air-Code", "")
     return supplied == access_code
-
-
-def check_cable_code() -> bool:
-    cable_code = get_settings()["cable_access_code"]
-    if not cable_code:
-        return False
-    supplied = request.args.get("code", "") or request.headers.get("X-Drop-Air-Cable-Code", "")
-    return supplied == cable_code
 
 
 def list_files():
@@ -225,7 +215,7 @@ def register_shutdown_cleanup() -> None:
 @app.after_request
 def add_headers(resp):
     resp.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGINS
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Drop-Air-Code, X-Drop-Air-Cable-Code"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Drop-Air-Code"
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     return resp
 
@@ -245,21 +235,6 @@ def index():
     return render_template(index_tpl, files=list_files(), access_code=settings["access_code"], settings=settings)
 
 
-@app.route("/cable", methods=["GET"])
-def cable():
-    settings = get_settings()
-    cable_code = settings["cable_access_code"]
-    if not cable_code:
-        return render_template("cable_gate.html", error="Cable mode is not configured yet."), 503
-    if cable_code == settings["access_code"]:
-        return render_template("cable_gate.html", error="Cable mode code must be different from access code."), 503
-    if request.args.get("code", "") == "":
-        return render_template("cable_gate.html")
-    if not check_cable_code():
-        return render_template("cable_gate.html", error="Wrong cable code"), 401
-    return render_template("cable.html", cable_access_code=cable_code, access_code=settings["access_code"])
-
-
 @app.route("/enter", methods=["POST"])
 def enter():
     settings = get_settings()
@@ -273,18 +248,6 @@ def enter():
         return redirect(url_for("index", theme=theme) if theme else url_for("index"))
     gate_tpl = "saved/code_gate_v1.html" if theme == "classic" else "code_gate.html"
     return render_template(gate_tpl, error="Wrong code"), 401
-
-
-@app.route("/cable/enter", methods=["POST"])
-def enter_cable():
-    settings = get_settings()
-    cable_code = settings["cable_access_code"]
-    if not cable_code:
-        return render_template("cable_gate.html", error="Cable mode is not configured yet."), 503
-    code = request.form.get("code", "").strip()
-    if code == cable_code:
-        return redirect(url_for("cable", code=code))
-    return render_template("cable_gate.html", error="Wrong cable code"), 401
 
 
 @app.route("/api/files", methods=["GET", "OPTIONS"])
@@ -347,8 +310,6 @@ def api_settings():
 
     if "access_code" in payload:
         updates["access_code"] = str(payload.get("access_code", "")).strip()
-    if "cable_access_code" in payload:
-        updates["cable_access_code"] = str(payload.get("cable_access_code", "")).strip()
 
     int_fields = ("auto_cleanup_minutes", "auto_cleanup_days", "auto_cleanup_max_files")
     for field in int_fields:
@@ -364,8 +325,6 @@ def api_settings():
 
     merged = dict(current)
     merged.update(updates)
-    if merged["access_code"] and merged["access_code"] == merged["cable_access_code"]:
-        return jsonify({"error": "cable_access_code must be different from access_code"}), 400
     saved = set_settings(_normalize_settings(merged))
     cleanup_uploads()
     return jsonify({"ok": True, "settings": saved})
