@@ -757,6 +757,17 @@
       statusEl.className = isErr ? "error" : "";
     }
 
+    function formatEta(seconds) {
+      if (!Number.isFinite(seconds) || seconds <= 0) return "<1s";
+      const total = Math.ceil(seconds);
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const s = total % 60;
+      if (h > 0) return `${h}h ${m}m`;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
+    }
+
     function fillSettingsForm(data) {
       setAccessCode.value = data.access_code || "";
       setCleanupMinutes.value = String(data.auto_cleanup_minutes ?? 10);
@@ -886,27 +897,57 @@
       });
     }
 
-    async function uploadFile(file) {
-      const fd = new FormData();
-      fd.append("file", file);
-      setStatus(`Uploading ${file.name}...`);
-      const r = await fetch(`/api/upload${codeQuery()}`, {
-        method: "POST",
-        headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {},
-        body: fd
+    async function uploadFile(file, ctx) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", `/api/upload${codeQuery()}`);
+        if (accessCode) xhr.setRequestHeader("X-Drop-Air-Code", accessCode);
+
+        xhr.upload.onprogress = ev => {
+          const loaded = ev.lengthComputable ? ev.loaded : 0;
+          const sentBytes = ctx.completedBytes + loaded;
+          const elapsed = (performance.now() - ctx.startedAt) / 1000;
+          const speed = elapsed > 0 ? sentBytes / elapsed : 0;
+          const remaining = Math.max(ctx.totalBytes - sentBytes, 0);
+          const eta = speed > 0 ? formatEta(remaining / speed) : "...";
+          const pct = ev.lengthComputable && ev.total > 0
+            ? Math.floor((ev.loaded / ev.total) * 100)
+            : 0;
+          setStatus(`Uploading ${file.name} (${ctx.index + 1}/${ctx.totalFiles}) ${pct}% - ETA ${eta}`);
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
+            return;
+          }
+          reject(new Error(xhr.responseText || `Upload failed for ${file.name}`));
+        };
+        xhr.onerror = () => reject(new Error(`Upload failed for ${file.name}`));
+
+        const fd = new FormData();
+        fd.append("file", file);
+        setStatus(`Uploading ${file.name} (${ctx.index + 1}/${ctx.totalFiles}) - ETA ...`);
+        xhr.send(fd);
       });
-      if (!r.ok) {
-        const t = await r.text();
-        throw new Error(t || `Upload failed for ${file.name}`);
-      }
     }
 
     async function uploadMany(files) {
       if (!files.length) return;
       pickBtn.disabled = true;
+      const totalBytes = files.reduce((sum, f) => sum + (f.size || 0), 0);
+      const startedAt = performance.now();
+      let completedBytes = 0;
       try {
         for (let i = 0; i < files.length; i++) {
-          await uploadFile(files[i]);
+          await uploadFile(files[i], {
+            startedAt,
+            totalBytes,
+            completedBytes,
+            index: i,
+            totalFiles: files.length
+          });
+          completedBytes += files[i].size || 0;
           setStatus(`Uploaded ${i + 1}/${files.length}`);
         }
         await refreshFiles();
