@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Drop Air</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --ink: #101828;
+      --muted: #475467;
+      --line: #d0d5dd;
+      --primary: #0f766e;
+      --primary-2: #14b8a6;
+      --danger: #b42318;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Space Grotesk", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 10% 10%, #dbeafe 0, transparent 35%),
+        radial-gradient(circle at 90% 20%, #ccfbf1 0, transparent 40%),
+        var(--bg);
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 24px 16px 40px;
+      animation: rise .4s ease-out;
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 2rem;
+      letter-spacing: -.02em;
+    }
+
+    .sub {
+      margin: 0 0 20px;
+      color: var(--muted);
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+      box-shadow: 0 16px 32px rgba(16, 24, 40, 0.06);
+      margin-bottom: 16px;
+    }
+
+    .dropzone {
+      border: 2px dashed #99f6e4;
+      background: linear-gradient(180deg, #f0fdfa, #ffffff);
+      border-radius: 14px;
+      padding: 26px;
+      text-align: center;
+      transition: .2s ease;
+    }
+
+    .dropzone.active {
+      border-color: var(--primary);
+      transform: scale(1.01);
+      box-shadow: inset 0 0 0 1px var(--primary);
+    }
+
+    .btn {
+      cursor: pointer;
+      border: none;
+      border-radius: 10px;
+      background: linear-gradient(90deg, var(--primary), var(--primary-2));
+      color: white;
+      font-weight: 700;
+      padding: 10px 14px;
+      font-family: inherit;
+    }
+
+    .btn:disabled {
+      opacity: .6;
+      cursor: not-allowed;
+    }
+
+    #status {
+      min-height: 22px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: .95rem;
+    }
+
+    #status.error { color: var(--danger); }
+
+    .list {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .list th, .list td {
+      text-align: left;
+      border-bottom: 1px solid #eaecf0;
+      padding: 10px 6px;
+      font-size: .96rem;
+    }
+
+    .list th { color: var(--muted); font-weight: 500; }
+
+    .list a {
+      color: #065f46;
+      text-decoration: none;
+      font-weight: 700;
+    }
+
+    .list a:hover { text-decoration: underline; }
+
+    .meta {
+      color: var(--muted);
+      font-size: .9rem;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>Drop Air</h1>
+    <p class="sub">Fast local transfer between laptop and iPhone/iPad</p>
+
+    <section class="card">
+      <div id="dropzone" class="dropzone">
+        <p><strong>Drop files here</strong> or pick from device</p>
+        <input id="picker" type="file" multiple hidden />
+        <button id="pickBtn" class="btn" type="button">Choose Files</button>
+        <div id="status"></div>
+      </div>
+      <p class="meta">Keep this tab open while uploading. Same Wi-Fi required.</p>
+    </section>
+
+    <section class="card">
+      <h2 style="margin:0 0 10px;">Files</h2>
+      <table class="list">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Size</th>
+            <th>Modified</th>
+          </tr>
+        </thead>
+        <tbody id="filesBody">
+          {% for f in files %}
+          <tr>
+            <td><a href="{{ f.url }}{% if access_code %}?code={{ access_code }}{% endif %}">{{ f.name }}</a></td>
+            <td>{{ f.size }}</td>
+            <td>{{ f.modified }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <script>
+    const accessCode = "{{ access_code }}";
+    const codeQuery = accessCode ? `?code=${encodeURIComponent(accessCode)}` : "";
+    const picker = document.getElementById("picker");
+    const pickBtn = document.getElementById("pickBtn");
+    const dropzone = document.getElementById("dropzone");
+    const statusEl = document.getElementById("status");
+    const filesBody = document.getElementById("filesBody");
+
+    function human(n) {
+      if (n < 1024) return n + " B";
+      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+      if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + " MB";
+      return (n / (1024 * 1024 * 1024)).toFixed(1) + " GB";
+    }
+
+    function stamp(unix) {
+      const d = new Date(unix * 1000);
+      return d.toLocaleString();
+    }
+
+    function setStatus(msg, isErr = false) {
+      statusEl.textContent = msg;
+      statusEl.className = isErr ? "error" : "";
+    }
+
+    async function refreshFiles() {
+      const r = await fetch(`/api/files${codeQuery}`, {
+        headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {}
+      });
+      if (!r.ok) return;
+      const data = await r.json();
+      filesBody.innerHTML = "";
+      for (const f of data.files) {
+        const tr = document.createElement("tr");
+        const link = `${f.url}${codeQuery}`;
+        tr.innerHTML = `
+          <td><a href="${link}">${f.name}</a></td>
+          <td>${human(f.size)}</td>
+          <td>${stamp(f.modified)}</td>
+        `;
+        filesBody.appendChild(tr);
+      }
+    }
+
+    async function uploadFile(file) {
+      const fd = new FormData();
+      fd.append("file", file);
+      setStatus(`Uploading ${file.name}...`);
+      const r = await fetch(`/api/upload${codeQuery}`, {
+        method: "POST",
+        headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {},
+        body: fd
+      });
+      if (!r.ok) {
+        const t = await r.text();
+        throw new Error(t || `Upload failed for ${file.name}`);
+      }
+    }
+
+    async function uploadMany(files) {
+      if (!files.length) return;
+      pickBtn.disabled = true;
+      try {
+        for (let i = 0; i < files.length; i++) {
+          await uploadFile(files[i]);
+          setStatus(`Uploaded ${i + 1}/${files.length}`);
+        }
+        await refreshFiles();
+        setStatus("All uploads finished.");
+      } catch (e) {
+        setStatus(e.message, true);
+      } finally {
+        pickBtn.disabled = false;
+      }
+    }
+
+    pickBtn.addEventListener("click", () => picker.click());
+    picker.addEventListener("change", () => uploadMany([...picker.files]));
+
+    ["dragenter", "dragover"].forEach(evt => {
+      dropzone.addEventListener(evt, e => {
+        e.preventDefault();
+        dropzone.classList.add("active");
+      });
+    });
+    ["dragleave", "drop"].forEach(evt => {
+      dropzone.addEventListener(evt, e => {
+        e.preventDefault();
+        dropzone.classList.remove("active");
+      });
+    });
+    dropzone.addEventListener("drop", e => {
+      const files = [...e.dataTransfer.files];
+      uploadMany(files);
+    });
+
+    refreshFiles();
+    setInterval(refreshFiles, 3000);
+  </script>
+</body>
+</html>
