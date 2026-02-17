@@ -14,13 +14,18 @@ function Get-InnoCompilerPath {
     return (Resolve-Path $env:ISCC_PATH).Path
   }
 
+  $pf86 = ${env:ProgramFiles(x86)}
+  $pf = $env:ProgramFiles
+
   $candidates = @(
-    "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe",
-    "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+    (Join-Path $pf86 "Inno Setup 6\ISCC.exe"),
+    (Join-Path $pf "Inno Setup 6\ISCC.exe"),
+    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+    "C:\Program Files\Inno Setup 6\ISCC.exe"
   )
 
   foreach ($candidate in $candidates) {
-    if (Test-Path $candidate) {
+    if ($candidate -and (Test-Path $candidate)) {
       return (Resolve-Path $candidate).Path
     }
   }
