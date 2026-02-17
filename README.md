@@ -1,4 +1,4 @@
-# Drop Air
+﻿# Drop Air
 
 Fast local file sharing from your laptop to iPhone/iPad (and back) using a browser on the same Wi-Fi network.
 
@@ -66,6 +66,25 @@ Output:
 
 - `dist\DropAir.exe`
 
+## Build Windows Installer EXE (Inno Setup)
+
+1. Install Inno Setup 6 (compiler `ISCC.exe`).
+2. Build installer:
+
+```powershell
+.\build_installer.ps1
+```
+
+Output:
+
+- `dist\DropAirSetup.exe`
+
+You can customize metadata/version:
+
+```powershell
+.\build_installer.ps1 -AppVersion "1.0.0" -Publisher "Drop Air"
+```
+
 ### Icon styles
 
 Create icon before build:
@@ -79,9 +98,9 @@ Available styles:
 - `neon`
 - `minimal`
 - `retro`
-
 ## Notes
 
 - Files are stored in `uploads/`.
 - This is LAN-only by default.
 - If Windows Firewall asks, allow for Private networks.
+

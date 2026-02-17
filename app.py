@@ -1,5 +1,6 @@
 import atexit
 import json
+import logging
 import os
 import signal
 import socket
@@ -36,6 +37,18 @@ SETTINGS = {}
 
 app = Flask(__name__, template_folder=str(TEMPLATE_DIR))
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
+
+
+class WerkzeugRequestFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        if '"GET /api/files HTTP/1.1" 200' in message:
+            return False
+        return True
+
+
+def configure_request_logging() -> None:
+    logging.getLogger("werkzeug").addFilter(WerkzeugRequestFilter())
 
 
 def _coerce_non_negative_int(value, fallback: int) -> int:
@@ -378,4 +391,5 @@ if __name__ == "__main__":
     register_shutdown_cleanup()
     cleanup_uploads()
     print_qr(url)
+    configure_request_logging()
     app.run(host=host, port=port, debug=False)
