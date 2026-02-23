@@ -20,9 +20,28 @@ else:
     APP_DIR = Path(__file__).resolve().parent
     TEMPLATE_DIR = APP_DIR / "templates"
 
-UPLOAD_DIR = APP_DIR / "uploads"
-UPLOAD_DIR.mkdir(exist_ok=True)
-SETTINGS_FILE = APP_DIR / "settings.json"
+def get_data_dir() -> Path:
+    # Use a per-user writable folder for runtime data so packaged installs work from Program Files.
+    env_override = (os.getenv("DROP_AIR_DATA_DIR") or "").strip()
+    if env_override:
+        return Path(env_override).expanduser()
+
+    if os.name == "nt":
+        local_appdata = (os.getenv("LOCALAPPDATA") or "").strip()
+        if local_appdata:
+            return Path(local_appdata) / "DropAir"
+        return Path.home() / "AppData" / "Local" / "DropAir"
+
+    xdg_data_home = (os.getenv("XDG_DATA_HOME") or "").strip()
+    if xdg_data_home:
+        return Path(xdg_data_home) / "drop-air"
+    return Path.home() / ".local" / "share" / "drop-air"
+
+
+DATA_DIR = get_data_dir()
+UPLOAD_DIR = DATA_DIR / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+SETTINGS_FILE = DATA_DIR / "settings.json"
 
 MAX_CONTENT_LENGTH = 10 * 1024 * 1024 * 1024  # 10 GB
 ALLOWED_ORIGINS = "*"
@@ -93,6 +112,7 @@ def load_settings() -> dict:
 
 def save_settings(settings: dict) -> None:
     try:
+        SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
         SETTINGS_FILE.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     except OSError as exc:
         print(f"Could not save settings: {exc}")
@@ -299,7 +319,11 @@ def api_upload():
         target = UPLOAD_DIR / f"{stem}_{i}{suffix}"
         i += 1
 
-    f.save(target)
+    try:
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        f.save(target)
+    except OSError as exc:
+        return jsonify({"error": f"Could not save upload: {exc.strerror or str(exc)}"}), 500
     cleanup_uploads()
     return jsonify({"ok": True, "filename": target.name, "size": target.stat().st_size})
 
@@ -376,6 +400,7 @@ if __name__ == "__main__":
     url = f"{base_url}?code={access_code}" if access_code else base_url
 
     print(f"Drop Air running on {url}")
+    print("Data folder:", DATA_DIR)
     print("Uploads folder:", UPLOAD_DIR)
     if (
         settings["auto_cleanup_minutes"] > 0

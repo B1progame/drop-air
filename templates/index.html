@@ -921,7 +921,18 @@
             resolve();
             return;
           }
-          reject(new Error(xhr.responseText || `Upload failed for ${file.name}`));
+          let msg = `Upload failed for ${file.name} (HTTP ${xhr.status})`;
+          try {
+            const data = JSON.parse(xhr.responseText || "{}");
+            if (data && typeof data.error === "string" && data.error.trim()) {
+              msg = data.error.trim();
+            }
+          } catch (_) {
+            if ((xhr.responseText || "").trim() && !(xhr.responseText || "").includes("<!doctype html>")) {
+              msg = xhr.responseText.trim();
+            }
+          }
+          reject(new Error(msg));
         };
         xhr.onerror = () => reject(new Error(`Upload failed for ${file.name}`));
 
