@@ -8,8 +8,12 @@ Fast local file sharing from your laptop to iPhone/iPad (and back) using a brows
 - Drag-and-drop upload from any device
 - Download files from any connected device
 - Text relay for pasting text on one device and copying it on another
-- Optional browser-powered text translation before sharing
-- QR code to quickly open the site on iPhone/iPad
+- Host-only admin panel with QR code, share link, cleanup, and runtime settings
+- Per-launch connection key in QR/share links so old or manual LAN links cannot join the wrong session
+- Shared text keeps line breaks and expires after 10 minutes by default
+- Host-only quit button to stop Drop Air from the admin panel
+- Light, dark, and system theme modes
+- Optional auto-open of the local admin page in the default browser
 - Optional one-time passcode (`DROP_AIR_CODE`)
 
 ## Requirements
@@ -26,7 +30,15 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Open the shown URL on your iPhone/iPad, or scan the QR code in terminal.
+Open the shown URL on your iPhone/iPad, or scan the QR code in terminal. The Wi-Fi URL includes a temporary `k=...` connection key generated on each launch.
+The host machine also opens the local admin page automatically by default.
+
+Disable browser auto-open:
+
+```powershell
+$env:DROP_AIR_OPEN_BROWSER="0"
+python app.py
+```
 
 ## Optional security
 
@@ -55,6 +67,7 @@ python app.py
 - `DROP_AIR_AUTO_CLEANUP_MINUTES`: delete files older than N minutes (default `10`, `0` disables)
 - `DROP_AIR_AUTO_CLEANUP_DAYS`: delete files older than N days (`0` disables)
 - `DROP_AIR_AUTO_CLEANUP_MAX_FILES`: keep only newest N files (`0` disables)
+- `DROP_AIR_TEXT_TTL_MINUTES`: delete shared text older than N minutes (default `10`, `0` disables)
 
 ## Build Windows EXE
 

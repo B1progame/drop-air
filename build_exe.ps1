@@ -21,6 +21,7 @@ if (-not (Test-Path $IconPath)) {
 $root = (Get-Location).Path
 $iconAbs = (Resolve-Path $IconPath).Path
 $templatesAbs = (Resolve-Path "templates").Path
+$assetsAbs = (Resolve-Path "assets").Path
 $appAbs = (Resolve-Path "app.py").Path
 
 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
@@ -37,6 +38,7 @@ $specPath = "build\spec_$stamp"
   --workpath $workPath `
   --specpath $specPath `
   --add-data "$templatesAbs;templates" `
+  --add-data "$assetsAbs;assets" `
   $appAbs
 
 if ($LASTEXITCODE -ne 0) {

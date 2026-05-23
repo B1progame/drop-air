@@ -204,6 +204,9 @@
     {% if error %}
       <div class="error">{{ error }}</div>
     {% endif %}
+    {% if session_key %}
+      <input type="hidden" name="{{ session_param or 'k' }}" value="{{ session_key }}" />
+    {% endif %}
     <input name="code" placeholder="Access code" autocomplete="one-time-code" />
     <button type="submit">Unlock</button>
   </form>
