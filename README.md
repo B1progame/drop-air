@@ -7,6 +7,8 @@ Fast local file sharing from your laptop to iPhone/iPad (and back) using a brows
 - AirDrop-like local transfer (no cloud)
 - Drag-and-drop upload from any device
 - Download files from any connected device
+- Text relay for pasting text on one device and copying it on another
+- Optional browser-powered text translation before sharing
 - QR code to quickly open the site on iPhone/iPad
 - Optional one-time passcode (`DROP_AIR_CODE`)
 

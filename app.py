@@ -53,6 +53,11 @@ DEFAULT_SETTINGS = {
 }
 SETTINGS_LOCK = Lock()
 SETTINGS = {}
+TEXT_ITEMS_FILE = DATA_DIR / "text_items.json"
+TEXT_ITEMS_LOCK = Lock()
+TEXT_ITEMS = []
+MAX_TEXT_ITEMS = 40
+MAX_TEXT_CHARS = 20000
 
 app = Flask(__name__, template_folder=str(TEMPLATE_DIR))
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
@@ -132,6 +137,77 @@ def set_settings(new_values: dict) -> dict:
 
 
 SETTINGS = load_settings()
+
+
+def _normalize_text_item(raw: dict) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    text = str(raw.get("text", ""))[:MAX_TEXT_CHARS]
+    translated_text = str(raw.get("translated_text", ""))[:MAX_TEXT_CHARS]
+    if not text and not translated_text:
+        return None
+    return {
+        "id": str(raw.get("id", int(time.time() * 1000))),
+        "text": text,
+        "translated_text": translated_text,
+        "source_language": str(raw.get("source_language", "auto"))[:16],
+        "target_language": str(raw.get("target_language", "en"))[:16],
+        "created": int(raw.get("created", time.time())),
+    }
+
+
+def load_text_items() -> list[dict]:
+    if not TEXT_ITEMS_FILE.exists():
+        return []
+    try:
+        stored = json.loads(TEXT_ITEMS_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(stored, list):
+        return []
+    items = []
+    for raw in stored[:MAX_TEXT_ITEMS]:
+        item = _normalize_text_item(raw)
+        if item:
+            items.append(item)
+    return items
+
+
+def save_text_items(items: list[dict]) -> None:
+    try:
+        TEXT_ITEMS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        TEXT_ITEMS_FILE.write_text(json.dumps(items[:MAX_TEXT_ITEMS], indent=2), encoding="utf-8")
+    except OSError as exc:
+        print(f"Could not save text items: {exc}")
+
+
+def list_text_items() -> list[dict]:
+    with TEXT_ITEMS_LOCK:
+        return list(TEXT_ITEMS)
+
+
+def add_text_item(payload: dict) -> dict:
+    item = _normalize_text_item(
+        {
+            "id": int(time.time() * 1000),
+            "text": str(payload.get("text", "")).strip(),
+            "translated_text": str(payload.get("translated_text", "")).strip(),
+            "source_language": str(payload.get("source_language", "auto")).strip() or "auto",
+            "target_language": str(payload.get("target_language", "en")).strip() or "en",
+            "created": int(time.time()),
+        }
+    )
+    if not item:
+        raise ValueError("Paste text before sharing.")
+    with TEXT_ITEMS_LOCK:
+        TEXT_ITEMS.insert(0, item)
+        del TEXT_ITEMS[MAX_TEXT_ITEMS:]
+        current = list(TEXT_ITEMS)
+    save_text_items(current)
+    return item
+
+
+TEXT_ITEMS = load_text_items()
 
 
 def get_local_ip() -> str:
@@ -326,6 +402,27 @@ def api_upload():
         return jsonify({"error": f"Could not save upload: {exc.strerror or str(exc)}"}), 500
     cleanup_uploads()
     return jsonify({"ok": True, "filename": target.name, "size": target.stat().st_size})
+
+
+@app.route("/api/text", methods=["GET", "POST", "OPTIONS"])
+def api_text():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not check_code():
+        return jsonify({"error": "unauthorized"}), 401
+
+    if request.method == "GET":
+        return jsonify({"items": list_text_items()})
+
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"error": "invalid payload"}), 400
+
+    try:
+        item = add_text_item(payload)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "item": item})
 
 
 @app.route("/api/settings", methods=["GET", "POST", "OPTIONS"])
