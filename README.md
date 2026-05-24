@@ -73,7 +73,7 @@ python app.py
 ## Optional updates
 
 Drop Air can check a public GitHub repository release feed from the host admin panel.
-If you run from a git checkout, it auto-detects the GitHub `origin` remote. You only need `DROP_AIR_UPDATE_REPO` if you want a different repository:
+By default it uses `B1progame/drop-air`. If you run from another git checkout, it can also auto-detect the GitHub `origin` remote. You only need `DROP_AIR_UPDATE_REPO` if you want a different repository:
 
 ```powershell
 $env:DROP_AIR_UPDATE_REPO="your-github-name/your-repo"

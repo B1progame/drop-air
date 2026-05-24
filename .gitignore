@@ -33,4 +33,4 @@ installer/*.msi
 *.bak
 *.orig
 generated-test-files/
-.Release_Notes_*
+RELEASE_NOTES_*.md

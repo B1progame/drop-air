@@ -74,6 +74,7 @@ APP_VERSION = (
     or (BUNDLE_VERSION_FILE.read_text(encoding="utf-8").strip() if BUNDLE_VERSION_FILE.exists() else "")
     or "1.0.0"
 ).lstrip("v")
+DEFAULT_UPDATE_REPO = "B1progame/drop-air"
 
 
 def detect_update_repo() -> str:
@@ -81,7 +82,7 @@ def detect_update_repo() -> str:
     if override:
         return override
     if getattr(sys, "frozen", False):
-        return ""
+        return DEFAULT_UPDATE_REPO
     try:
         result = subprocess.run(
             ["git", "config", "--get", "remote.origin.url"],
@@ -96,7 +97,7 @@ def detect_update_repo() -> str:
     remote = (result.stdout or "").strip()
     match = re.search(r"github\.com[:/](?P<owner>[^/]+)/(?P<repo>[^/\s]+?)(?:\.git)?$", remote)
     if not match:
-        return ""
+        return DEFAULT_UPDATE_REPO
     return f"{match.group('owner')}/{match.group('repo')}"
 
 
