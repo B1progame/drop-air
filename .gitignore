@@ -35,3 +35,5 @@ installer/*.msi
 generated-test-files/
 RELEASE_NOTES_*.md
 local-visual-tests/
+aufgabe.txt
+

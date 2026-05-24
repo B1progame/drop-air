@@ -2085,8 +2085,10 @@
             void box.offsetWidth;
             box.classList.add("updating");
             setTimeout(() => box.classList.remove("updating"), 7000);
+            playQrBuildAnimation(img, data.qr_url);
+          } else if (!img.getAttribute("src")) {
+            img.src = data.qr_url;
           }
-          playQrBuildAnimation(img, data.qr_url);
         });
       }
     }
@@ -2106,7 +2108,7 @@
 
     function scheduleSessionSync() {
       clearTimeout(sessionSyncTimer);
-      const ms = Math.max(5000, (sessionSecondsRemaining - 20) * 1000);
+      const ms = Math.max(1000, (sessionSecondsRemaining + 1) * 1000);
       sessionSyncTimer = setTimeout(syncSession, ms);
     }
 

@@ -1,21 +1,8 @@
-and majke the UI look modern maybe throug corners ad a better light dark system via web
-icons are missing (information about a file (image icon text icon and so on think of ideas)
+no the import line is wrong the 
+
+check it out yourself create screenshots and fix it
 
 
-with animations i meant a generation of the qr code thing because the code updates the 5min but syncs it before with the ipda or iphone so they update too
-an uploading animation a ui light dark system change animation(check  the web for that) a drop file animation
+release: command
 
-think of more via the web
-
-and check if  the dark light mode everypanel is sync and so on and PLEASE AD ANIMATIONS THEY DO ALL THE VISUAL AND VIBE WORK
-
-
-
-think of scalling because my admin panel is wrong
-
-and ad a 404 side for not existing codes and make the carectaers 32 charecter so hard to guess and brute force
-
-
-the text things also need to be cleaned up and they need to preserve the important style so next line right that does it already
-
-make the terminal window when opening have the same icon like the inno installer
+gh release create 1.1.0 dist\DropAir-Setup-1.1.0.exe -F RELEASE_NOTES_1.1.0.md --title "1.1.0"

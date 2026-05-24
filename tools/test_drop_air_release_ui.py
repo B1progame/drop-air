@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -48,6 +49,8 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("upload-state", source)
         self.assertIn("startViewTransition", source)
         self.assertIn("heartbeatConnection", source)
+        self.assertIn("sessionSecondsRemaining + 1", source)
+        self.assertNotIn("sessionSecondsRemaining - 20", source)
 
     def test_session_endpoint_returns_rotating_key_payload(self):
         key = app.session_snapshot()["key"]
@@ -60,6 +63,22 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertEqual(len(payload["key"]), 32)
         self.assertIn("qr_url", payload)
         self.assertIn("seconds_remaining", payload)
+
+    def test_session_endpoint_syncs_old_key_after_rotation(self):
+        old_key = app.session_snapshot()["key"]
+        previous_expires = app.SESSION_EXPIRES_AT
+        try:
+            app.SESSION_EXPIRES_AT = time.time() - 1
+            response = self.client.get(
+                f"/api/session?k={old_key}",
+                environ_overrides={"REMOTE_ADDR": "192.168.1.56", "HTTP_HOST": "192.168.1.2:8000"},
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.get_json()
+            self.assertNotEqual(payload["key"], old_key)
+            self.assertIn(f"k={payload['key']}", payload["public_url"])
+        finally:
+            app.SESSION_EXPIRES_AT = max(previous_expires, time.time() + app.SESSION_TTL_SECONDS)
 
     def test_text_api_round_trip(self):
         key = app.session_snapshot()["key"]
