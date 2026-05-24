@@ -29,6 +29,7 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("updateServerBtn", body)
         self.assertIn("connectionCount", body)
         self.assertIn("/api/connections", body)
+        self.assertIn("no-store", response.headers.get("Cache-Control", ""))
 
     def test_template_contains_text_viewer_and_animation_hooks(self):
         source = self.template_source
@@ -46,9 +47,11 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("drop-cross", source)
         self.assertIn("drop-scan-line", source)
         self.assertIn("drop-scan", source)
+        self.assertNotIn(".dropzone.active .drop-cross", source)
         self.assertIn("upload-state", source)
         self.assertIn("startViewTransition", source)
         self.assertIn("heartbeatConnection", source)
+        self.assertIn("window.location.reload", source)
         self.assertIn("sessionSecondsRemaining + 1", source)
         self.assertNotIn("sessionSecondsRemaining - 20", source)
 
@@ -120,6 +123,17 @@ class DropAirReleaseUiTests(unittest.TestCase):
             response = self.client.get("/api/admin/update", environ_overrides={"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8000"})
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["update_available"])
+
+    def test_update_prefers_setup_installer_asset(self):
+        info = {
+            "assets": [
+                {"name": "DropAir.exe", "browser_download_url": "portable"},
+                {"name": "Drop-Air-Setup-1.1.0.exe", "browser_download_url": "setup"},
+            ]
+        }
+        asset = app.find_release_setup_asset(info)
+        self.assertIsNotNone(asset)
+        self.assertEqual(asset["browser_download_url"], "setup")
 
     def test_admin_update_post_starts_install(self):
         expected = {"ok": True, "message": "Update started. Watch the terminal for progress."}

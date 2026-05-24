@@ -81,7 +81,7 @@ python app.py
 ```
 
 Create GitHub releases with tags like `1.0.0`, `1.0.1`, etc. The admin panel compares the latest release tag with `VERSION`.
-For packaged builds, attach the standalone `DropAir.exe` release asset; the updater skips the Inno installer.
+For packaged builds, attach the setup installer release asset, for example `Drop-Air-Setup-1.1.0.exe`. The updater downloads that setup file, runs it silently, skips rebuilding Inno locally, and restarts Drop Air.
 
 Release flow:
 
@@ -98,7 +98,7 @@ What the update button does:
 - Clears live files and shared text so connections do not survive a version swap
 - Downloads the release in the terminal with in-place progress
 - Replaces the running app and restarts it
-- Skips the Inno installer path when `DropAir.exe` is attached to the release
+- Downloads the setup installer from the GitHub release, runs it silently, and restarts Drop Air
 
 ## Build Windows EXE
 
@@ -163,4 +163,3 @@ Available styles:
 - Files are stored in `uploads/`.
 - This is LAN-only by default.
 - If Windows Firewall asks, allow for Private networks.
-

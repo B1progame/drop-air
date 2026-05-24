@@ -185,10 +185,10 @@
     }
 
     @keyframes drop-scan-line {
-      0% { opacity: 0; transform: translateY(-18px); }
+      0% { opacity: 0; transform: translateY(-8px); }
       12% { opacity: 1; }
       82% { opacity: 1; }
-      100% { opacity: 0; transform: translateY(calc(100% + 18px)); }
+      100% { opacity: 0; transform: translateY(calc(100% + 8px)); }
     }
 
     @supports (view-transition-name: root) {
@@ -593,15 +593,15 @@
     .drop-scan::before {
       content: "";
       position: absolute;
-      left: 9%;
-      right: 9%;
+      left: 0;
+      right: 0;
       top: 0;
-      height: 4px;
+      height: 2px;
       border-radius: 999px;
-      background: linear-gradient(90deg, transparent, var(--mint), #8fffe2, var(--mint), transparent);
+      background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--mint) 72%, white), var(--mint), color-mix(in srgb, var(--mint) 72%, white), transparent);
       box-shadow:
-        0 0 12px color-mix(in srgb, var(--mint) 70%, transparent),
-        0 0 34px color-mix(in srgb, var(--mint) 42%, transparent);
+        0 0 7px color-mix(in srgb, var(--mint) 62%, transparent),
+        0 0 16px color-mix(in srgb, var(--mint) 28%, transparent);
     }
 
     .dropzone.active .drop-scan,
@@ -611,7 +611,7 @@
 
     .dropzone.active .drop-scan::before,
     .dropzone.uploading .drop-scan::before {
-      animation: drop-scan-line 1.45s cubic-bezier(.22, .75, .25, 1) infinite;
+      animation: drop-scan-line 1.8s linear infinite;
     }
 
     .drop-cross::before,
@@ -640,12 +640,10 @@
       transform: translate(-50%, -50%) scaleY(0);
     }
 
-    .dropzone.active .drop-cross::before,
     .dropzone.drop-flash .drop-cross::before {
       animation: drop-line-x 1.05s cubic-bezier(.18, .8, .2, 1) both;
     }
 
-    .dropzone.active .drop-cross::after,
     .dropzone.drop-flash .drop-cross::after {
       animation: drop-line-y 1.05s cubic-bezier(.18, .8, .2, 1) both;
     }
@@ -2099,7 +2097,10 @@
         const r = await fetch(`/api/session${codeQuery()}`, {
           headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {}
         });
-        if (!r.ok) return;
+        if (!r.ok) {
+          if (r.status === 404 && isAdmin) window.location.reload();
+          return;
+        }
         const data = await r.json();
         updateSessionUi(data, Boolean(data.key && data.key !== before));
         scheduleSessionSync();

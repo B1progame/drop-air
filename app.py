@@ -314,13 +314,20 @@ def copy_source_tree(source_root: Path, destination_root: Path) -> None:
             shutil.copy2(item, target)
 
 
-def find_release_exe_asset(info: dict) -> dict | None:
+def find_release_setup_asset(info: dict) -> dict | None:
     assets = info.get("assets") or []
+    preferred = []
     for asset in assets:
         name = str(asset.get("name", "")).lower()
-        if name.endswith(".exe") and "setup" not in name and "installer" not in name:
-            return asset
-    return None
+        if not name.endswith(".exe"):
+            continue
+        if any(token in name for token in ("setup", "installer", "install")):
+            preferred.append(asset)
+    return preferred[0] if preferred else None
+
+
+def powershell_literal(value: Path | str) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
 
 
 def restart_current_app() -> None:
@@ -338,18 +345,40 @@ def install_update_from_release(info: dict) -> None:
     with tempfile.TemporaryDirectory(prefix="drop-air-update-") as tmp:
         tmp_path = Path(tmp)
         if getattr(sys, "frozen", False):
-            asset = find_release_exe_asset(info)
+            asset = find_release_setup_asset(info)
             if not asset:
-                raise RuntimeError("No standalone .exe release asset found. Upload DropAir.exe to the release.")
-            new_exe = tmp_path / Path(asset["name"]).name
-            download_file_with_progress(asset["browser_download_url"], new_exe, "Downloading")
+                raise RuntimeError("No setup .exe release asset found. Upload the Drop Air setup installer to the release.")
+            setup_exe = tmp_path / Path(asset["name"]).name
+            download_file_with_progress(asset["browser_download_url"], setup_exe, "Downloading setup")
             helper = DATA_DIR / "finish-update.ps1"
             helper.write_text(
                 "\n".join(
                     [
-                        f"Start-Sleep -Milliseconds 700",
-                        f"Copy-Item -LiteralPath {str(new_exe)!r} -Destination {str(Path(sys.executable))!r} -Force",
-                        f"Start-Process -FilePath {str(Path(sys.executable))!r}",
+                        "$ErrorActionPreference = 'Stop'",
+                        "function Show-Bar([string]$Label, [int]$Percent) {",
+                        "  $width = 28",
+                        "  $filled = [Math]::Floor($width * $Percent / 100)",
+                        "  $bar = ('#' * $filled) + ('-' * ($width - $filled))",
+                        "  Write-Host -NoNewline \"`r$Label`: [$bar] $Percent%\"",
+                        "}",
+                        "Start-Sleep -Milliseconds 700",
+                        f"$setup = {powershell_literal(setup_exe)}",
+                        f"$app = {powershell_literal(Path(sys.executable))}",
+                        "Write-Host ''",
+                        "Write-Host 'Installing Drop Air update...'",
+                        "$proc = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS' -PassThru",
+                        "$percent = 3",
+                        "while (-not $proc.HasExited) {",
+                        "  Show-Bar 'Installing setup' $percent",
+                        "  $percent = [Math]::Min(95, $percent + 2)",
+                        "  Start-Sleep -Milliseconds 350",
+                        "}",
+                        "$proc.WaitForExit()",
+                        "if ($proc.ExitCode -ne 0) { throw \"Installer failed with exit code $($proc.ExitCode).\" }",
+                        "Show-Bar 'Installing setup' 100",
+                        "Write-Host ''",
+                        "Write-Host 'Restarting Drop Air...'",
+                        "Start-Process -FilePath $app",
                     ]
                 ),
                 encoding="utf-8",
@@ -933,6 +962,10 @@ def add_headers(resp):
     resp.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGINS
     resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Drop-Air-Code, X-Drop-Air-Key"
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    if request.path == "/" or request.path.startswith("/api/") or request.path == "/qr.svg":
+        resp.headers["Cache-Control"] = "no-store, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
     return resp
 
 

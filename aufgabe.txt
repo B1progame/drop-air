@@ -3,6 +3,10 @@ no the import line is wrong the
 check it out yourself create screenshots and fix it
 
 
+and two more things
+-> after closing and satrting it doesnt refreshed the qrcode and not the timer fix that
+-> for an update it akss for the standallone exe but i only want to upload the setup code it should download that (show that in the cmd window in a progressbar then scipp the inno installatzion process and then install it (also show that in a progressbar and uit should close and start again.
+
 release: command
 
 gh release create 1.1.0 dist\DropAir-Setup-1.1.0.exe -F RELEASE_NOTES_1.1.0.md --title "1.1.0"

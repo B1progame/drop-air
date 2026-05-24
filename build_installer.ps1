@@ -112,7 +112,7 @@ function New-ReleaseBundle {
   $notes = @(
     "Drop Air release bundle for $Version",
     "",
-    "Assets prepared:",
+    "Local files prepared:",
     "- $portableName",
     "- $installerName",
     "- $zipName",
@@ -123,8 +123,8 @@ function New-ReleaseBundle {
     "2. Create or push the git tag $Version.",
     "3. Open $releaseUrl",
     "4. Create a release from tag $Version.",
-    "5. Upload the files listed above.",
-    "6. Keep $portableName attached so the in-app updater can download it directly."
+    "5. Upload $installerName as the release asset.",
+    "6. The in-app updater downloads that setup installer, runs it silently, and restarts Drop Air."
   )
   Set-Content -LiteralPath $notesPath -Value $notes -Encoding utf8
 
@@ -132,11 +132,8 @@ function New-ReleaseBundle {
     $publishScript = @(
       '$ErrorActionPreference = "Stop"',
       '$root = Split-Path -Parent $MyInvocation.MyCommand.Path',
-      '$portable = Join-Path $root "' + $portableName + '"',
       '$installer = Join-Path $root "' + $installerName + '"',
-      '$portableZip = Join-Path $root "' + $zipName + '"',
-      '$checksums = Join-Path $root "SHA256SUMS.txt"',
-      'gh release create ' + $Version + ' $portable $installer $portableZip $checksums --repo ' + $Repo + ' --title "' + $Version + '" --notes "Drop Air ' + $Version + ' release." --draft'
+      'gh release create ' + $Version + ' $installer --repo ' + $Repo + ' --title "' + $Version + '" --notes "Drop Air ' + $Version + ' release." --draft'
     )
     Set-Content -LiteralPath $publishScriptPath -Value $publishScript -Encoding utf8
   }
