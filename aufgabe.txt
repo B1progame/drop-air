@@ -9,4 +9,4 @@ and two more things
 
 release: command
 
-gh release create 1.1.0 dist\DropAir-Setup-1.1.0.exe -F RELEASE_NOTES_1.1.0.md --title "1.1.0"
+gh release create 1.1.0 dist\DropAir-Setup-1.1.0.exe -F RELEASE_NOTES_1.1.0.md --title "1.1.0" --latest

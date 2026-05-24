@@ -30,6 +30,7 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("connectionCount", body)
         self.assertIn("/api/connections", body)
         self.assertIn("no-store", response.headers.get("Cache-Control", ""))
+        self.assertIn("delete-file", body)
 
     def test_template_contains_text_viewer_and_animation_hooks(self):
         source = self.template_source
@@ -43,11 +44,27 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("qr-build-canvas", source)
         self.assertIn("playQrBuildAnimation", source)
         self.assertIn("drop-ripple", source)
-        self.assertIn("drop-line-x", source)
-        self.assertIn("drop-cross", source)
         self.assertIn("drop-scan-line", source)
         self.assertIn("drop-scan", source)
-        self.assertNotIn(".dropzone.active .drop-cross", source)
+        self.assertIn("drop-border-trace", source)
+        self.assertIn("border-trace-run", source)
+        self.assertIn("stroke-dasharray", source)
+        self.assertIn("stroke-dashoffset", source)
+        self.assertIn("stroke-dasharray: 2200 2200", source)
+        self.assertIn("trace-top", source)
+        self.assertIn("trace-right", source)
+        self.assertIn("trace-bottom", source)
+        self.assertIn("trace-left", source)
+        self.assertNotIn(".dropzone.uploading .drop-scan", source)
+        self.assertNotIn(".dropzone.active .drop-scan", source)
+        self.assertNotIn("drop-cross", source)
+        self.assertNotIn("drop-line-x", source)
+        self.assertNotIn("drop-line-y", source)
+        self.assertIn("flashDropTrace", source)
+        self.assertIn("trashIcon", source)
+        self.assertIn("deleteFile", source)
+        self.assertIn("deleteTextItem", source)
+        self.assertIn("Delete shared text", source)
         self.assertIn("upload-state", source)
         self.assertIn("startViewTransition", source)
         self.assertIn("heartbeatConnection", source)
@@ -97,6 +114,28 @@ class DropAirReleaseUiTests(unittest.TestCase):
         items = get_response.get_json()["items"]
         self.assertGreaterEqual(len(items), 1)
         self.assertIn("line 6", items[0]["text"])
+
+    def test_delete_specific_text_item(self):
+        key = app.session_snapshot()["key"]
+        env = {"REMOTE_ADDR": "192.168.1.57", "HTTP_HOST": "192.168.1.2:8000"}
+        post_response = self.client.post(f"/api/text?k={key}", json={"text": "delete me"}, environ_overrides=env)
+        self.assertEqual(post_response.status_code, 200)
+        item_id = post_response.get_json()["item"]["id"]
+        delete_response = self.client.delete(f"/api/text/{item_id}?k={key}", environ_overrides=env)
+        self.assertEqual(delete_response.status_code, 200)
+        get_response = self.client.get(f"/api/text?k={key}", environ_overrides=env)
+        ids = [item["id"] for item in get_response.get_json()["items"]]
+        self.assertNotIn(item_id, ids)
+
+    def test_delete_specific_file(self):
+        key = app.session_snapshot()["key"]
+        env = {"REMOTE_ADDR": "192.168.1.58", "HTTP_HOST": "192.168.1.2:8000"}
+        app.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        target = app.UPLOAD_DIR / "delete-me.txt"
+        target.write_text("bye", encoding="utf-8")
+        delete_response = self.client.delete(f"/api/files/delete-me.txt?k={key}", environ_overrides=env)
+        self.assertEqual(delete_response.status_code, 200)
+        self.assertFalse(target.exists())
 
     def test_connection_heartbeat_counts_active_clients(self):
         app.ACTIVE_CONNECTIONS.clear()

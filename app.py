@@ -599,6 +599,19 @@ def list_text_items() -> list[dict]:
         return list(TEXT_ITEMS)
 
 
+def delete_text_item(item_id: str) -> bool:
+    wanted = str(item_id)
+    with TEXT_ITEMS_LOCK:
+        before = len(TEXT_ITEMS)
+        kept = [item for item in TEXT_ITEMS if str(item.get("id", "")) != wanted]
+        if len(kept) == before:
+            return False
+        TEXT_ITEMS[:] = kept
+        current = list(TEXT_ITEMS)
+    save_text_items(current)
+    return True
+
+
 def add_text_item(payload: dict) -> dict:
     item = _normalize_text_item(
         {
@@ -825,6 +838,21 @@ def list_files():
     return items
 
 
+def delete_upload_file(filename: str) -> bool:
+    safe_name = secure_filename(filename)
+    if not safe_name or safe_name != filename:
+        return False
+    target = (UPLOAD_DIR / safe_name).resolve()
+    uploads_root = UPLOAD_DIR.resolve()
+    if target.parent != uploads_root or not target.is_file():
+        return False
+    try:
+        target.unlink()
+    except OSError:
+        return False
+    return True
+
+
 def cleanup_uploads() -> None:
     settings = get_settings()
     auto_cleanup_minutes = settings["auto_cleanup_minutes"]
@@ -961,7 +989,7 @@ def register_shutdown_cleanup() -> None:
 def add_headers(resp):
     resp.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGINS
     resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Drop-Air-Code, X-Drop-Air-Key"
-    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
     if request.path == "/" or request.path.startswith("/api/") or request.path == "/qr.svg":
         resp.headers["Cache-Control"] = "no-store, max-age=0"
         resp.headers["Pragma"] = "no-cache"
@@ -1083,6 +1111,20 @@ def api_files():
     return jsonify({"files": list_files()})
 
 
+@app.route("/api/files/<path:filename>", methods=["DELETE", "OPTIONS"])
+def api_delete_file(filename: str):
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not check_session_key():
+        return jsonify({"error": "invalid session link"}), 404
+    if not check_code():
+        return jsonify({"error": "code not found"}), 404
+    if not delete_upload_file(filename):
+        return jsonify({"error": "file not found"}), 404
+    app.logger.info("Deleted file %s.", filename)
+    return jsonify({"ok": True, "stats": upload_stats()})
+
+
 @app.route("/api/upload", methods=["POST", "OPTIONS"])
 def api_upload():
     cleanup_uploads()
@@ -1143,6 +1185,20 @@ def api_text():
         return jsonify({"error": str(exc)}), 400
     app.logger.info("Shared text item %s (%s chars).", item["id"], len(item["text"]))
     return jsonify({"ok": True, "item": item})
+
+
+@app.route("/api/text/<item_id>", methods=["DELETE", "OPTIONS"])
+def api_delete_text(item_id: str):
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not check_session_key():
+        return jsonify({"error": "invalid session link"}), 404
+    if not check_code():
+        return jsonify({"error": "code not found"}), 404
+    if not delete_text_item(item_id):
+        return jsonify({"error": "text item not found"}), 404
+    app.logger.info("Deleted text item %s.", item_id)
+    return jsonify({"ok": True, "stats": upload_stats()})
 
 
 @app.route("/api/settings", methods=["GET", "POST", "OPTIONS"])

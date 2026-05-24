@@ -166,18 +166,6 @@
       100% { opacity: 0; transform: scale(1.08); }
     }
 
-    @keyframes drop-line-x {
-      0% { opacity: 0; transform: translate(-50%, -50%) scaleX(0); }
-      24% { opacity: 1; }
-      100% { opacity: 0; transform: translate(-50%, -50%) scaleX(1); }
-    }
-
-    @keyframes drop-line-y {
-      0% { opacity: 0; transform: translate(-50%, -50%) scaleY(0); }
-      24% { opacity: 1; }
-      100% { opacity: 0; transform: translate(-50%, -50%) scaleY(1); }
-    }
-
     @keyframes upload-done {
       0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--mint) 34%, transparent); }
       80% { box-shadow: 0 0 0 16px color-mix(in srgb, var(--mint) 0%, transparent); }
@@ -189,6 +177,42 @@
       12% { opacity: 1; }
       82% { opacity: 1; }
       100% { opacity: 0; transform: translateY(calc(100% + 8px)); }
+    }
+
+    @keyframes border-trace-run {
+      0% {
+        stroke-dashoffset: 2200;
+        opacity: 0;
+        stroke-width: 1.8;
+        filter:
+          drop-shadow(0 0 2px color-mix(in srgb, var(--mint) 72%, transparent))
+          drop-shadow(0 0 8px color-mix(in srgb, var(--accent) 28%, transparent));
+      }
+      12% {
+        opacity: 1;
+        stroke-width: 2.35;
+      }
+      58% {
+        stroke-dashoffset: 260;
+        stroke-width: 2.8;
+        filter:
+          drop-shadow(0 0 4px color-mix(in srgb, var(--mint) 92%, transparent))
+          drop-shadow(0 0 14px color-mix(in srgb, var(--accent) 46%, transparent))
+          drop-shadow(0 0 25px color-mix(in srgb, var(--mint) 18%, transparent));
+      }
+      82% {
+        stroke-dashoffset: 0;
+        stroke-width: 2.35;
+      }
+      86% { opacity: 1; }
+      100% {
+        stroke-dashoffset: 0;
+        opacity: 0;
+        stroke-width: 1.9;
+        filter:
+          drop-shadow(0 0 2px color-mix(in srgb, var(--mint) 58%, transparent))
+          drop-shadow(0 0 10px color-mix(in srgb, var(--accent) 22%, transparent));
+      }
     }
 
     @supports (view-transition-name: root) {
@@ -472,6 +496,16 @@
       color: var(--ink);
     }
 
+    .icon-btn.danger-icon {
+      color: var(--danger);
+    }
+
+    .row-actions {
+      display: inline-flex;
+      justify-content: flex-end;
+      gap: 7px;
+    }
+
     svg {
       width: 17px;
       height: 17px;
@@ -573,13 +607,6 @@
       animation: upload-done .65s ease both;
     }
 
-    .drop-cross {
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-      z-index: 0;
-    }
-
     .drop-scan {
       position: absolute;
       inset: 10px;
@@ -588,6 +615,49 @@
       z-index: 0;
       overflow: hidden;
       opacity: 0;
+    }
+
+    .drop-border-trace {
+      position: absolute;
+      inset: -1px;
+      width: calc(100% + 2px);
+      height: calc(100% + 2px);
+      pointer-events: none;
+      z-index: 1;
+      overflow: visible;
+      opacity: 0;
+    }
+
+    .drop-border-trace path {
+      --trace-delay: 0s;
+      fill: none;
+      stroke: color-mix(in srgb, var(--mint) 82%, white);
+      stroke-width: 2.35;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-dasharray: 2200 2200;
+      stroke-dashoffset: 2200;
+      opacity: 0;
+      filter:
+        drop-shadow(0 0 3px color-mix(in srgb, var(--mint) 82%, transparent))
+        drop-shadow(0 0 12px color-mix(in srgb, var(--accent) 38%, transparent))
+        drop-shadow(0 0 22px color-mix(in srgb, var(--mint) 14%, transparent));
+      vector-effect: non-scaling-stroke;
+    }
+
+    .drop-border-trace .trace-top { --trace-delay: 0s; }
+    .drop-border-trace .trace-right { --trace-delay: .2s; }
+    .drop-border-trace .trace-bottom { --trace-delay: .45s; }
+    .drop-border-trace .trace-left { --trace-delay: .7s; }
+
+    .dropzone.active .drop-border-trace,
+    .dropzone.drop-flash .drop-border-trace {
+      opacity: 1;
+    }
+
+    .dropzone.active .drop-border-trace path,
+    .dropzone.drop-flash .drop-border-trace path {
+      animation: border-trace-run .38s cubic-bezier(.16, .82, .2, 1) var(--trace-delay) both;
     }
 
     .drop-scan::before {
@@ -604,53 +674,9 @@
         0 0 16px color-mix(in srgb, var(--mint) 28%, transparent);
     }
 
-    .dropzone.active .drop-scan,
-    .dropzone.uploading .drop-scan {
-      opacity: 1;
-    }
-
-    .dropzone.active .drop-scan::before,
-    .dropzone.uploading .drop-scan::before {
-      animation: drop-scan-line 1.8s linear infinite;
-    }
-
-    .drop-cross::before,
-    .drop-cross::after {
-      content: "";
-      position: absolute;
-      left: 50%;
-      top: 50%;
-      border-radius: 999px;
-      opacity: 0;
-      background: linear-gradient(90deg, transparent, var(--mint), transparent);
-      box-shadow: 0 0 18px color-mix(in srgb, var(--mint) 55%, transparent);
-      transform-origin: center;
-    }
-
-    .drop-cross::before {
-      width: 96%;
-      height: 3px;
-      transform: translate(-50%, -50%) scaleX(0);
-    }
-
-    .drop-cross::after {
-      width: 3px;
-      height: 86%;
-      background: linear-gradient(180deg, transparent, var(--mint), transparent);
-      transform: translate(-50%, -50%) scaleY(0);
-    }
-
-    .dropzone.drop-flash .drop-cross::before {
-      animation: drop-line-x 1.05s cubic-bezier(.18, .8, .2, 1) both;
-    }
-
-    .dropzone.drop-flash .drop-cross::after {
-      animation: drop-line-y 1.05s cubic-bezier(.18, .8, .2, 1) both;
-    }
-
-    .dropzone > div:not(.drop-cross):not(.drop-scan) {
+    .dropzone > div:not(.drop-scan):not(.drop-border-trace) {
       position: relative;
-      z-index: 1;
+      z-index: 2;
     }
 
     .upload-icon {
@@ -931,10 +957,10 @@
       animation: rise-in .22s ease both;
     }
 
-    th:nth-child(1), td:nth-child(1) { width: 48%; }
-    th:nth-child(2), td:nth-child(2) { width: 18%; }
-    th:nth-child(3), td:nth-child(3) { width: 22%; }
-    th:nth-child(4), td:nth-child(4) { width: 12%; text-align: right; }
+    th:nth-child(1), td:nth-child(1) { width: 46%; }
+    th:nth-child(2), td:nth-child(2) { width: 17%; }
+    th:nth-child(3), td:nth-child(3) { width: 21%; }
+    th:nth-child(4), td:nth-child(4) { width: 16%; text-align: right; }
 
     .file-cell {
       display: grid;
@@ -1405,9 +1431,9 @@
       .code-tools { grid-template-columns: 1fr; }
       .text-actions { align-items: stretch; }
       th:nth-child(3), td:nth-child(3) { display: none; }
-      th:nth-child(1), td:nth-child(1) { width: 58%; }
-      th:nth-child(2), td:nth-child(2) { width: 24%; }
-      th:nth-child(4), td:nth-child(4) { width: 18%; }
+      th:nth-child(1), td:nth-child(1) { width: 50%; }
+      th:nth-child(2), td:nth-child(2) { width: 22%; }
+      th:nth-child(4), td:nth-child(4) { width: 28%; }
       th, td { padding: 10px 9px; font-size: .84rem; }
       .drawer {
         inset: auto 0 0 0;
@@ -1540,7 +1566,12 @@
           </div>
           <div id="dropzone" class="dropzone">
             <div class="drop-scan" aria-hidden="true"></div>
-            <div class="drop-cross" aria-hidden="true"></div>
+            <svg class="drop-border-trace" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+              <path class="trace-top" d="M3.2 1.2 H96.8"></path>
+              <path class="trace-right" d="M98.8 3.2 V96.8"></path>
+              <path class="trace-bottom" d="M96.8 98.8 H3.2"></path>
+              <path class="trace-left" d="M1.2 96.8 V3.2"></path>
+            </svg>
             <div>
               <div class="upload-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0 5 5m-5-5-5 5"/><path d="M5 15v2.5A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5V15"/></svg>
@@ -1595,7 +1626,7 @@
                 <th>Name</th>
                 <th>Size</th>
                 <th>Modified</th>
-                <th>Copy</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody id="filesBody">
@@ -1604,7 +1635,12 @@
                 <td><a href="{{ f.url }}{{ auth_query }}" title="{{ f.name }}">{{ f.name }}</a></td>
                 <td>{{ f.size }}</td>
                 <td>{{ f.modified }}</td>
-                <td><button class="icon-btn copy-file" type="button" data-url="{{ f.url }}{{ auth_query }}" aria-label="Copy file link"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg></button></td>
+                <td>
+                  <div class="row-actions">
+                    <button class="icon-btn copy-file" type="button" data-url="{{ f.url }}{{ auth_query }}" aria-label="Copy file link"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg></button>
+                    <button class="icon-btn danger-icon delete-file" type="button" data-name="{{ f.name }}" aria-label="Delete file"><svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 15H6L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
+                  </div>
+                </td>
               </tr>
               {% endfor %}
               {% if not files %}
@@ -1884,6 +1920,10 @@
       return `<svg viewBox="0 0 24 24">${icons[kind] || icons.file}</svg>`;
     }
 
+    function trashIcon() {
+      return '<svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 15H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
+    }
+
     function showToast(message) {
       toast.textContent = message;
       toast.classList.add("show");
@@ -1904,7 +1944,7 @@
       if (uploadState) uploadState.textContent = label;
     }
 
-    function flashDropLines() {
+    function flashDropTrace() {
       if (!dropzone) return;
       dropzone.classList.remove("drop-flash");
       void dropzone.offsetWidth;
@@ -2274,6 +2314,32 @@
       showToast(target === "uploads" ? "Files cleared" : "Text cleared");
     }
 
+    async function deleteFile(name) {
+      if (!name || !confirm(`Delete ${name}?`)) return;
+      const r = await fetch(`/api/files/${encodeURIComponent(name)}${codeQuery()}`, {
+        method: "DELETE",
+        headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {}
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || "Could not delete file.");
+      updateAdminStats(data.stats || {});
+      await refreshFiles();
+      showToast("File deleted");
+    }
+
+    async function deleteTextItem(id) {
+      if (!id || !confirm("Delete this shared text?")) return;
+      const r = await fetch(`/api/text/${encodeURIComponent(id)}${codeQuery()}`, {
+        method: "DELETE",
+        headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {}
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || "Could not delete text.");
+      updateAdminStats(data.stats || {});
+      await refreshTextItems();
+      showToast("Text deleted");
+    }
+
     async function quitServer() {
       if (!isAdmin || !confirm("Quit Drop Air on this computer?")) return;
       adminEls.quit.disabled = true;
@@ -2399,13 +2465,22 @@
       const modified = document.createElement("td");
       modified.textContent = stamp(f.modified);
       const action = document.createElement("td");
+      const actions = document.createElement("div");
+      actions.className = "row-actions";
       const copy = document.createElement("button");
       copy.className = "icon-btn";
       copy.type = "button";
       copy.setAttribute("aria-label", "Copy file link");
       copy.innerHTML = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>';
       copy.addEventListener("click", () => copyText(absolute));
-      action.appendChild(copy);
+      const del = document.createElement("button");
+      del.className = "icon-btn danger-icon";
+      del.type = "button";
+      del.setAttribute("aria-label", "Delete file");
+      del.innerHTML = trashIcon();
+      del.addEventListener("click", () => deleteFile(f.name).catch(err => showToast(err.message)));
+      actions.append(copy, del);
+      action.appendChild(actions);
       row.append(name, size, modified, action);
       return row;
     }
@@ -2501,7 +2576,13 @@
       copy.setAttribute("aria-label", "Copy shared text");
       copy.innerHTML = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>';
       copy.addEventListener("click", () => copyText(display));
-      actionGroup.append(expand, copy);
+      const del = document.createElement("button");
+      del.className = "icon-btn danger-icon";
+      del.type = "button";
+      del.setAttribute("aria-label", "Delete shared text");
+      del.innerHTML = trashIcon();
+      del.addEventListener("click", () => deleteTextItem(item.id).catch(err => showToast(err.message)));
+      actionGroup.append(expand, copy, del);
       top.append(pill, actionGroup);
 
       const body = document.createElement("p");
@@ -2692,8 +2773,10 @@
       }
     });
     filesBody.addEventListener("click", e => {
-      const button = e.target.closest(".copy-file");
-      if (button) copyText(new URL(button.dataset.url, window.location.href).toString());
+      const copyButton = e.target.closest(".copy-file");
+      if (copyButton) copyText(new URL(copyButton.dataset.url, window.location.href).toString());
+      const deleteButton = e.target.closest(".delete-file");
+      if (deleteButton) deleteFile(deleteButton.dataset.name).catch(err => showToast(err.message));
     });
     ["dragenter", "dragover"].forEach(evt => {
       dropzone.addEventListener(evt, e => {
@@ -2710,7 +2793,7 @@
       });
     });
     dropzone.addEventListener("drop", e => {
-      flashDropLines();
+      flashDropTrace();
       uploadMany([...e.dataTransfer.files]);
     });
     refreshFiles();
