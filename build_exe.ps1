@@ -22,6 +22,7 @@ $root = (Get-Location).Path
 $iconAbs = (Resolve-Path $IconPath).Path
 $templatesAbs = (Resolve-Path "templates").Path
 $assetsAbs = (Resolve-Path "assets").Path
+$versionAbs = (Resolve-Path "VERSION").Path
 $appAbs = (Resolve-Path "app.py").Path
 
 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
@@ -39,6 +40,7 @@ $specPath = "build\spec_$stamp"
   --specpath $specPath `
   --add-data "$templatesAbs;templates" `
   --add-data "$assetsAbs;assets" `
+  --add-data "$versionAbs;." `
   $appAbs
 
 if ($LASTEXITCODE -ne 0) {

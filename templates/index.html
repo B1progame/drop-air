@@ -34,6 +34,12 @@
       --accent-strong: #047b8f;
       --mint: #12b981;
       --danger: #d43f5e;
+      --warning: #f59e0b;
+      --file-image: #06b6d4;
+      --file-text: #64748b;
+      --file-code: #8b5cf6;
+      --file-archive: #f59e0b;
+      --file-media: #ec4899;
       --shadow: 0 18px 60px rgba(36, 55, 84, .12);
       --radius: 8px;
     }
@@ -52,6 +58,12 @@
         --accent-strong: #5ee5f0;
         --mint: #34d399;
         --danger: #fb7185;
+        --warning: #fbbf24;
+        --file-image: #22d3ee;
+        --file-text: #94a3b8;
+        --file-code: #a78bfa;
+        --file-archive: #fbbf24;
+        --file-media: #f472b6;
         --shadow: 0 18px 60px rgba(0, 0, 0, .3);
       }
     }
@@ -69,6 +81,12 @@
       --accent-strong: #047b8f;
       --mint: #12b981;
       --danger: #d43f5e;
+      --warning: #f59e0b;
+      --file-image: #06b6d4;
+      --file-text: #64748b;
+      --file-code: #8b5cf6;
+      --file-archive: #f59e0b;
+      --file-media: #ec4899;
       --shadow: 0 18px 60px rgba(36, 55, 84, .12);
     }
 
@@ -85,10 +103,21 @@
       --accent-strong: #5ee5f0;
       --mint: #34d399;
       --danger: #fb7185;
+      --warning: #fbbf24;
+      --file-image: #22d3ee;
+      --file-text: #94a3b8;
+      --file-code: #a78bfa;
+      --file-archive: #fbbf24;
+      --file-media: #f472b6;
       --shadow: 0 18px 60px rgba(0, 0, 0, .3);
     }
 
     * { box-sizing: border-box; }
+
+    html {
+      background: var(--bg);
+      transition: background-color .24s ease, color .24s ease;
+    }
 
     @keyframes rise-in {
       from { transform: translateY(8px); }
@@ -105,18 +134,57 @@
       to { transform: scale(1); }
     }
 
+    @keyframes qr-refresh {
+      0% { opacity: .35; filter: blur(5px); transform: scale(.94) rotate(-1.5deg); }
+      55% { opacity: 1; filter: blur(0); transform: scale(1.035) rotate(.5deg); }
+      100% { opacity: 1; filter: blur(0); transform: scale(1) rotate(0); }
+    }
+
+    @keyframes upload-float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-7px); }
+    }
+
+    @keyframes progress-shimmer {
+      from { transform: translateX(-120%); }
+      to { transform: translateX(120%); }
+    }
+
+    @keyframes drop-ripple {
+      0% { opacity: 0; transform: scale(.82); }
+      40% { opacity: 1; }
+      100% { opacity: 0; transform: scale(1.08); }
+    }
+
+    @supports (view-transition-name: root) {
+      ::view-transition-old(root),
+      ::view-transition-new(root) {
+        animation-duration: .36s;
+        animation-timing-function: cubic-bezier(.2, .7, .2, 1);
+      }
+    }
+
     body {
+      --mouse-x: 50vw;
+      --mouse-y: 18vh;
       margin: 0;
       min-height: 100vh;
       font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: var(--ink);
       background:
+        radial-gradient(560px circle at var(--mouse-x) var(--mouse-y), color-mix(in srgb, var(--accent) 18%, transparent), transparent 52%),
         linear-gradient(120deg, var(--wash-a), transparent 34%),
         linear-gradient(260deg, var(--wash-b), transparent 30%),
         var(--bg);
+      transition: background .28s ease, color .24s ease;
     }
 
     body.drawer-open {
+      overflow: hidden;
+      touch-action: none;
+    }
+
+    body.qr-modal-open {
       overflow: hidden;
       touch-action: none;
     }
@@ -187,6 +255,7 @@
       box-shadow: var(--shadow);
       overflow: hidden;
       animation: rise-in .34s ease both;
+      transition: background .24s ease, border-color .24s ease, box-shadow .24s ease;
     }
 
     .panel-head {
@@ -275,6 +344,40 @@
       border-color: transparent;
     }
 
+    .update-btn.has-update {
+      color: #08111f;
+      border-color: transparent;
+      background: linear-gradient(90deg, #ff4d6d, #ffd166, #06d6a0, #4cc9f0, #c77dff, #ff4d6d);
+      background-size: 280% 100%;
+      animation: chroma-run 2.2s linear infinite;
+    }
+
+    @keyframes chroma-run {
+      to { background-position: 280% 0; }
+    }
+
+    .update-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .update-alert {
+      display: none;
+      min-width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      place-items: center;
+      color: white;
+      background: var(--danger);
+      font-weight: 900;
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 20%, transparent);
+    }
+
+    .update-alert.show { display: grid; }
+
     .chip:hover,
     .secondary-btn:hover,
     .icon-btn:hover,
@@ -316,24 +419,35 @@
       display: inline-grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 3px;
-      padding: 3px;
+      padding: 4px;
       border: 1px solid var(--line);
-      border-radius: var(--radius);
-      background: color-mix(in srgb, var(--surface) 72%, transparent);
+      border-radius: calc(var(--radius) + 2px);
+      background:
+        linear-gradient(180deg, color-mix(in srgb, var(--surface) 88%, transparent), color-mix(in srgb, var(--surface-soft) 72%, transparent));
+      box-shadow: inset 0 1px 0 color-mix(in srgb, white 18%, transparent);
     }
 
     .theme-btn {
-      min-height: 34px;
+      min-height: 36px;
       border: 0;
-      padding: 0 9px;
+      border-radius: var(--radius);
+      padding: 0 11px;
       background: transparent;
+      color: var(--muted);
       box-shadow: none;
       font-size: .84rem;
+      white-space: nowrap;
     }
 
     .theme-btn.active {
       color: white;
-      background: var(--accent);
+      background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 70%, var(--mint)));
+      box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 26%, transparent);
+    }
+
+    .theme-btn svg {
+      width: 16px;
+      height: 16px;
     }
 
     .counter {
@@ -357,13 +471,34 @@
       place-items: center;
       text-align: center;
       padding: 24px;
-      transition: border-color .16s ease, background .16s ease, transform .16s ease;
+      position: relative;
+      overflow: hidden;
+      transition: border-color .16s ease, background .16s ease, transform .16s ease, box-shadow .16s ease;
       animation: rise-in .34s .04s ease both, soft-pulse 3.4s ease-in-out infinite;
+    }
+
+    .dropzone::before {
+      content: "";
+      position: absolute;
+      inset: 12px;
+      border-radius: var(--radius);
+      background: radial-gradient(circle, color-mix(in srgb, var(--accent) 22%, transparent), transparent 62%);
+      opacity: 0;
+      pointer-events: none;
     }
 
     .dropzone.active {
       border-color: var(--accent);
       transform: translateY(-1px);
+      box-shadow: 0 18px 36px color-mix(in srgb, var(--accent) 18%, transparent);
+    }
+
+    .dropzone.active::before {
+      animation: drop-ripple .9s ease infinite;
+    }
+
+    .dropzone.uploading .upload-icon {
+      animation: upload-float 1s ease-in-out infinite;
     }
 
     .upload-icon {
@@ -422,7 +557,21 @@
       height: 100%;
       border-radius: inherit;
       background: linear-gradient(90deg, var(--accent), var(--mint));
+      position: relative;
+      overflow: hidden;
       transition: width .16s ease;
+    }
+
+    .progress-bar::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .5), transparent);
+      transform: translateX(-120%);
+    }
+
+    .dropzone.uploading .progress-bar::after {
+      animation: progress-shimmer 1.05s linear infinite;
     }
 
     .status {
@@ -500,19 +649,41 @@
       padding: 0 16px 16px;
     }
 
-    .text-item {
+    .text-viewer {
       border: 1px solid var(--line);
       border-radius: var(--radius);
       background: var(--surface);
       padding: 12px;
+      display: grid;
+      gap: 12px;
     }
 
-    .text-item-top {
+    .text-item-top,
+    .text-nav {
       display: flex;
       justify-content: space-between;
       gap: 10px;
       align-items: center;
-      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+
+    .text-nav {
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .text-nav-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .text-position {
+      color: var(--muted);
+      font-size: .78rem;
+      font-weight: 800;
+      min-width: 42px;
+      text-align: center;
     }
 
     .language-pill {
@@ -532,7 +703,19 @@
       line-height: 1.45;
     }
 
-    .text-copy { margin: 0; }
+    .text-copy {
+      margin: 0;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 5;
+      overflow: hidden;
+    }
+
+    .text-copy.expanded {
+      display: block;
+      -webkit-line-clamp: unset;
+      overflow: visible;
+    }
 
     .text-original {
       margin-top: 8px;
@@ -540,6 +723,10 @@
       border-top: 1px solid var(--line);
       color: var(--muted);
       font-size: .88rem;
+    }
+
+    .text-original[hidden] {
+      display: none;
     }
 
     .table-wrap {
@@ -573,10 +760,75 @@
       text-transform: uppercase;
     }
 
+    tbody tr {
+      animation: rise-in .22s ease both;
+    }
+
     th:nth-child(1), td:nth-child(1) { width: 48%; }
     th:nth-child(2), td:nth-child(2) { width: 18%; }
     th:nth-child(3), td:nth-child(3) { width: 22%; }
     th:nth-child(4), td:nth-child(4) { width: 12%; text-align: right; }
+
+    .file-cell {
+      display: grid;
+      grid-template-columns: 38px minmax(0, 1fr);
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .file-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: var(--radius);
+      display: grid;
+      place-items: center;
+      color: white;
+      background: var(--file-text);
+      box-shadow: inset 0 1px 0 color-mix(in srgb, white 22%, transparent);
+    }
+
+    .file-icon.image { background: linear-gradient(135deg, var(--file-image), var(--mint)); }
+    .file-icon.text,
+    .file-icon.file,
+    .file-icon.document,
+    .file-icon.pdf { background: linear-gradient(135deg, var(--file-text), #475569); }
+    .file-icon.code { background: linear-gradient(135deg, var(--file-code), #06b6d4); }
+    .file-icon.archive { background: linear-gradient(135deg, var(--file-archive), #f97316); }
+    .file-icon.media { background: linear-gradient(135deg, var(--file-media), #8b5cf6); }
+
+    .file-icon svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .file-main {
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+    }
+
+    .file-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: .74rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      min-width: 0;
+    }
+
+    .file-pill {
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 6px;
+      background: color-mix(in srgb, var(--surface-soft) 78%, transparent);
+    }
 
     td a {
       display: inline-block;
@@ -618,6 +870,17 @@
       padding: 10px;
       animation: qr-pop .28s ease both;
       transition: transform .18s ease, box-shadow .18s ease;
+      cursor: zoom-in;
+    }
+
+    .qr-box.updating img {
+      animation: qr-refresh .7s ease both;
+    }
+
+    .qr-status {
+      color: var(--muted);
+      font-size: .78rem;
+      font-weight: 800;
     }
 
     .qr-box img:hover {
@@ -650,6 +913,68 @@
       opacity: 0;
       pointer-events: none;
       transition: opacity .2s ease;
+    }
+
+    .qr-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 70;
+      display: grid;
+      place-items: center;
+      padding: max(18px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom));
+      background: rgba(8, 16, 28, .76);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s ease;
+      backdrop-filter: blur(8px);
+    }
+
+    .qr-modal[aria-hidden="false"] {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .qr-modal-card {
+      position: relative;
+      width: min(92vw, 620px);
+      padding: 18px;
+      border: 1px solid color-mix(in srgb, var(--line) 92%, white 8%);
+      border-radius: calc(var(--radius) + 6px);
+      background: color-mix(in srgb, var(--surface) 97%, transparent);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, .35);
+      transform: scale(.96);
+      transition: transform .2s ease;
+    }
+
+    .qr-modal[aria-hidden="false"] .qr-modal-card {
+      transform: scale(1);
+    }
+
+    .qr-modal-close {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      z-index: 1;
+    }
+
+    .qr-modal-image {
+      display: block;
+      width: min(100%, 540px);
+      margin: 16px auto 10px;
+      aspect-ratio: 1;
+      border-radius: calc(var(--radius) + 2px);
+      border: 1px solid var(--line);
+      background: white;
+      padding: 16px;
+      box-shadow: 0 14px 34px rgba(14, 165, 183, .12);
+    }
+
+    .qr-modal-copy {
+      margin: 0;
+      text-align: center;
+      color: var(--muted);
+      font-weight: 800;
+      font-size: .9rem;
     }
 
     .drawer {
@@ -890,14 +1215,24 @@
       </div>
       <div class="hero-actions">
         <div class="theme-switch" aria-label="Theme">
-          <button class="theme-btn" type="button" data-theme-choice="light">Light</button>
-          <button class="theme-btn" type="button" data-theme-choice="dark">Dark</button>
-          <button class="theme-btn" type="button" data-theme-choice="system">System</button>
+          <button class="theme-btn" type="button" data-theme-choice="light" aria-label="Use light theme">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+            Light
+          </button>
+          <button class="theme-btn" type="button" data-theme-choice="dark" aria-label="Use dark theme">
+            <svg viewBox="0 0 24 24"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5 7 7 0 1 0 20.5 14.5Z"/></svg>
+            Dark
+          </button>
+          <button class="theme-btn" type="button" data-theme-choice="system" aria-label="Use system theme">
+            <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8m-4-4v4"/></svg>
+            System
+          </button>
         </div>
         {% if is_admin %}
         <button id="openAdminBtn" class="secondary-btn" type="button" aria-haspopup="dialog" aria-controls="adminDrawer" aria-expanded="false">
           <svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 13a7.7 7.7 0 0 0 0-2l2-1.5-2-3.5-2.4 1a8.2 8.2 0 0 0-1.7-1L15 3.5h-6L8.7 6a8.2 8.2 0 0 0-1.7 1L4.6 6l-2 3.5 2 1.5a7.7 7.7 0 0 0 0 2l-2 1.5 2 3.5 2.4-1a8.2 8.2 0 0 0 1.7 1l.3 2.5h6l.3-2.5a8.2 8.2 0 0 0 1.7-1l2.4 1 2-3.5-2-1.5Z"/></svg>
           Admin
+          <span id="openAdminAlert" class="update-alert" aria-label="New update available">!</span>
         </button>
         {% endif %}
       </div>
@@ -916,9 +1251,10 @@
           </div>
           <div class="admin-card">
             <div class="qr-box">
-              <img alt="QR code for Drop Air connection" src="data:image/svg+xml;utf8,{{ qr_svg|urlencode }}">
+              <img data-qr-image alt="QR code for Drop Air connection" src="{{ qr_url }}">
               <div class="url-box">
-                <div id="publicUrl" class="url-value">{{ public_url }}</div>
+                <div id="publicUrl" class="url-value" data-public-url>{{ public_url }}</div>
+                <div class="qr-status" data-session-status>QR key refreshes every 5 minutes.</div>
                 <button id="copyPublicUrlBtn" class="primary-btn" type="button">
                   <svg viewBox="0 0 24 24"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>
                   Copy Link
@@ -1023,19 +1359,6 @@
       </div>
 
       <section class="panel admin-card">
-        <h3 class="panel-title">Connection</h3>
-        <div class="qr-box">
-          <img alt="QR code for Drop Air connection" src="data:image/svg+xml;utf8,{{ qr_svg|urlencode }}">
-          <div class="url-box">
-            <div class="url-value">{{ public_url }}</div>
-            <button class="secondary-btn" type="button" data-copy="{{ public_url }}">Copy Wi-Fi Link</button>
-            <button class="secondary-btn" type="button" data-copy="{{ local_url }}">Copy Local Admin Link</button>
-          </div>
-        </div>
-        <p class="admin-note">Admin controls only appear on the host machine. Other devices get transfer and text tools.</p>
-      </section>
-
-      <section class="panel admin-card">
         <div class="drawer-top">
           <h3 class="panel-title">Status</h3>
           <button id="refreshAdminBtn" class="secondary-btn" type="button">Refresh</button>
@@ -1084,12 +1407,17 @@
         <h3 class="panel-title">Housekeeping</h3>
         <div class="admin-actions">
           <button class="secondary-btn" type="button" data-cleanup="text">Clear Text</button>
-          <button class="secondary-btn danger-btn" type="button" data-cleanup="uploads">Clear Files</button>
+          <button class="secondary-btn danger-btn" type="button" data-cleanup="all">Clear Files</button>
         </div>
       </section>
 
       <section class="panel admin-card">
         <h3 class="panel-title">Server</h3>
+        <div class="update-line">
+          <p id="updateStatus" class="admin-note">Checking for updates...</p>
+          <span id="updateAlert" class="update-alert" aria-label="New update available">!</span>
+        </div>
+        <button id="updateServerBtn" class="secondary-btn update-btn" type="button" disabled>Check Updates</button>
         <p class="admin-note">Stop Drop Air on this computer and close this admin window when the browser allows it.</p>
         <button id="quitServerBtn" class="secondary-btn danger-btn" type="button">Quit Drop Air</button>
       </section>
@@ -1097,16 +1425,26 @@
   </aside>
   {% endif %}
 
+  <div id="qrModal" class="qr-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="qrModalTitle">
+    <div class="qr-modal-card">
+      <button id="qrModalClose" class="icon-btn qr-modal-close" type="button" aria-label="Close QR preview">X</button>
+      <h2 id="qrModalTitle" class="panel-title">Scan QR Code</h2>
+      <img id="qrModalImage" class="qr-modal-image" alt="Large Drop Air QR code preview" src="" />
+      <p class="qr-modal-copy">Scan this enlarged QR code from your phone or tablet.</p>
+    </div>
+  </div>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script>
     let accessCode = "{{ access_code }}";
-    const sessionKey = {{ session_key|tojson }};
+    let sessionKey = {{ session_key|tojson }};
     const isAdmin = {{ is_admin|tojson }};
     const initialSettings = {{ settings|tojson }};
     const initialStats = {{ stats|tojson }};
-    const publicUrl = {{ public_url|tojson }};
+    let publicUrl = {{ public_url|tojson }};
     const localUrl = {{ local_url|tojson }};
+    let sessionSecondsRemaining = {{ session_seconds_remaining|default(300)|tojson }};
     const picker = document.getElementById("picker");
     const pickBtn = document.getElementById("pickBtn");
     const dropzone = document.getElementById("dropzone");
@@ -1120,8 +1458,15 @@
     const textList = document.getElementById("textList");
     const textCount = document.getElementById("textCount");
     const sendTextBtn = document.getElementById("sendTextBtn");
+    const qrModal = document.getElementById("qrModal");
+    const qrModalImage = document.getElementById("qrModalImage");
+    const qrModalClose = document.getElementById("qrModalClose");
     const toast = document.getElementById("toast");
     let toastTimer;
+    let mouseFrame;
+    let sessionSyncTimer;
+    let currentTextIndex = 0;
+    let expandedTextIds = new Set();
 
     const adminEls = {
       openBtn: document.getElementById("openAdminBtn"),
@@ -1138,6 +1483,10 @@
       generateCode: document.getElementById("generateCodeBtn"),
       copyGuestLink: document.getElementById("copyGuestLinkBtn"),
       clearCode: document.getElementById("clearCodeBtn"),
+      update: document.getElementById("updateServerBtn"),
+      updateStatus: document.getElementById("updateStatus"),
+      updateAlert: document.getElementById("updateAlert"),
+      openAlert: document.getElementById("openAdminAlert"),
       quit: document.getElementById("quitServerBtn"),
       refresh: document.getElementById("refreshAdminBtn"),
       fileCount: document.getElementById("adminFileCount"),
@@ -1175,7 +1524,11 @@
     }
 
     function generateAccessCode() {
-      const code = String(Math.floor(100000 + Math.random() * 900000));
+      const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      let code = "";
+      for (let i = 0; i < 32; i++) {
+        code += alphabet[Math.floor(Math.random() * alphabet.length)];
+      }
       adminEls.accessCode.value = code;
       showToast("New code ready. Save to apply.");
     }
@@ -1189,6 +1542,37 @@
 
     function stamp(unix) {
       return new Date(unix * 1000).toLocaleString();
+    }
+
+    function fileInfo(name) {
+      const ext = (name.split(".").pop() || "").toLowerCase();
+      const map = {
+        image: ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "heic", "avif"],
+        text: ["txt", "md", "rtf", "log", "csv", "json", "xml", "yaml", "yml"],
+        code: ["py", "js", "ts", "tsx", "jsx", "html", "css", "scss", "ps1", "bat", "sh", "sql"],
+        archive: ["zip", "rar", "7z", "tar", "gz", "bz2"],
+        media: ["mp4", "mov", "mkv", "webm", "mp3", "wav", "flac", "m4a"],
+        pdf: ["pdf"],
+        document: ["doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp"]
+      };
+      for (const [kind, exts] of Object.entries(map)) {
+        if (exts.includes(ext)) return { kind, label: ext ? ext.toUpperCase() : "FILE" };
+      }
+      return { kind: "file", label: ext ? ext.toUpperCase() : "FILE" };
+    }
+
+    function fileIcon(kind) {
+      const icons = {
+        image: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="m21 15-5-5L5 19"/>',
+        text: '<path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5M8 13h8M8 17h6"/>',
+        code: '<path d="m8 9-4 3 4 3m8-6 4 3-4 3M14 5l-4 14"/>',
+        archive: '<path d="M10 2h4v4h-4zM10 6h4v4h-4zM10 10h4v4h-4z"/><path d="M6 2h12v18a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2Z"/>',
+        media: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3Z"/>',
+        pdf: '<path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5M8 17h8M8 13h4"/>',
+        document: '<path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5M8 12h8M8 16h8"/>',
+        file: '<path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/>'
+      };
+      return `<svg viewBox="0 0 24 24">${icons[kind] || icons.file}</svg>`;
     }
 
     function showToast(message) {
@@ -1229,13 +1613,79 @@
       }
     }
 
-    function applyTheme(choice) {
-      const next = choice || "system";
+    function commitTheme(next) {
       localStorage.setItem("dropAirTheme", next);
       document.documentElement.dataset.theme = next;
       document.querySelectorAll("[data-theme-choice]").forEach(btn => {
-        btn.classList.toggle("active", btn.dataset.themeChoice === next);
+        const active = btn.dataset.themeChoice === next;
+        btn.classList.toggle("active", active);
+        btn.setAttribute("aria-pressed", String(active));
       });
+    }
+
+    function applyTheme(choice) {
+      const next = choice || "system";
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (document.startViewTransition && !reduceMotion) {
+        document.startViewTransition(() => commitTheme(next));
+      } else {
+        commitTheme(next);
+      }
+    }
+
+    function updatePointerGlow(x, y) {
+      cancelAnimationFrame(mouseFrame);
+      mouseFrame = requestAnimationFrame(() => {
+        document.body.style.setProperty("--mouse-x", `${x}px`);
+        document.body.style.setProperty("--mouse-y", `${y}px`);
+      });
+    }
+
+    function updateSessionUi(data, changed) {
+      if (!data) return;
+      if (data.key) sessionKey = data.key;
+      if (data.public_url) publicUrl = data.public_url;
+      sessionSecondsRemaining = Number(data.seconds_remaining ?? sessionSecondsRemaining);
+      document.querySelectorAll("[data-public-url]").forEach(el => {
+        el.textContent = publicUrl;
+      });
+      document.querySelectorAll("[data-session-status]").forEach(el => {
+        const remaining = Math.max(0, sessionSecondsRemaining);
+        const min = Math.floor(remaining / 60);
+        const sec = String(remaining % 60).padStart(2, "0");
+        el.textContent = `QR key refreshes in ${min}:${sec}. Connected devices sync automatically.`;
+      });
+      if (data.qr_url) {
+        document.querySelectorAll("[data-qr-image]").forEach(img => {
+          const box = img.closest(".qr-box");
+          if (changed && box) {
+            box.classList.remove("updating");
+            void box.offsetWidth;
+            box.classList.add("updating");
+            setTimeout(() => box.classList.remove("updating"), 760);
+          }
+          img.src = `${data.qr_url}${data.qr_url.includes("?") ? "&" : "?"}t=${Date.now()}`;
+        });
+      }
+    }
+
+    async function syncSession() {
+      try {
+        const before = sessionKey;
+        const r = await fetch(`/api/session${codeQuery()}`, {
+          headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {}
+        });
+        if (!r.ok) return;
+        const data = await r.json();
+        updateSessionUi(data, Boolean(data.key && data.key !== before));
+        scheduleSessionSync();
+      } catch (_) {}
+    }
+
+    function scheduleSessionSync() {
+      clearTimeout(sessionSyncTimer);
+      const ms = Math.max(5000, (sessionSecondsRemaining - 20) * 1000);
+      sessionSyncTimer = setTimeout(syncSession, ms);
     }
 
     function formatEta(seconds) {
@@ -1274,6 +1724,13 @@
       const data = await r.json();
       updateAdminStats(data.stats || {});
       fillSettingsForm(data.settings || {});
+      if (data.session) {
+        updateSessionUi({
+          ...data.session,
+          public_url: data.public_url,
+          qr_url: data.qr_url
+        }, false);
+      }
       showToast("Admin status refreshed");
     }
 
@@ -1292,6 +1749,21 @@
       adminEls.openBtn.setAttribute("aria-expanded", "true");
       setTimeout(() => adminEls.closeBtn.focus({ preventScroll: true }), 0);
       document.addEventListener("keydown", onDrawerKeydown);
+    }
+
+    function openQrModal(src) {
+      if (!src || !qrModal || !qrModalImage) return;
+      qrModalImage.src = src;
+      qrModal.setAttribute("aria-hidden", "false");
+      document.body.classList.add("qr-modal-open");
+      setTimeout(() => qrModalClose?.focus({ preventScroll: true }), 0);
+    }
+
+    function closeQrModal() {
+      if (!qrModal) return;
+      qrModal.setAttribute("aria-hidden", "true");
+      document.body.classList.remove("qr-modal-open");
+      qrModalImage.removeAttribute("src");
     }
 
     function closeAdmin() {
@@ -1402,16 +1874,101 @@
       }
     }
 
+    function setUpdateUi(data) {
+      if (!isAdmin || !adminEls.update) return;
+      const current = data.current_version || "";
+      const latest = data.latest_version || "";
+      adminEls.update.classList.toggle("has-update", Boolean(data.update_available));
+      adminEls.updateAlert.classList.toggle("show", Boolean(data.update_available));
+      adminEls.openAlert?.classList.toggle("show", Boolean(data.update_available));
+      adminEls.update.disabled = false;
+      if (!data.configured) {
+        adminEls.update.textContent = "Check Updates";
+        adminEls.update.disabled = true;
+        adminEls.updateStatus.textContent = data.message || "Set DROP_AIR_UPDATE_REPO to enable updates.";
+        return;
+      }
+      if (data.update_available) {
+        adminEls.update.textContent = `Update to ${latest}`;
+        adminEls.updateStatus.textContent = `Current ${current}. New ${latest} is available.`;
+      } else {
+        adminEls.update.textContent = "Check Updates";
+        adminEls.updateStatus.textContent = data.message || `Current ${current}. No update available.`;
+      }
+    }
+
+    async function checkUpdates() {
+      if (!isAdmin) return;
+      adminEls.updateStatus.textContent = "Checking for updates...";
+      const r = await fetch(`/api/admin/update${codeQuery()}`, {
+        headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {}
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        adminEls.updateStatus.textContent = data.message || data.error || "Could not check updates.";
+        adminEls.update.disabled = true;
+        return;
+      }
+      setUpdateUi(data);
+    }
+
+    async function applyUpdate() {
+      if (!isAdmin) return;
+      if (!adminEls.update.classList.contains("has-update")) {
+        await checkUpdates();
+        return;
+      }
+      const ok = confirm("Install this update now? Every connection will be lost, shared files and text will be cleaned up, and Drop Air will restart.");
+      if (!ok) return;
+      adminEls.update.disabled = true;
+      adminEls.updateStatus.textContent = "Starting update. Watch the terminal for progress.";
+      const r = await fetch(`/api/admin/update${codeQuery()}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(accessCode ? { "X-Drop-Air-Code": accessCode } : {}) },
+        body: "{}"
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        adminEls.update.disabled = false;
+        adminEls.updateStatus.textContent = data.error || "Could not start update.";
+        return;
+      }
+      document.body.innerHTML = '<main class="wrap"><section class="panel admin-card"><h1 class="panel-title">Drop Air is updating</h1><p class="admin-note">The server is cleaning up, installing the release, and restarting. Watch the terminal for progress.</p></section></main>';
+      setTimeout(() => {
+        window.open("", "_self");
+        window.close();
+      }, 900);
+    }
+
     function fileRow(f) {
       const row = document.createElement("tr");
       const link = withCode(f.url);
       const absolute = new URL(link, window.location.href).toString();
+      const info = fileInfo(f.name);
       const name = document.createElement("td");
+      const cell = document.createElement("div");
+      cell.className = "file-cell";
+      const icon = document.createElement("div");
+      icon.className = `file-icon ${info.kind}`;
+      icon.setAttribute("aria-hidden", "true");
+      icon.innerHTML = fileIcon(info.kind);
+      const main = document.createElement("div");
+      main.className = "file-main";
       const anchor = document.createElement("a");
       anchor.href = link;
       anchor.title = f.name;
       anchor.textContent = f.name;
-      name.appendChild(anchor);
+      const meta = document.createElement("div");
+      meta.className = "file-meta";
+      const kind = document.createElement("span");
+      kind.className = "file-pill";
+      kind.textContent = info.label;
+      const age = document.createElement("span");
+      age.textContent = stamp(f.modified);
+      meta.append(kind, age);
+      main.append(anchor, meta);
+      cell.append(icon, main);
+      name.appendChild(cell);
       const size = document.createElement("td");
       size.textContent = human(f.size);
       const modified = document.createElement("td");
@@ -1445,40 +2002,95 @@
       textList.innerHTML = "";
       textCount.textContent = `Text (${items.length})`;
       if (!items.length) {
+        currentTextIndex = 0;
+        expandedTextIds = new Set();
         const empty = document.createElement("div");
         empty.className = "empty";
         empty.textContent = "No shared text yet";
         textList.appendChild(empty);
         return;
       }
-      items.forEach(item => {
-        const display = item.translated_text || item.text;
-        const card = document.createElement("article");
-        card.className = "text-item";
-        const top = document.createElement("div");
-        top.className = "text-item-top";
-        const pill = document.createElement("span");
-        pill.className = "language-pill";
-        pill.textContent = `Text - ${stamp(item.created)}`;
-        const copy = document.createElement("button");
-        copy.className = "icon-btn";
-        copy.type = "button";
-        copy.setAttribute("aria-label", "Copy shared text");
-        copy.innerHTML = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>';
-        copy.addEventListener("click", () => copyText(display));
-        top.append(pill, copy);
-        const body = document.createElement("p");
-        body.className = "text-copy";
-        body.textContent = display;
-        card.append(top, body);
-        if (item.translated_text && item.translated_text !== item.text) {
-          const original = document.createElement("div");
-          original.className = "text-original";
-          original.textContent = item.text;
-          card.appendChild(original);
-        }
-        textList.appendChild(card);
+      currentTextIndex = Math.min(currentTextIndex, items.length - 1);
+      const item = items[currentTextIndex];
+      const display = item.translated_text || item.text;
+      const expanded = expandedTextIds.has(item.id);
+
+      const card = document.createElement("article");
+      card.className = "text-viewer";
+
+      const nav = document.createElement("div");
+      nav.className = "text-nav";
+      const navGroup = document.createElement("div");
+      navGroup.className = "text-nav-group";
+      const prev = document.createElement("button");
+      prev.className = "icon-btn";
+      prev.type = "button";
+      prev.setAttribute("aria-label", "Show previous text");
+      prev.innerHTML = '<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>';
+      prev.disabled = currentTextIndex === 0;
+      prev.addEventListener("click", () => {
+        currentTextIndex = Math.max(0, currentTextIndex - 1);
+        renderTextItems(items);
       });
+      const position = document.createElement("span");
+      position.className = "text-position";
+      position.textContent = `${currentTextIndex + 1}/${items.length}`;
+      const next = document.createElement("button");
+      next.className = "icon-btn";
+      next.type = "button";
+      next.setAttribute("aria-label", "Show next text");
+      next.innerHTML = '<svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>';
+      next.disabled = currentTextIndex >= items.length - 1;
+      next.addEventListener("click", () => {
+        currentTextIndex = Math.min(items.length - 1, currentTextIndex + 1);
+        renderTextItems(items);
+      });
+      navGroup.append(prev, position, next);
+      const navMeta = document.createElement("span");
+      navMeta.className = "language-pill";
+      navMeta.textContent = stamp(item.created);
+      nav.append(navGroup, navMeta);
+
+      const top = document.createElement("div");
+      top.className = "text-item-top";
+      const pill = document.createElement("span");
+      pill.className = "language-pill";
+      pill.textContent = "Shared Text";
+      const actionGroup = document.createElement("div");
+      actionGroup.className = "text-nav-group";
+      const expand = document.createElement("button");
+      expand.className = "secondary-btn";
+      expand.type = "button";
+      expand.textContent = expanded ? "Collapse" : "Expand";
+      expand.addEventListener("click", () => {
+        if (expandedTextIds.has(item.id)) {
+          expandedTextIds.delete(item.id);
+        } else {
+          expandedTextIds.add(item.id);
+        }
+        renderTextItems(items);
+      });
+      const copy = document.createElement("button");
+      copy.className = "icon-btn";
+      copy.type = "button";
+      copy.setAttribute("aria-label", "Copy shared text");
+      copy.innerHTML = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>';
+      copy.addEventListener("click", () => copyText(display));
+      actionGroup.append(expand, copy);
+      top.append(pill, actionGroup);
+
+      const body = document.createElement("p");
+      body.className = "text-copy";
+      if (expanded) body.classList.add("expanded");
+      body.textContent = display;
+
+      const original = document.createElement("div");
+      original.className = "text-original";
+      original.hidden = !(item.translated_text && item.translated_text !== item.text);
+      original.textContent = item.text;
+
+      card.append(nav, top, body, original);
+      textList.appendChild(card);
     }
 
     async function refreshTextItems() {
@@ -1558,6 +2170,7 @@
     async function uploadMany(files) {
       if (!files.length) return;
       pickBtn.disabled = true;
+      dropzone.classList.add("uploading");
       setProgress(0);
       const totalBytes = files.reduce((sum, f) => sum + (f.size || 0), 0);
       const startedAt = performance.now();
@@ -1575,17 +2188,42 @@
         setStatus(e.message, true);
       } finally {
         pickBtn.disabled = false;
+        dropzone.classList.remove("uploading");
         picker.value = "";
       }
     }
 
     applyTheme(localStorage.getItem("dropAirTheme") || "system");
+    updateSessionUi({ seconds_remaining: sessionSecondsRemaining, public_url: publicUrl }, false);
+    scheduleSessionSync();
     fillSettingsForm(initialSettings);
     updateAdminStats(initialStats);
     document.querySelectorAll("[data-theme-choice]").forEach(btn => btn.addEventListener("click", () => applyTheme(btn.dataset.themeChoice)));
     document.querySelectorAll("[data-copy]").forEach(btn => btn.addEventListener("click", () => copyText(btn.dataset.copy)));
+    document.querySelectorAll("[data-copy-public]").forEach(btn => btn.addEventListener("click", () => copyText(publicUrl)));
     document.querySelectorAll("[data-cleanup]").forEach(btn => btn.addEventListener("click", () => cleanupTarget(btn.dataset.cleanup).catch(err => showToast(err.message))));
-    document.getElementById("copyPublicUrlBtn")?.addEventListener("click", () => copyText(document.getElementById("publicUrl")?.textContent || ""));
+    document.querySelectorAll("[data-qr-image]").forEach(img => {
+      img.addEventListener("click", () => openQrModal(img.currentSrc || img.src));
+      img.addEventListener("keydown", e => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          openQrModal(img.currentSrc || img.src);
+        }
+      });
+      img.setAttribute("tabindex", "0");
+      img.setAttribute("role", "button");
+      img.setAttribute("aria-label", "Open larger QR code");
+    });
+    document.getElementById("copyPublicUrlBtn")?.addEventListener("click", () => copyText(publicUrl));
+    qrModalClose?.addEventListener("click", closeQrModal);
+    qrModal?.addEventListener("click", e => {
+      if (e.target === qrModal) closeQrModal();
+    });
+    window.addEventListener("pointermove", e => updatePointerGlow(e.clientX, e.clientY), { passive: true });
+    window.addEventListener("touchmove", e => {
+      const touch = e.touches && e.touches[0];
+      if (touch) updatePointerGlow(touch.clientX, touch.clientY);
+    }, { passive: true });
     pickBtn.addEventListener("click", () => picker.click());
     picker.addEventListener("change", () => uploadMany([...picker.files]));
     textForm.addEventListener("submit", shareText);
@@ -1601,11 +2239,21 @@
       });
       adminEls.copyGuestLink.addEventListener("click", () => copyText(linkForCode(publicUrl, adminEls.accessCode.value.trim())));
       adminEls.refresh.addEventListener("click", () => refreshAdmin().catch(err => showToast(err.message)));
+      adminEls.update.addEventListener("click", () => applyUpdate().catch(err => {
+        adminEls.update.disabled = false;
+        adminEls.updateStatus.textContent = err.message;
+      }));
       adminEls.quit.addEventListener("click", quitServer);
+      checkUpdates().catch(err => { adminEls.updateStatus.textContent = err.message; });
       if (new URLSearchParams(window.location.search).get("admin") === "open") {
         openAdmin();
       }
     }
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape" && qrModal?.getAttribute("aria-hidden") === "false") {
+        closeQrModal();
+      }
+    });
     filesBody.addEventListener("click", e => {
       const button = e.target.closest(".copy-file");
       if (button) copyText(new URL(button.dataset.url, window.location.href).toString());
@@ -1625,8 +2273,13 @@
     dropzone.addEventListener("drop", e => uploadMany([...e.dataTransfer.files]));
     refreshFiles();
     refreshTextItems();
+    syncSession();
     setInterval(refreshFiles, 3000);
     setInterval(refreshTextItems, 3000);
+    setInterval(() => {
+      sessionSecondsRemaining = Math.max(0, sessionSecondsRemaining - 1);
+      updateSessionUi({ seconds_remaining: sessionSecondsRemaining, public_url: publicUrl }, false);
+    }, 1000);
   </script>
 </body>
 </html>

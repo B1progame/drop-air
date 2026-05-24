@@ -2,15 +2,23 @@ import atexit
 import json
 import logging
 import os
+import re
 import secrets
 import signal
 import socket
+import shutil
+import subprocess
 import sys
+import tempfile
+import threading
 import time
 import webbrowser
+import zipfile
 from pathlib import Path
 from threading import Lock, Timer
+from urllib.error import HTTPError
 from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 import qrcode
 from flask import Flask, Response, jsonify, redirect, render_template, request, send_from_directory, url_for
@@ -22,6 +30,7 @@ if getattr(sys, "frozen", False):
 else:
     APP_DIR = Path(__file__).resolve().parent
     TEMPLATE_DIR = APP_DIR / "templates"
+BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
 
 def get_data_dir() -> Path:
     # Use a per-user writable folder for runtime data so packaged installs work from Program Files.
@@ -49,8 +58,49 @@ LOG_FILE = DATA_DIR / "drop-air.log"
 
 MAX_CONTENT_LENGTH = 10 * 1024 * 1024 * 1024  # 10 GB
 ALLOWED_ORIGINS = "*"
-SESSION_KEY = (os.getenv("DROP_AIR_SESSION_KEY", "").strip() or secrets.token_hex(16))[:32]
+_ENV_SESSION_KEY = os.getenv("DROP_AIR_SESSION_KEY", "").strip()
+SESSION_KEY = _ENV_SESSION_KEY if len(_ENV_SESSION_KEY) == 32 else secrets.token_hex(16)
 SESSION_PARAM = "k"
+SESSION_TTL_SECONDS = int(os.getenv("DROP_AIR_SESSION_TTL_SECONDS", "300") or "300")
+SESSION_GRACE_SECONDS = int(os.getenv("DROP_AIR_SESSION_GRACE_SECONDS", "120") or "120")
+SESSION_EXPIRES_AT = time.time() + SESSION_TTL_SECONDS
+SESSION_PREVIOUS_KEYS = {}
+SESSION_LOCK = Lock()
+VERSION_FILE = APP_DIR / "VERSION"
+BUNDLE_VERSION_FILE = BUNDLE_DIR / "VERSION"
+APP_VERSION = (
+    os.getenv("DROP_AIR_VERSION")
+    or (VERSION_FILE.read_text(encoding="utf-8").strip() if VERSION_FILE.exists() else "")
+    or (BUNDLE_VERSION_FILE.read_text(encoding="utf-8").strip() if BUNDLE_VERSION_FILE.exists() else "")
+    or "1.0.0"
+).lstrip("v")
+
+
+def detect_update_repo() -> str:
+    override = os.getenv("DROP_AIR_UPDATE_REPO", "").strip()
+    if override:
+        return override
+    if getattr(sys, "frozen", False):
+        return ""
+    try:
+        result = subprocess.run(
+            ["git", "config", "--get", "remote.origin.url"],
+            cwd=str(APP_DIR),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    remote = (result.stdout or "").strip()
+    match = re.search(r"github\.com[:/](?P<owner>[^/]+)/(?P<repo>[^/\s]+?)(?:\.git)?$", remote)
+    if not match:
+        return ""
+    return f"{match.group('owner')}/{match.group('repo')}"
+
+
+UPDATE_REPO = detect_update_repo()
 DEFAULT_SETTINGS = {
     "access_code": os.getenv("DROP_AIR_CODE", "").strip(),
     "auto_cleanup_minutes": int(os.getenv("DROP_AIR_AUTO_CLEANUP_MINUTES", "10") or "10"),
@@ -70,15 +120,18 @@ TEXT_TTL_MINUTES = int(os.getenv("DROP_AIR_TEXT_TTL_MINUTES", "10") or "10")
 
 app = Flask(__name__, template_folder=str(TEMPLATE_DIR))
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
+BROWSER_PROCESS = None
+BROWSER_PROFILE_DIR = DATA_DIR / "browser-profile"
+_SHUTDOWN_DONE = False
+_CONSOLE_HANDLER = None
 
 
 def app_icon_path() -> Path | None:
     env_icon = (os.getenv("DROP_AIR_ICON") or "").strip()
-    bundle_dir = Path(getattr(sys, "_MEIPASS", APP_DIR))
     candidates = [
         Path(env_icon).expanduser() if env_icon else None,
         APP_DIR / "assets" / "icon" / "drop_air_minimal.ico",
-        bundle_dir / "assets" / "icon" / "drop_air_minimal.ico",
+        BUNDLE_DIR / "assets" / "icon" / "drop_air_minimal.ico",
     ]
     for candidate in candidates:
         if candidate and candidate.exists():
@@ -112,6 +165,223 @@ def set_console_window_icon() -> None:
                 user32.SendMessageW(hwnd, wm_seticon, icon_type, icon_handle)
     except Exception:
         pass
+
+
+def browser_candidates() -> list[Path]:
+    if os.name != "nt":
+        return []
+    roots = [os.getenv("ProgramFiles", ""), os.getenv("ProgramFiles(x86)", ""), os.getenv("LOCALAPPDATA", "")]
+    rels = [
+        "Microsoft\\Edge\\Application\\msedge.exe",
+        "Google\\Chrome\\Application\\chrome.exe",
+        "BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+    ]
+    return [Path(root) / rel for root in roots if root for rel in rels]
+
+
+def open_admin_browser(url: str) -> None:
+    global BROWSER_PROCESS
+    if os.name == "nt":
+        for candidate in browser_candidates():
+            if candidate.exists():
+                try:
+                    BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+                    BROWSER_PROCESS = subprocess.Popen(
+                        [str(candidate), "--new-window", f"--user-data-dir={BROWSER_PROFILE_DIR}", url],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    return
+                except OSError:
+                    break
+    webbrowser.open(url)
+
+
+def close_admin_browser() -> None:
+    global BROWSER_PROCESS
+    proc = BROWSER_PROCESS
+    BROWSER_PROCESS = None
+    if not proc or proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=2)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def progress_bar(label: str, current: int, total: int | None) -> None:
+    if not total:
+        print(f"\r{label}: {current / (1024 * 1024):.1f} MB", end="", flush=True)
+        return
+    width = 28
+    ratio = min(max(current / total, 0), 1)
+    filled = int(width * ratio)
+    bar = "#" * filled + "-" * (width - filled)
+    print(f"\r{label}: [{bar}] {ratio * 100:5.1f}%", end="", flush=True)
+
+
+def github_json(url: str) -> dict:
+    req = Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": f"DropAir/{APP_VERSION}",
+        },
+    )
+    with urlopen(req, timeout=15) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def latest_release_info() -> dict:
+    if not UPDATE_REPO:
+        return {
+            "configured": False,
+            "repo": "",
+            "current_version": APP_VERSION,
+            "latest_version": "",
+            "update_available": False,
+            "release_url": "",
+            "message": "Set DROP_AIR_UPDATE_REPO=owner/repo to enable updates.",
+        }
+
+    try:
+        release = github_json(f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest")
+    except HTTPError as exc:
+        if exc.code == 404:
+            return {
+                "configured": True,
+                "repo": UPDATE_REPO,
+                "current_version": APP_VERSION,
+                "latest_version": "",
+                "update_available": False,
+                "release_url": f"https://github.com/{UPDATE_REPO}/releases",
+                "message": "No GitHub releases found yet. Publish a tagged release to enable updates.",
+            }
+        raise
+
+    latest = str(release.get("tag_name", "")).lstrip("v")
+    return {
+        "configured": True,
+        "repo": UPDATE_REPO,
+        "current_version": APP_VERSION,
+        "latest_version": latest,
+        "update_available": parse_version(latest) > parse_version(APP_VERSION),
+        "release_url": release.get("html_url", ""),
+        "zipball_url": release.get("zipball_url", ""),
+        "assets": release.get("assets", []),
+        "message": "Update available." if parse_version(latest) > parse_version(APP_VERSION) else "Drop Air is up to date.",
+    }
+
+
+def download_file_with_progress(url: str, target: Path, label: str) -> None:
+    req = Request(url, headers={"User-Agent": f"DropAir/{APP_VERSION}"})
+    with urlopen(req, timeout=30) as response, target.open("wb") as out:
+        total = int(response.headers.get("Content-Length") or "0")
+        done = 0
+        while True:
+            chunk = response.read(1024 * 256)
+            if not chunk:
+                break
+            out.write(chunk)
+            done += len(chunk)
+            progress_bar(label, done, total)
+    print()
+
+
+def copy_source_tree(source_root: Path, destination_root: Path) -> None:
+    skip_names = {
+        ".git",
+        ".venv",
+        "__pycache__",
+        "build",
+        "dist",
+        "drop-air-public",
+        "uploads",
+        "settings.json",
+    }
+    for item in source_root.iterdir():
+        if item.name in skip_names or item.name.endswith((".pyc", ".pyo")):
+            continue
+        target = destination_root / item.name
+        if item.is_dir():
+            shutil.copytree(item, target, dirs_exist_ok=True)
+        else:
+            shutil.copy2(item, target)
+
+
+def find_release_exe_asset(info: dict) -> dict | None:
+    assets = info.get("assets") or []
+    for asset in assets:
+        name = str(asset.get("name", "")).lower()
+        if name.endswith(".exe") and "setup" not in name and "installer" not in name:
+            return asset
+    return None
+
+
+def restart_current_app() -> None:
+    args = [sys.executable] + sys.argv
+    subprocess.Popen(args, cwd=str(APP_DIR), close_fds=True)
+    os._exit(0)
+
+
+def install_update_from_release(info: dict) -> None:
+    print()
+    print(f"Updating Drop Air {APP_VERSION} -> {info.get('latest_version')}")
+    cleanup_all_uploads_on_shutdown()
+    clear_text_items()
+
+    with tempfile.TemporaryDirectory(prefix="drop-air-update-") as tmp:
+        tmp_path = Path(tmp)
+        if getattr(sys, "frozen", False):
+            asset = find_release_exe_asset(info)
+            if not asset:
+                raise RuntimeError("No standalone .exe release asset found. Upload DropAir.exe to the release.")
+            new_exe = tmp_path / Path(asset["name"]).name
+            download_file_with_progress(asset["browser_download_url"], new_exe, "Downloading")
+            helper = DATA_DIR / "finish-update.ps1"
+            helper.write_text(
+                "\n".join(
+                    [
+                        f"Start-Sleep -Milliseconds 700",
+                        f"Copy-Item -LiteralPath {str(new_exe)!r} -Destination {str(Path(sys.executable))!r} -Force",
+                        f"Start-Process -FilePath {str(Path(sys.executable))!r}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            subprocess.Popen(
+                ["powershell.exe", "-ExecutionPolicy", "Bypass", "-File", str(helper)],
+                creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
+            )
+            os._exit(0)
+
+        archive = tmp_path / "source.zip"
+        download_file_with_progress(info["zipball_url"], archive, "Downloading")
+        print("Installing: extracting release...")
+        with zipfile.ZipFile(archive) as zf:
+            zf.extractall(tmp_path / "release")
+        roots = [p for p in (tmp_path / "release").iterdir() if p.is_dir()]
+        if not roots:
+            raise RuntimeError("Release archive did not contain a source folder.")
+        print("Installing: copying source files...")
+        copy_source_tree(roots[0], APP_DIR)
+        print("Restarting Drop Air...")
+        restart_current_app()
+
+
+def start_update_install() -> dict:
+    info = latest_release_info()
+    if not info.get("configured"):
+        return {"ok": False, "error": info["message"]}
+    if not info.get("update_available"):
+        return {"ok": False, "error": "No update available."}
+    thread = threading.Thread(target=lambda: install_update_from_release(info), daemon=True)
+    thread.start()
+    return {"ok": True, "message": "Update started. Watch the terminal for progress."}
 
 
 class WerkzeugRequestFilter(logging.Filter):
@@ -166,6 +436,13 @@ def _coerce_bool(value, fallback: bool) -> bool:
     if isinstance(value, int):
         return bool(value)
     return fallback
+
+
+def parse_version(value: str) -> tuple[int, ...]:
+    parts = re.findall(r"\d+", (value or "").lstrip("v"))
+    if not parts:
+        return (0,)
+    return tuple(int(part) for part in parts[:4])
 
 
 def _normalize_settings(raw: dict) -> dict:
@@ -346,9 +623,28 @@ def build_public_url(access_code: str | None = None) -> str:
     return f"{base_url}{build_auth_query(access_code)}"
 
 
+def session_snapshot(force_rotate: bool = False) -> dict:
+    global SESSION_KEY, SESSION_EXPIRES_AT
+    now = time.time()
+    with SESSION_LOCK:
+        for key, expires_at in list(SESSION_PREVIOUS_KEYS.items()):
+            if expires_at <= now:
+                del SESSION_PREVIOUS_KEYS[key]
+        if force_rotate or now >= SESSION_EXPIRES_AT:
+            SESSION_PREVIOUS_KEYS[SESSION_KEY] = now + SESSION_GRACE_SECONDS
+            SESSION_KEY = secrets.token_hex(16)
+            SESSION_EXPIRES_AT = now + SESSION_TTL_SECONDS
+        return {
+            "key": SESSION_KEY,
+            "expires_at": int(SESSION_EXPIRES_AT),
+            "ttl_seconds": SESSION_TTL_SECONDS,
+            "seconds_remaining": max(0, int(SESSION_EXPIRES_AT - now)),
+        }
+
+
 def build_auth_query(access_code: str | None = None) -> str:
     code = access_code if access_code is not None else get_settings()["access_code"]
-    params = [(SESSION_PARAM, SESSION_KEY)]
+    params = [(SESSION_PARAM, session_snapshot()["key"])]
     if code:
         params.append(("code", code))
     return f"?{urlencode(params)}"
@@ -407,11 +703,19 @@ def check_code() -> bool:
     return supplied == access_code
 
 
+def is_valid_session_value(supplied: str) -> bool:
+    snapshot = session_snapshot()
+    if supplied == snapshot["key"]:
+        return True
+    with SESSION_LOCK:
+        return SESSION_PREVIOUS_KEYS.get(supplied, 0) > time.time()
+
+
 def check_session_key() -> bool:
     if is_admin_request():
         return True
     supplied = request.args.get(SESSION_PARAM, "") or request.headers.get("X-Drop-Air-Key", "")
-    return supplied == SESSION_KEY
+    return is_valid_session_value(supplied)
 
 
 def session_error():
@@ -429,6 +733,16 @@ def code_error():
         title="Code Not Found",
         message="This Drop Air access code does not exist.",
         hint="Check the code or ask the host to generate a new guest link.",
+    ), 404
+
+
+@app.errorhandler(404)
+def not_found(_error):
+    return render_template(
+        "not_found.html",
+        title="Page Not Found",
+        message="This Drop Air page does not exist.",
+        hint="Scan the current QR code or copy a fresh link from the host admin panel.",
     ), 404
 
 
@@ -531,18 +845,48 @@ def clear_uploads() -> int:
 
 
 def stop_server_process() -> None:
-    cleanup_all_uploads_on_shutdown()
+    shutdown_drop_air()
     logging.shutdown()
     os._exit(0)
 
 
 def _handle_shutdown_signal(signum, _frame):
-    cleanup_all_uploads_on_shutdown()
+    shutdown_drop_air()
     raise SystemExit(0)
 
 
+def shutdown_drop_air() -> None:
+    global _SHUTDOWN_DONE
+    if _SHUTDOWN_DONE:
+        return
+    _SHUTDOWN_DONE = True
+    cleanup_all_uploads_on_shutdown()
+    clear_text_items()
+    close_admin_browser()
+
+
+def install_windows_console_close_handler() -> None:
+    global _CONSOLE_HANDLER
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        handler_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)
+
+        def handler(_event):
+            shutdown_drop_air()
+            return False
+
+        _CONSOLE_HANDLER = handler_type(handler)
+        ctypes.windll.kernel32.SetConsoleCtrlHandler(_CONSOLE_HANDLER, True)
+    except Exception:
+        pass
+
+
 def register_shutdown_cleanup() -> None:
-    atexit.register(cleanup_all_uploads_on_shutdown)
+    atexit.register(shutdown_drop_air)
+    install_windows_console_close_handler()
     if hasattr(signal, "SIGINT"):
         signal.signal(signal.SIGINT, _handle_shutdown_signal)
     if hasattr(signal, "SIGTERM"):
@@ -561,6 +905,7 @@ def add_headers(resp):
 def index():
     cleanup_uploads()
     settings = get_settings()
+    session = session_snapshot()
     theme = (request.args.get("theme", "") or "").lower()
     index_tpl = "saved/index_v1.html" if theme == "classic" else "index.html"
     gate_tpl = "saved/code_gate_v1.html" if theme == "classic" else "code_gate.html"
@@ -568,7 +913,7 @@ def index():
     if not check_session_key():
         return session_error()
     if settings["access_code"] and request.args.get("code", "") == "":
-        return render_template(gate_tpl, session_key=SESSION_KEY, session_param=SESSION_PARAM)
+        return render_template(gate_tpl, session_key=session["key"], session_param=SESSION_PARAM)
     if not check_code():
         return code_error()
     public_url = build_public_url(settings["access_code"])
@@ -577,13 +922,14 @@ def index():
         files=list_files(),
         access_code=settings["access_code"],
         auth_query=build_auth_query(settings["access_code"]),
-        session_key=SESSION_KEY,
+        session_key=session["key"],
         session_param=SESSION_PARAM,
+        session_seconds_remaining=session["seconds_remaining"],
         settings=settings,
         is_admin=is_admin_request(),
         public_url=public_url,
         local_url=build_local_url(settings["access_code"]),
-        qr_svg=make_qr_svg(public_url),
+        qr_url=url_for("qr_code", url=public_url),
         stats=upload_stats(),
         log_file=str(LOG_FILE),
         text_ttl_minutes=TEXT_TTL_MINUTES,
@@ -595,22 +941,46 @@ def enter():
     settings = get_settings()
     code = request.form.get("code", "").strip()
     supplied_session = request.form.get(SESSION_PARAM, "").strip()
+    session = session_snapshot()
     theme = (request.args.get("theme", "") or request.form.get("theme", "")).lower()
     if not theme and "theme=classic" in (request.referrer or ""):
         theme = "classic"
-    if not is_admin_request() and supplied_session != SESSION_KEY:
+    if not is_admin_request() and not is_valid_session_value(supplied_session):
         return session_error()
     if not settings["access_code"] or code == settings["access_code"]:
         if settings["access_code"]:
-            args = {SESSION_PARAM: supplied_session or SESSION_KEY, "code": code}
+            args = {SESSION_PARAM: supplied_session or session["key"], "code": code}
             if theme:
                 args["theme"] = theme
             return redirect(url_for("index", **args))
-        args = {SESSION_PARAM: supplied_session or SESSION_KEY}
+        args = {SESSION_PARAM: supplied_session or session["key"]}
         if theme:
             args["theme"] = theme
         return redirect(url_for("index", **args))
     return code_error()
+
+
+@app.route("/api/session", methods=["GET", "OPTIONS"])
+def api_session():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not check_session_key():
+        return jsonify({"error": "invalid session link"}), 404
+    if not check_code():
+        return jsonify({"error": "code not found"}), 404
+    settings = get_settings()
+    session = session_snapshot()
+    public_url = build_public_url(settings["access_code"])
+    return jsonify(
+        {
+            "key": session["key"],
+            "expires_at": session["expires_at"],
+            "ttl_seconds": session["ttl_seconds"],
+            "seconds_remaining": session["seconds_remaining"],
+            "public_url": public_url,
+            "qr_url": url_for("qr_code", url=public_url),
+        }
+    )
 
 
 @app.route("/api/files", methods=["GET", "OPTIONS"])
@@ -746,6 +1116,7 @@ def api_admin():
     if not check_code():
         return jsonify({"error": "unauthorized"}), 401
     settings = get_settings()
+    session = session_snapshot()
     public_url = build_public_url(settings["access_code"])
     return jsonify(
         {
@@ -753,6 +1124,7 @@ def api_admin():
             "public_url": public_url,
             "local_url": build_local_url(settings["access_code"]),
             "qr_url": url_for("qr_code", url=public_url),
+            "session": session,
             "stats": upload_stats(),
             "settings": settings,
             "log_file": str(LOG_FILE),
@@ -783,6 +1155,41 @@ def api_admin_cleanup():
         return jsonify({"error": "target must be uploads, text, or all"}), 400
     app.logger.info("Admin cleanup target=%s removed_files=%s cleared_text=%s.", target, removed_files, cleared_text)
     return jsonify({"ok": True, "removed_files": removed_files, "cleared_text": cleared_text, "stats": upload_stats()})
+
+
+@app.route("/api/admin/update", methods=["GET", "POST", "OPTIONS"])
+def api_admin_update():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_error = require_admin()
+    if admin_error:
+        return admin_error
+    if not check_code():
+        return jsonify({"error": "unauthorized"}), 401
+
+    if request.method == "GET":
+        try:
+            return jsonify(latest_release_info())
+        except Exception as exc:
+            return jsonify(
+                {
+                    "configured": bool(UPDATE_REPO),
+                    "repo": UPDATE_REPO,
+                    "current_version": APP_VERSION,
+                    "latest_version": "",
+                    "update_available": False,
+                    "release_url": "",
+                    "message": f"Could not check for updates: {exc}",
+                }
+            ), 502
+
+    try:
+        result = start_update_install()
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 502
+    if not result.get("ok"):
+        return jsonify(result), 400
+    return jsonify(result)
 
 
 @app.route("/api/admin/quit", methods=["POST", "OPTIONS"])
@@ -864,6 +1271,6 @@ if __name__ == "__main__":
     cleanup_uploads()
     print_qr(url)
     if settings["launch_browser_on_start"]:
-        Timer(1.0, lambda: webbrowser.open(local_url)).start()
+        Timer(1.0, lambda: open_admin_browser(local_url)).start()
     configure_request_logging()
     app.run(host=host, port=port, debug=False)

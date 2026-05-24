@@ -1,0 +1,91 @@
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+
+os.environ.setdefault("DROP_AIR_DATA_DIR", tempfile.mkdtemp(prefix="drop-air-test-"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import app  # noqa: E402
+
+
+class DropAirReleaseUiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.client = app.app.test_client()
+        cls.template_source = (Path(__file__).resolve().parents[1] / "templates" / "index.html").read_text(encoding="utf-8")
+
+    def test_index_contains_gui_hooks(self):
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("data-qr-image", body)
+        self.assertIn("qrModal", body)
+        self.assertIn("openAdminAlert", body)
+        self.assertIn("updateServerBtn", body)
+
+    def test_template_contains_text_viewer_and_animation_hooks(self):
+        source = self.template_source
+        self.assertIn("text-viewer", source)
+        self.assertIn("Show previous text", source)
+        self.assertIn("Show next text", source)
+        self.assertIn("Collapse", source)
+        self.assertIn("qr-refresh", source)
+        self.assertIn("drop-ripple", source)
+        self.assertIn("startViewTransition", source)
+
+    def test_session_endpoint_returns_rotating_key_payload(self):
+        key = app.session_snapshot()["key"]
+        response = self.client.get(
+            f"/api/session?k={key}",
+            environ_overrides={"REMOTE_ADDR": "192.168.1.55", "HTTP_HOST": "192.168.1.2:8000"},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(len(payload["key"]), 32)
+        self.assertIn("qr_url", payload)
+        self.assertIn("seconds_remaining", payload)
+
+    def test_text_api_round_trip(self):
+        key = app.session_snapshot()["key"]
+        env = {"REMOTE_ADDR": "192.168.1.55", "HTTP_HOST": "192.168.1.2:8000"}
+        post_response = self.client.post(
+            f"/api/text?k={key}",
+            json={"text": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6"},
+            environ_overrides=env,
+        )
+        self.assertEqual(post_response.status_code, 200)
+        get_response = self.client.get(f"/api/text?k={key}", environ_overrides=env)
+        self.assertEqual(get_response.status_code, 200)
+        items = get_response.get_json()["items"]
+        self.assertGreaterEqual(len(items), 1)
+        self.assertIn("line 6", items[0]["text"])
+
+    def test_admin_update_get_uses_release_info(self):
+        expected = {
+            "configured": True,
+            "repo": "B1progame/drop-air",
+            "current_version": "1.0.0",
+            "latest_version": "1.0.1",
+            "update_available": True,
+            "release_url": "https://github.com/B1progame/drop-air/releases/tag/1.0.1",
+            "message": "Update available.",
+        }
+        with patch.object(app, "latest_release_info", return_value=expected):
+            response = self.client.get("/api/admin/update", environ_overrides={"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8000"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["update_available"])
+
+    def test_admin_update_post_starts_install(self):
+        expected = {"ok": True, "message": "Update started. Watch the terminal for progress."}
+        with patch.object(app, "start_update_install", return_value=expected):
+            response = self.client.post("/api/admin/update", json={}, environ_overrides={"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8000"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["ok"], True)
+
+
+if __name__ == "__main__":
+    unittest.main()
