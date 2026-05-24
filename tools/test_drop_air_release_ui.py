@@ -26,6 +26,8 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("qrModal", body)
         self.assertIn("openAdminAlert", body)
         self.assertIn("updateServerBtn", body)
+        self.assertIn("connectionCount", body)
+        self.assertIn("/api/connections", body)
 
     def test_template_contains_text_viewer_and_animation_hooks(self):
         source = self.template_source
@@ -34,8 +36,18 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("Show next text", source)
         self.assertIn("Collapse", source)
         self.assertIn("qr-refresh", source)
+        self.assertIn("qr-spin", source)
+        self.assertIn("qr-star", source)
+        self.assertIn("qr-build-canvas", source)
+        self.assertIn("playQrBuildAnimation", source)
         self.assertIn("drop-ripple", source)
+        self.assertIn("drop-line-x", source)
+        self.assertIn("drop-cross", source)
+        self.assertIn("drop-scan-line", source)
+        self.assertIn("drop-scan", source)
+        self.assertIn("upload-state", source)
         self.assertIn("startViewTransition", source)
+        self.assertIn("heartbeatConnection", source)
 
     def test_session_endpoint_returns_rotating_key_payload(self):
         key = app.session_snapshot()["key"]
@@ -63,6 +75,17 @@ class DropAirReleaseUiTests(unittest.TestCase):
         items = get_response.get_json()["items"]
         self.assertGreaterEqual(len(items), 1)
         self.assertIn("line 6", items[0]["text"])
+
+    def test_connection_heartbeat_counts_active_clients(self):
+        app.ACTIVE_CONNECTIONS.clear()
+        key = app.session_snapshot()["key"]
+        env = {"REMOTE_ADDR": "192.168.1.55", "HTTP_HOST": "192.168.1.2:8000"}
+        first = self.client.post(f"/api/connections?k={key}", json={"client_id": "phone-a"}, environ_overrides=env)
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.get_json()["count"], 1)
+        second = self.client.post(f"/api/connections?k={key}", json={"client_id": "phone-b"}, environ_overrides=env)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.get_json()["count"], 2)
 
     def test_admin_update_get_uses_release_info(self):
         expected = {

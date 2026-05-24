@@ -594,6 +594,40 @@ def add_text_item(payload: dict) -> dict:
 TEXT_ITEMS = load_text_items()
 cleanup_text_items()
 
+CONNECTION_TTL_SECONDS = 30
+CONNECTIONS_LOCK = Lock()
+ACTIVE_CONNECTIONS: dict[str, dict] = {}
+
+
+def _connection_label(remote: str, client_id: str) -> str:
+    clean_remote = re.sub(r"[^0-9A-Fa-f:.]", "", remote or "unknown")[:64] or "unknown"
+    clean_client = re.sub(r"[^A-Za-z0-9_-]", "", client_id or "")[:80]
+    return f"{clean_remote}:{clean_client or 'anonymous'}"
+
+
+def prune_connections(now: float | None = None) -> None:
+    now = now or time.time()
+    with CONNECTIONS_LOCK:
+        for key, item in list(ACTIVE_CONNECTIONS.items()):
+            if float(item.get("seen", 0)) + CONNECTION_TTL_SECONDS < now:
+                del ACTIVE_CONNECTIONS[key]
+
+
+def active_connection_count() -> int:
+    prune_connections()
+    with CONNECTIONS_LOCK:
+        return len(ACTIVE_CONNECTIONS)
+
+
+def register_connection(client_id: str = "") -> int:
+    now = time.time()
+    remote = (request.remote_addr or "").strip()
+    key = _connection_label(remote, client_id)
+    prune_connections(now)
+    with CONNECTIONS_LOCK:
+        ACTIVE_CONNECTIONS[key] = {"seen": now, "remote": remote, "client_id": client_id}
+    return active_connection_count()
+
 
 def is_admin_request() -> bool:
     remote = (request.remote_addr or "").strip()
@@ -932,6 +966,7 @@ def index():
         local_url=build_local_url(settings["access_code"]),
         qr_url=url_for("qr_code", url=public_url),
         stats=upload_stats(),
+        connected_count=active_connection_count(),
         log_file=str(LOG_FILE),
         text_ttl_minutes=TEXT_TTL_MINUTES,
     )
@@ -982,6 +1017,25 @@ def api_session():
             "qr_url": url_for("qr_code", url=public_url),
         }
     )
+
+
+@app.route("/api/connections", methods=["GET", "POST", "OPTIONS"])
+def api_connections():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not check_session_key():
+        return jsonify({"error": "invalid session link"}), 404
+    if not check_code():
+        return jsonify({"error": "code not found"}), 404
+    payload = request.get_json(silent=True) or {}
+    client_id = ""
+    if isinstance(payload, dict):
+        client_id = str(payload.get("client_id", "")).strip()
+    if request.method == "POST":
+        count = register_connection(client_id)
+    else:
+        count = active_connection_count()
+    return jsonify({"count": count, "ttl_seconds": CONNECTION_TTL_SECONDS})
 
 
 @app.route("/api/files", methods=["GET", "OPTIONS"])
@@ -1127,6 +1181,7 @@ def api_admin():
             "qr_url": url_for("qr_code", url=public_url),
             "session": session,
             "stats": upload_stats(),
+            "connected_count": active_connection_count(),
             "settings": settings,
             "log_file": str(LOG_FILE),
             "text_ttl_minutes": TEXT_TTL_MINUTES,
