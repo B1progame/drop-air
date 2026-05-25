@@ -1,6 +1,6 @@
 param(
   [string]$AppName = "DropAir",
-  [string]$IconPath = "assets\icon\drop_air_minimal.ico",
+  [string]$IconPath = "assets\icon\drop_air.ico",
   [switch]$SkipCleanup
 )
 
@@ -11,6 +11,7 @@ if (-not (Test-Path ".venv\Scripts\python.exe")) {
 }
 
 & .\.venv\Scripts\python.exe -m pip install --upgrade pip
+& .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 & .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
 
 if (-not (Test-Path $IconPath)) {
@@ -34,7 +35,7 @@ $specPath = "build\spec_$stamp"
   --clean `
   --name $AppName `
   --onefile `
-  --console `
+  --windowed `
   --icon $iconAbs `
   --workpath $workPath `
   --specpath $specPath `

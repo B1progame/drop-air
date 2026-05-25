@@ -123,6 +123,7 @@ app = Flask(__name__, template_folder=str(TEMPLATE_DIR))
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 BROWSER_PROCESS = None
 BROWSER_PROFILE_DIR = DATA_DIR / "browser-profile"
+TRAY_ICON = None
 _SHUTDOWN_DONE = False
 _CONSOLE_HANDLER = None
 
@@ -131,8 +132,8 @@ def app_icon_path() -> Path | None:
     env_icon = (os.getenv("DROP_AIR_ICON") or "").strip()
     candidates = [
         Path(env_icon).expanduser() if env_icon else None,
-        APP_DIR / "assets" / "icon" / "drop_air_minimal.ico",
-        BUNDLE_DIR / "assets" / "icon" / "drop_air_minimal.ico",
+        APP_DIR / "assets" / "icon" / "drop_air.ico",
+        BUNDLE_DIR / "assets" / "icon" / "drop_air.ico",
     ]
     for candidate in candidates:
         if candidate and candidate.exists():
@@ -212,6 +213,117 @@ def close_admin_browser() -> None:
             proc.kill()
         except Exception:
             pass
+
+
+def initialize_log_file() -> None:
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        LOG_FILE.write_text("", encoding="utf-8")
+    except OSError as exc:
+        print(f"Could not initialize log file: {exc}")
+
+
+def redirect_stdio_to_log_if_windowless():
+    if os.name != "nt":
+        return None
+    if sys.stdout is not None and sys.stderr is not None:
+        return None
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        handle = LOG_FILE.open("a", encoding="utf-8", buffering=1)
+        sys.stdout = handle
+        sys.stderr = handle
+        return handle
+    except OSError:
+        return None
+
+
+def open_path(path: Path) -> None:
+    target = path.resolve()
+    if os.name == "nt":
+        os.startfile(str(target))  # type: ignore[attr-defined]
+    else:
+        webbrowser.open(target.as_uri())
+
+
+def show_log_file() -> None:
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        LOG_FILE.touch(exist_ok=True)
+        open_path(LOG_FILE)
+    except Exception as exc:
+        app.logger.error("Could not open log file: %s", exc)
+
+
+def tray_image():
+    try:
+        from PIL import Image, ImageDraw
+
+        icon_path = app_icon_path()
+        if icon_path:
+            return Image.open(icon_path).resize((64, 64))
+
+        image = Image.new("RGBA", (64, 64), (14, 165, 183, 255))
+        draw = ImageDraw.Draw(image)
+        draw.rounded_rectangle((10, 10, 54, 54), radius=12, fill=(18, 185, 129, 255))
+        draw.line((32, 44, 32, 18), fill=(255, 255, 255, 255), width=5)
+        draw.line((22, 28, 32, 18, 42, 28), fill=(255, 255, 255, 255), width=5, joint="curve")
+        return image
+    except Exception:
+        return None
+
+
+def start_tray_icon(local_url: str) -> None:
+    if os.name != "nt":
+        return
+    try:
+        import pystray
+    except Exception as exc:
+        print(f"System tray unavailable: {exc}")
+        return
+
+    image = tray_image()
+    if image is None:
+        print("System tray unavailable: icon could not be created")
+        return
+
+    def open_dashboard(_icon=None, _item=None):
+        open_admin_browser(local_url)
+
+    def open_log(_icon=None, _item=None):
+        show_log_file()
+
+    def open_data_folder(_icon=None, _item=None):
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        open_path(DATA_DIR)
+
+    def open_uploads_folder(_icon=None, _item=None):
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        open_path(UPLOAD_DIR)
+
+    def quit_app(icon=None, _item=None):
+        app.logger.info("Tray requested server quit.")
+        try:
+            if icon:
+                icon.stop()
+        finally:
+            Timer(0.15, stop_server_process).start()
+
+    global TRAY_ICON
+    TRAY_ICON = pystray.Icon(
+        "Drop Air",
+        image,
+        "Drop Air",
+        pystray.Menu(
+            pystray.MenuItem("Open Dashboard", open_dashboard, default=True),
+            pystray.MenuItem("Show Log", open_log),
+            pystray.MenuItem("Open Data Folder", open_data_folder),
+            pystray.MenuItem("Open Uploads Folder", open_uploads_folder),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Quit Drop Air", quit_app),
+        ),
+    )
+    threading.Thread(target=TRAY_ICON.run, name="DropAirTray", daemon=True).start()
 
 
 def progress_bar(label: str, current: int, total: int | None) -> None:
@@ -424,12 +536,6 @@ class WerkzeugRequestFilter(logging.Filter):
 
 
 def configure_request_logging() -> None:
-    try:
-        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        LOG_FILE.write_text("", encoding="utf-8")
-    except OSError as exc:
-        print(f"Could not initialize log file: {exc}")
-
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     file_handler = logging.FileHandler(LOG_FILE, mode="a", encoding="utf-8")
     file_handler.setFormatter(formatter)
@@ -948,10 +1054,17 @@ def _handle_shutdown_signal(signum, _frame):
 
 
 def shutdown_drop_air() -> None:
-    global _SHUTDOWN_DONE
+    global _SHUTDOWN_DONE, TRAY_ICON
     if _SHUTDOWN_DONE:
         return
     _SHUTDOWN_DONE = True
+    icon = TRAY_ICON
+    TRAY_ICON = None
+    if icon:
+        try:
+            icon.stop()
+        except Exception:
+            pass
     cleanup_all_uploads_on_shutdown()
     clear_text_items()
     close_admin_browser()
@@ -1028,6 +1141,7 @@ def index():
         qr_url=url_for("qr_code", url=public_url),
         stats=upload_stats(),
         connected_count=active_connection_count(),
+        app_version=APP_VERSION,
         log_file=str(LOG_FILE),
         text_ttl_minutes=TEXT_TTL_MINUTES,
     )
@@ -1388,6 +1502,8 @@ def print_qr(url: str):
 
 
 if __name__ == "__main__":
+    initialize_log_file()
+    _stdio_log_handle = redirect_stdio_to_log_if_windowless()
     set_console_window_icon()
     host = "0.0.0.0"
     port = int(os.getenv("PORT", "8000"))
@@ -1418,4 +1534,5 @@ if __name__ == "__main__":
     if settings["launch_browser_on_start"]:
         Timer(1.0, lambda: open_admin_browser(local_url)).start()
     configure_request_logging()
+    start_tray_icon(local_url)
     app.run(host=host, port=port, debug=False)

@@ -454,6 +454,28 @@
       flex-wrap: wrap;
     }
 
+    .server-title-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .version-chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 5px 9px;
+      border: 1px solid color-mix(in srgb, var(--mint) 38%, var(--line));
+      border-radius: 999px;
+      color: var(--accent-strong);
+      background: color-mix(in srgb, var(--mint) 14%, transparent);
+      font-size: .76rem;
+      font-weight: 800;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
     .update-alert {
       display: none;
       min-width: 28px;
@@ -577,6 +599,23 @@
       animation: rise-in .34s .04s ease both, soft-pulse 3.4s ease-in-out infinite;
     }
 
+    .dropzone-toolbar {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      z-index: 3;
+      display: flex;
+      gap: 8px;
+    }
+
+    .dropzone-toolbar .icon-btn {
+      width: 40px;
+      height: 40px;
+      min-height: 40px;
+      background: color-mix(in srgb, var(--surface) 88%, transparent);
+      backdrop-filter: blur(8px);
+    }
+
     .dropzone::before {
       content: "";
       position: absolute;
@@ -674,7 +713,7 @@
         0 0 16px color-mix(in srgb, var(--mint) 28%, transparent);
     }
 
-    .dropzone > div:not(.drop-scan):not(.drop-border-trace) {
+    .dropzone > div:not(.drop-scan):not(.drop-border-trace):not(.dropzone-toolbar) {
       position: relative;
       z-index: 2;
     }
@@ -1572,6 +1611,11 @@
               <path class="trace-bottom" d="M96.8 98.8 H3.2"></path>
               <path class="trace-left" d="M1.2 96.8 V3.2"></path>
             </svg>
+            <div class="dropzone-toolbar">
+              <button id="pasteBtn" class="icon-btn" type="button" aria-label="Paste from clipboard" title="Paste from clipboard">
+                <svg viewBox="0 0 24 24"><path d="M9 4h6a2 2 0 0 1 2 2v1H7V6a2 2 0 0 1 2-2Z"/><path d="M9 4a3 3 0 0 1 6 0"/><path d="M7 7H5.8A1.8 1.8 0 0 0 4 8.8v10.4A1.8 1.8 0 0 0 5.8 21h12.4a1.8 1.8 0 0 0 1.8-1.8V8.8A1.8 1.8 0 0 0 18.2 7H17"/><path d="M8 13h8M8 17h5"/></svg>
+              </button>
+            </div>
             <div>
               <div class="upload-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0 5 5m-5-5-5 5"/><path d="M5 15v2.5A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5V15"/></svg>
@@ -1674,7 +1718,6 @@
           <div class="stat"><strong>LAN</strong><span>Mode</span></div>
         </div>
         <div class="mini-path">Data: {{ stats.data_dir }}</div>
-        <div class="mini-path">Log: {{ log_file }}</div>
       </section>
 
       <form id="settingsForm" class="panel admin-card">
@@ -1716,7 +1759,10 @@
       </section>
 
       <section class="panel admin-card">
-        <h3 class="panel-title">Server</h3>
+        <div class="server-title-line">
+          <h3 class="panel-title">Server</h3>
+          <span id="serverVersion" class="version-chip">v{{ app_version }}</span>
+        </div>
         <div class="update-line">
           <p id="updateStatus" class="admin-note">Checking for updates...</p>
           <span id="updateAlert" class="update-alert" aria-label="New update available">!</span>
@@ -1752,6 +1798,7 @@
     let sessionSecondsRemaining = {{ session_seconds_remaining|default(300)|tojson }};
     const picker = document.getElementById("picker");
     const pickBtn = document.getElementById("pickBtn");
+    const pasteBtn = document.getElementById("pasteBtn");
     const dropzone = document.getElementById("dropzone");
     const statusEl = document.getElementById("status");
     const progressBar = document.getElementById("progressBar");
@@ -1942,6 +1989,35 @@
 
     function setUploadState(label) {
       if (uploadState) uploadState.textContent = label;
+    }
+
+    function clipboardFileName(type) {
+      const map = {
+        "image/png": "png",
+        "image/jpeg": "jpg",
+        "image/webp": "webp",
+        "image/gif": "gif",
+        "text/plain": "txt"
+      };
+      const ext = map[type] || (type.split("/").pop() || "bin").replace(/[^a-z0-9]+/gi, "").toLowerCase() || "bin";
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      return `clipboard-${stamp}.${ext}`;
+    }
+
+    async function postTextItem(text) {
+      const value = String(text || "").trim();
+      if (!value) throw new Error("Clipboard does not contain text.");
+      const r = await fetch(`/api/text${codeQuery()}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(accessCode ? { "X-Drop-Air-Code": accessCode } : {}) },
+        body: JSON.stringify({ text: value, translated_text: "", source_language: "text", target_language: "text" })
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data.error || "Could not share text.");
+      }
+      await refreshTextItems();
+      return value;
     }
 
     function flashDropTrace() {
@@ -2617,22 +2693,61 @@
       sendTextBtn.disabled = true;
       textStatus.textContent = "Sending text...";
       try {
-        const r = await fetch(`/api/text${codeQuery()}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...(accessCode ? { "X-Drop-Air-Code": accessCode } : {}) },
-          body: JSON.stringify({ text, translated_text: "", source_language: "text", target_language: "text" })
-        });
-        if (!r.ok) {
-          const data = await r.json().catch(() => ({}));
-          throw new Error(data.error || "Could not share text.");
-        }
+        await postTextItem(text);
         textInput.value = "";
         textStatus.textContent = "Text sent.";
-        await refreshTextItems();
       } catch (err) {
         textStatus.textContent = err.message;
       } finally {
         sendTextBtn.disabled = false;
+      }
+    }
+
+    async function pasteClipboard() {
+      if (!navigator.clipboard) {
+        showToast("Clipboard is not available in this browser");
+        return;
+      }
+
+      pasteBtn.disabled = true;
+      setUploadState("Reading clipboard");
+      try {
+        const files = [];
+        let text = "";
+
+        if (navigator.clipboard.read) {
+          const items = await navigator.clipboard.read();
+          for (const item of items) {
+            for (const type of item.types) {
+              if (type.startsWith("text/")) {
+                text = text || await item.getType(type).then(blob => blob.text());
+                continue;
+              }
+              const blob = await item.getType(type);
+              files.push(new File([blob], clipboardFileName(type), { type: blob.type || type }));
+            }
+          }
+        }
+
+        if (files.length) {
+          flashDropTrace();
+          await uploadMany(files);
+          showToast(`Pasted ${files.length} clipboard item${files.length === 1 ? "" : "s"}`);
+          return;
+        }
+
+        if (!text && navigator.clipboard.readText) {
+          text = await navigator.clipboard.readText();
+        }
+        await postTextItem(text);
+        textStatus.textContent = "Clipboard text shared.";
+        showToast("Clipboard text shared");
+        setUploadState("Idle");
+      } catch (err) {
+        setUploadState("Idle");
+        showToast(err.message || "Could not paste clipboard");
+      } finally {
+        pasteBtn.disabled = false;
       }
     }
 
@@ -2743,6 +2858,7 @@
       if (touch) updatePointerGlow(touch.clientX, touch.clientY);
     }, { passive: true });
     pickBtn.addEventListener("click", () => picker.click());
+    pasteBtn.addEventListener("click", pasteClipboard);
     picker.addEventListener("change", () => uploadMany([...picker.files]));
     textForm.addEventListener("submit", shareText);
     if (isAdmin) {

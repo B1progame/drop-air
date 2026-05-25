@@ -11,7 +11,7 @@ echo Installing/updating dependencies...
 call ".venv\Scripts\python.exe" -m pip install -r requirements.txt || goto :error
 
 echo Starting Drop Air...
-call ".venv\Scripts\python.exe" app.py
+start "" ".venv\Scripts\pythonw.exe" app.py
 goto :eof
 
 :error

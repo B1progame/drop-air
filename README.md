@@ -15,6 +15,8 @@ Fast local file sharing from your laptop to iPhone/iPad (and back) using a brows
 - Optional GitHub Releases updater in the host-only admin panel
 - Light, dark, and system theme modes
 - Optional auto-open of the local admin page in the default browser
+- Windows packaged builds run from the system tray with dashboard, log, folder, and quit actions
+- Clipboard paste button for sharing copied images/files or text
 - Optional one-time passcode (`DROP_AIR_CODE`)
 
 ## Requirements
