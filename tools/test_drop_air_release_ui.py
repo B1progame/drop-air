@@ -29,6 +29,8 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("updateServerBtn", body)
         self.assertIn("connectionCount", body)
         self.assertIn("pasteBtn", body)
+        self.assertIn("uploadLimitBadge", body)
+        self.assertIn("setMaxUploadGb", body)
         self.assertIn("/api/connections", body)
         self.assertIn("no-store", response.headers.get("Cache-Control", ""))
         self.assertIn("delete-file", body)
@@ -70,6 +72,8 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("startViewTransition", source)
         self.assertIn("heartbeatConnection", source)
         self.assertIn("pasteClipboard", source)
+        self.assertIn("Clipboard blocked. Use Choose Files", source)
+        self.assertIn("max_upload_gb", source)
         self.assertIn("postTextItem", source)
         self.assertIn("window.location.reload", source)
         self.assertIn("sessionSecondsRemaining + 1", source)
@@ -165,6 +169,15 @@ class DropAirReleaseUiTests(unittest.TestCase):
             response = self.client.get("/api/admin/update", environ_overrides={"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8000"})
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["update_available"])
+
+    def test_runtime_upload_limit_setting_updates(self):
+        response = self.client.post(
+            "/api/settings",
+            json={"max_upload_gb": 1.5},
+            environ_overrides={"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8000"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["settings"]["max_upload_gb"], 1.5)
 
     def test_update_prefers_setup_installer_asset(self):
         info = {

@@ -140,6 +140,24 @@
       100% { opacity: 1; filter: blur(0); transform: scale(1) rotate(0); }
     }
 
+    @keyframes link-renew {
+      0% { transform: translateY(0); border-color: var(--line); box-shadow: none; }
+      34% {
+        transform: translateY(-1px);
+        border-color: color-mix(in srgb, var(--mint) 72%, var(--line));
+        box-shadow:
+          0 0 0 4px color-mix(in srgb, var(--mint) 16%, transparent),
+          0 14px 34px color-mix(in srgb, var(--mint) 16%, transparent);
+      }
+      100% { transform: translateY(0); border-color: var(--line); box-shadow: none; }
+    }
+
+    @keyframes link-renew-ring {
+      0% { opacity: 0; transform: translate(-50%, -50%) scale(.42); }
+      24% { opacity: .95; }
+      100% { opacity: 0; transform: translate(-50%, -50%) scale(1.45); }
+    }
+
     @keyframes qr-spin {
       to { transform: rotate(1turn); }
     }
@@ -160,6 +178,11 @@
       to { transform: translateX(120%); }
     }
 
+    @keyframes progress-liquid {
+      from { background-position: 0 0, 0 0; }
+      to { background-position: 42px 0, 0 0; }
+    }
+
     @keyframes drop-ripple {
       0% { opacity: 0; transform: scale(.82); }
       40% { opacity: 1; }
@@ -170,6 +193,155 @@
       0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--mint) 34%, transparent); }
       80% { box-shadow: 0 0 0 16px color-mix(in srgb, var(--mint) 0%, transparent); }
       100% { box-shadow: none; }
+    }
+
+    @keyframes success-burst {
+      0% { opacity: 0; transform: translate(-50%, -50%) scale(.45); }
+      24% { opacity: 1; }
+      100% { opacity: 0; transform: translate(-50%, -50%) scale(1.24); }
+    }
+
+    @keyframes file-fly-in {
+      0% { opacity: 0; transform: translate(calc(-50% + var(--fly-x)), calc(-50% + var(--fly-y))) scale(.42) rotate(-9deg); }
+      72% { opacity: 1; transform: translate(-50%, -50%) scale(1.04) rotate(1deg); }
+      100% { opacity: 0; transform: translate(-50%, -50%) scale(.9) rotate(0); }
+    }
+
+    @keyframes icon-check-pop {
+      0% { transform: scale(.45) rotate(-14deg); opacity: 0; }
+      55% { transform: scale(1.16) rotate(3deg); opacity: 1; }
+      100% { transform: scale(1) rotate(0); opacity: 1; }
+    }
+
+    @keyframes icon-success-burst {
+      0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--mint) 30%, transparent); }
+      70% { box-shadow: 0 0 0 18px color-mix(in srgb, var(--mint) 0%, transparent); }
+      100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--mint) 0%, transparent); }
+    }
+
+    @keyframes paste-pop {
+      0% { transform: scale(1); }
+      45% { transform: scale(1.12) rotate(-4deg); }
+      100% { transform: scale(1); }
+    }
+
+    @keyframes paste-shake {
+      0%, 100% { transform: translateX(0); }
+      20% { transform: translateX(-3px); }
+      40% { transform: translateX(3px); }
+      60% { transform: translateX(-2px); }
+      80% { transform: translateX(2px); }
+    }
+
+    @keyframes row-new {
+      0% { opacity: 0; transform: translateY(-8px) scale(.99); background: color-mix(in srgb, var(--mint) 22%, transparent); }
+      40% { opacity: 1; }
+      100% { opacity: 1; transform: translateY(0) scale(1); background: transparent; }
+    }
+
+    @keyframes row-remove {
+      to { opacity: 0; transform: translateX(14px); }
+    }
+
+    @keyframes row-complete {
+      0% { background: color-mix(in srgb, var(--mint) 24%, transparent); }
+      55% { background: color-mix(in srgb, var(--mint) 10%, transparent); }
+      100% { background: transparent; }
+    }
+
+    @keyframes file-icon-pop {
+      0% { transform: scale(.72) rotate(-8deg); }
+      70% { transform: scale(1.12) rotate(3deg); }
+      100% { transform: scale(1) rotate(0); }
+    }
+
+    @keyframes file-icon-complete {
+      0% { transform: scale(.8) rotate(-7deg); box-shadow: 0 0 0 0 color-mix(in srgb, var(--mint) 34%, transparent); }
+      50% { transform: scale(1.14) rotate(3deg); box-shadow: 0 0 0 8px color-mix(in srgb, var(--mint) 14%, transparent); }
+      100% { transform: scale(1) rotate(0); box-shadow: inset 0 1px 0 color-mix(in srgb, white 22%, transparent), 0 0 0 0 color-mix(in srgb, var(--mint) 0%, transparent); }
+    }
+
+    @keyframes upload-chip-in {
+      from { opacity: 0; transform: translateY(8px) scale(.96); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @keyframes upload-chip-out {
+      to { opacity: 0; transform: translateY(-8px) scale(.96); max-height: 0; margin-top: -6px; }
+    }
+
+    @keyframes text-card-in {
+      0% { opacity: 0; transform: translateY(10px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes text-slide-left {
+      0% { opacity: 0; transform: translateX(18px); }
+      100% { opacity: 1; transform: translateX(0); }
+    }
+
+    @keyframes text-slide-right {
+      0% { opacity: 0; transform: translateX(-18px); }
+      100% { opacity: 1; transform: translateX(0); }
+    }
+
+    @keyframes copy-confirm {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.13); color: var(--mint); border-color: var(--mint); }
+      100% { transform: scale(1); }
+    }
+
+    @keyframes qr-scan {
+      0% { opacity: 0; transform: translateY(-16px); }
+      10%, 88% { opacity: 1; }
+      100% { opacity: 0; transform: translateY(188px); }
+    }
+
+    @keyframes modal-card-in {
+      0% { opacity: 0; transform: translateY(10px) scale(.94); }
+      100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @keyframes drawer-item-in {
+      0% { opacity: 0; transform: translateY(10px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes connection-ring {
+      0% { opacity: 0; transform: translate(-50%, -50%) scale(.2); }
+      18% { opacity: .9; }
+      100% { opacity: 0; transform: translate(-50%, -50%) scale(2.2); }
+    }
+
+    @keyframes connection-particle {
+      0% { opacity: 0; transform: translate(-50%, -50%) scale(.55); }
+      18% { opacity: 1; }
+      100% {
+        opacity: 0;
+        transform:
+          translate(
+            calc(-50% + var(--tx)),
+            calc(-50% + var(--ty))
+          )
+          scale(.9);
+      }
+    }
+
+    @keyframes badge-bump {
+      0% { transform: scale(1); box-shadow: 0 8px 24px color-mix(in srgb, var(--mint) 12%, transparent); }
+      45% { transform: scale(1.05); box-shadow: 0 0 0 5px color-mix(in srgb, var(--mint) 18%, transparent), 0 12px 30px color-mix(in srgb, var(--mint) 22%, transparent); }
+      100% { transform: scale(1); box-shadow: 0 8px 24px color-mix(in srgb, var(--mint) 12%, transparent); }
+    }
+
+    @keyframes dot-pulse {
+      0%, 100% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--mint) 18%, transparent); }
+      50% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--mint) 0%, transparent); }
+    }
+
+    @keyframes theme-icon-wiggle {
+      0%, 100% { transform: rotate(0) scale(1); }
+      45% { transform: rotate(-8deg) scale(1.1); }
+      75% { transform: rotate(5deg) scale(1.04); }
     }
 
     @keyframes drop-scan-line {
@@ -316,12 +488,17 @@
       white-space: nowrap;
     }
 
+    .connection-chip.bump {
+      animation: badge-bump .48s cubic-bezier(.16, .82, .2, 1);
+    }
+
     .connection-dot {
       width: 9px;
       height: 9px;
       border-radius: 50%;
       background: var(--mint);
       box-shadow: 0 0 0 4px color-mix(in srgb, var(--mint) 18%, transparent);
+      animation: dot-pulse 2.4s ease-in-out infinite;
     }
 
     .subtitle {
@@ -538,6 +715,7 @@
     }
 
     .theme-switch {
+      --theme-index: 2;
       display: inline-grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 3px;
@@ -547,6 +725,23 @@
       background:
         linear-gradient(180deg, color-mix(in srgb, var(--surface) 88%, transparent), color-mix(in srgb, var(--surface-soft) 72%, transparent));
       box-shadow: inset 0 1px 0 color-mix(in srgb, white 18%, transparent);
+      position: relative;
+      isolation: isolate;
+    }
+
+    .theme-switch::before {
+      content: "";
+      position: absolute;
+      top: 4px;
+      bottom: 4px;
+      left: 4px;
+      width: calc((100% - 14px) / 3);
+      border-radius: var(--radius);
+      background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 70%, var(--mint)));
+      box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 26%, transparent);
+      transform: translateX(calc(var(--theme-index) * (100% + 3px)));
+      transition: transform .22s cubic-bezier(.2, .8, .2, 1), background .22s ease;
+      z-index: 0;
     }
 
     .theme-btn {
@@ -559,17 +754,23 @@
       box-shadow: none;
       font-size: .84rem;
       white-space: nowrap;
+      position: relative;
+      z-index: 1;
     }
 
     .theme-btn.active {
       color: white;
-      background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 70%, var(--mint)));
-      box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 26%, transparent);
+      background: transparent;
+      box-shadow: none;
     }
 
     .theme-btn svg {
       width: 16px;
       height: 16px;
+    }
+
+    .theme-btn.active svg {
+      animation: theme-icon-wiggle .42s ease;
     }
 
     .counter {
@@ -585,14 +786,14 @@
 
     .dropzone {
       margin: 16px;
-      min-height: 220px;
+      min-height: 132px;
       border: 2px dashed color-mix(in srgb, var(--accent) 45%, var(--line));
       border-radius: var(--radius);
       background: linear-gradient(180deg, rgba(14, 165, 183, .08), rgba(18, 185, 129, .06)), var(--surface);
       display: grid;
       place-items: center;
       text-align: center;
-      padding: 24px;
+      padding: 14px 16px;
       position: relative;
       overflow: hidden;
       transition: border-color .16s ease, background .16s ease, transform .16s ease, box-shadow .16s ease;
@@ -601,19 +802,34 @@
 
     .dropzone-toolbar {
       position: absolute;
-      top: 12px;
-      right: 12px;
+      top: 10px;
+      right: 10px;
       z-index: 3;
       display: flex;
       gap: 8px;
     }
 
     .dropzone-toolbar .icon-btn {
-      width: 40px;
-      height: 40px;
-      min-height: 40px;
+      width: 36px;
+      height: 36px;
+      min-height: 36px;
       background: color-mix(in srgb, var(--surface) 88%, transparent);
       backdrop-filter: blur(8px);
+    }
+
+    .dropzone-toolbar .icon-btn.ready {
+      border-color: color-mix(in srgb, var(--mint) 68%, var(--line));
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--mint) 12%, transparent);
+    }
+
+    .dropzone-toolbar .icon-btn.pop {
+      animation: paste-pop .26s ease;
+    }
+
+    .dropzone-toolbar .icon-btn.error {
+      color: var(--danger);
+      border-color: color-mix(in srgb, var(--danger) 72%, var(--line));
+      animation: paste-shake .34s ease;
     }
 
     .dropzone::before {
@@ -644,6 +860,19 @@
 
     .dropzone.done {
       animation: upload-done .65s ease both;
+    }
+
+    .dropzone.done .upload-icon .upload-arrow {
+      opacity: 0;
+      transform: scale(.74) translateY(-4px);
+    }
+
+    .dropzone.done .upload-icon .upload-check {
+      animation: icon-check-pop .38s ease both;
+    }
+
+    .dropzone.done .upload-icon {
+      animation: icon-success-burst .55s ease-out both;
     }
 
     .drop-scan {
@@ -713,30 +942,72 @@
         0 0 16px color-mix(in srgb, var(--mint) 28%, transparent);
     }
 
-    .dropzone > div:not(.drop-scan):not(.drop-border-trace):not(.dropzone-toolbar) {
+    .dropzone-body {
       position: relative;
       z-index: 2;
+      width: min(100%, 420px);
+      display: grid;
+      justify-items: center;
     }
 
     .upload-icon {
-      width: 58px;
-      height: 58px;
+      width: 52px;
+      height: 52px;
       border-radius: var(--radius);
       display: inline-grid;
       place-items: center;
-      margin-bottom: 16px;
+      margin-bottom: 12px;
       color: var(--accent-strong);
       background: var(--surface-soft);
+      position: relative;
+      overflow: hidden;
     }
 
-    .upload-icon svg { width: 29px; height: 29px; }
+    .upload-icon svg {
+      width: 29px;
+      height: 29px;
+      grid-area: 1 / 1;
+      transition: opacity .18s ease, transform .18s ease;
+    }
+
+    .upload-check {
+      opacity: 0;
+      color: var(--mint);
+    }
+
+    .fly-file {
+      position: absolute;
+      left: 50%;
+      top: 56%;
+      width: 24px;
+      height: 30px;
+      border-radius: 7px;
+      border: 1px solid color-mix(in srgb, var(--accent) 60%, white);
+      background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 92%, var(--accent) 8%), color-mix(in srgb, var(--surface-soft) 82%, var(--mint) 18%));
+      box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 16%, transparent);
+      pointer-events: none;
+      z-index: 2;
+      animation: file-fly-in .72s cubic-bezier(.2, .8, .18, 1) both;
+    }
+
+    .fly-file::before {
+      content: "";
+      position: absolute;
+      top: 6px;
+      left: 5px;
+      right: 5px;
+      height: 2px;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--accent) 48%, transparent);
+      box-shadow: 0 6px 0 color-mix(in srgb, var(--accent) 34%, transparent), 0 12px 0 color-mix(in srgb, var(--mint) 32%, transparent);
+    }
 
     .dropzone strong {
       display: block;
-      font-size: 1.18rem;
-      line-height: 1.25;
+      font-size: 1.02rem;
+      line-height: 1.2;
       font-weight: 800;
-      margin-bottom: 8px;
+      margin-bottom: 4px;
     }
 
     .dropzone p,
@@ -753,8 +1024,14 @@
       overflow-wrap: anywhere;
     }
 
+    .dropzone p {
+      margin: 0;
+      font-size: .95rem;
+      line-height: 1.35;
+    }
+
     .upload-actions {
-      margin-top: 16px;
+      margin-top: 12px;
       display: flex;
       justify-content: center;
       gap: 10px;
@@ -762,21 +1039,25 @@
     }
 
     .progress-shell {
-      margin-top: 16px;
+      margin-top: 12px;
       height: 8px;
       border-radius: 999px;
       background: color-mix(in srgb, var(--line) 70%, transparent);
       overflow: hidden;
+      position: relative;
     }
 
     .progress-bar {
       width: 0%;
       height: 100%;
       border-radius: inherit;
-      background: linear-gradient(90deg, var(--accent), var(--mint));
+      background:
+        radial-gradient(circle at 14px 50%, rgba(255, 255, 255, .36), transparent 13px),
+        linear-gradient(90deg, var(--accent), var(--mint), color-mix(in srgb, var(--mint) 72%, white));
+      background-size: 42px 100%, 100% 100%;
       position: relative;
       overflow: hidden;
-      transition: width .16s ease;
+      transition: width .22s cubic-bezier(.2, .8, .2, 1);
     }
 
     .progress-bar::after {
@@ -791,12 +1072,16 @@
       animation: progress-shimmer 1.05s linear infinite;
     }
 
+    .dropzone.uploading .progress-bar {
+      animation: progress-liquid 1.2s linear infinite;
+    }
+
     .upload-state {
       display: inline-flex;
       align-items: center;
       justify-content: center;
       min-height: 26px;
-      margin-top: 10px;
+      margin-top: 8px;
       padding: 4px 9px;
       border-radius: 999px;
       color: var(--accent-strong);
@@ -804,6 +1089,83 @@
       font-size: .76rem;
       font-weight: 900;
       text-transform: uppercase;
+    }
+
+    .upload-queue {
+      width: min(100%, 430px);
+      display: grid;
+      gap: 7px;
+      margin-top: 10px;
+    }
+
+    .upload-queue:empty {
+      display: none;
+    }
+
+    .upload-queue-item {
+      --queue-progress: 0%;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px 10px;
+      align-items: center;
+      max-height: 72px;
+      padding: 8px 9px;
+      border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line));
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--surface-soft) 82%, transparent);
+      box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 8%, transparent);
+      overflow: hidden;
+      animation: upload-chip-in .26s cubic-bezier(.2, .8, .2, 1) both;
+      animation-delay: calc(var(--queue-order, 0) * 38ms);
+    }
+
+    .upload-queue-item.done {
+      border-color: color-mix(in srgb, var(--mint) 58%, var(--line));
+      background: color-mix(in srgb, var(--mint) 13%, var(--surface));
+    }
+
+    .upload-queue-item.failed {
+      border-color: color-mix(in srgb, var(--danger) 62%, var(--line));
+      background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+    }
+
+    .upload-queue-item.collapsing {
+      animation: upload-chip-out .34s ease both;
+    }
+
+    .upload-queue-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: .78rem;
+      font-weight: 900;
+      color: var(--ink);
+    }
+
+    .upload-queue-state {
+      color: var(--accent-strong);
+      font-size: .68rem;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .upload-queue-meter {
+      grid-column: 1 / -1;
+      height: 4px;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--line) 68%, transparent);
+      overflow: hidden;
+    }
+
+    .upload-queue-meter::before {
+      content: "";
+      display: block;
+      width: var(--queue-progress);
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--accent), var(--mint));
+      transition: width .18s cubic-bezier(.2, .8, .2, 1);
     }
 
     .status {
@@ -888,6 +1250,25 @@
       padding: 12px;
       display: grid;
       gap: 12px;
+      animation: text-card-in .24s ease both;
+      transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+    }
+
+    .text-viewer.new {
+      border-color: color-mix(in srgb, var(--mint) 42%, var(--line));
+      box-shadow: 0 10px 30px color-mix(in srgb, var(--mint) 11%, transparent);
+    }
+
+    .text-viewer.slide-left {
+      animation: text-slide-left .22s ease both;
+    }
+
+    .text-viewer.slide-right {
+      animation: text-slide-right .22s ease both;
+    }
+
+    .text-viewer.removing {
+      animation: row-remove .2s ease both;
     }
 
     .text-item-top,
@@ -937,16 +1318,15 @@
 
     .text-copy {
       margin: 0;
-      display: -webkit-box;
-      -webkit-box-orient: vertical;
-      -webkit-line-clamp: 5;
+      max-height: calc(1.45em * 5);
       overflow: hidden;
+      opacity: .96;
+      transition: max-height .28s cubic-bezier(.2, .8, .2, 1), opacity .18s ease;
     }
 
     .text-copy.expanded {
-      display: block;
-      -webkit-line-clamp: unset;
-      overflow: visible;
+      max-height: var(--expanded-height, 420px);
+      opacity: 1;
     }
 
     .text-original {
@@ -962,9 +1342,28 @@
     }
 
     .table-wrap {
-      overflow: auto;
+      overflow-x: auto;
+      overflow-y: scroll;
       max-height: 530px;
       scrollbar-width: thin;
+      scrollbar-color: color-mix(in srgb, var(--muted) 72%, transparent) color-mix(in srgb, var(--surface-soft) 78%, transparent);
+      scrollbar-gutter: stable;
+    }
+
+    .table-wrap::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+
+    .table-wrap::-webkit-scrollbar-track {
+      background: color-mix(in srgb, var(--surface-soft) 78%, transparent);
+      border-radius: 999px;
+    }
+
+    .table-wrap::-webkit-scrollbar-thumb {
+      background: color-mix(in srgb, var(--muted) 72%, transparent);
+      border: 2px solid color-mix(in srgb, var(--surface-soft) 78%, transparent);
+      border-radius: 999px;
     }
 
     table {
@@ -994,6 +1393,42 @@
 
     tbody tr {
       animation: rise-in .22s ease both;
+    }
+
+    tbody tr.new-row {
+      animation: row-new .58s ease both;
+    }
+
+    tbody tr.removing {
+      animation: row-remove .28s ease both;
+    }
+
+    tbody tr.removing td {
+      padding-top: 0;
+      padding-bottom: 0;
+      border-bottom-color: transparent;
+      transition: padding .22s ease, border-color .22s ease;
+    }
+
+    tbody tr.removing .file-cell,
+    tbody tr.removing .row-actions,
+    tbody tr.removing td:nth-child(2),
+    tbody tr.removing td:nth-child(3) {
+      opacity: 0;
+      transform: translateX(8px) scale(.98);
+      transition: opacity .18s ease, transform .18s ease;
+    }
+
+    tbody tr.new-row .file-icon {
+      animation: file-icon-pop .42s ease both;
+    }
+
+    tbody tr.upload-complete-row {
+      animation: row-new .34s ease both, row-complete 1.05s ease both;
+    }
+
+    tbody tr.upload-complete-row .file-icon {
+      animation: file-icon-complete .62s cubic-bezier(.2, .82, .2, 1) both;
     }
 
     th:nth-child(1), td:nth-child(1) { width: 46%; }
@@ -1032,6 +1467,10 @@
     .file-icon svg {
       width: 20px;
       height: 20px;
+    }
+
+    .icon-btn.copied {
+      animation: copy-confirm .42s ease;
     }
 
     .file-main {
@@ -1109,6 +1548,21 @@
       cursor: zoom-in;
     }
 
+    .qr-stage::after {
+      content: "";
+      position: absolute;
+      left: 10px;
+      right: 10px;
+      top: 10px;
+      height: 2px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, transparent, var(--mint), transparent);
+      box-shadow: 0 0 12px color-mix(in srgb, var(--mint) 50%, transparent);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 4;
+    }
+
     .qr-stage img,
     .qr-build-canvas {
       width: 188px;
@@ -1179,6 +1633,10 @@
       opacity: 1;
     }
 
+    .qr-stage.generating::after {
+      animation: qr-scan 1.05s ease-in-out infinite;
+    }
+
     .qr-box.updating .qr-stage {
       animation: qr-refresh .7s ease both;
     }
@@ -1209,6 +1667,73 @@
       font-size: .88rem;
       font-weight: 700;
       overflow-wrap: anywhere;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .url-value::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 54px;
+      height: 54px;
+      border-radius: 999px;
+      border: 1px solid color-mix(in srgb, var(--mint) 76%, transparent);
+      box-shadow:
+        inset 0 0 18px color-mix(in srgb, var(--mint) 26%, transparent),
+        0 0 20px color-mix(in srgb, var(--accent) 20%, transparent);
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, -50%) scale(.42);
+    }
+
+    .url-value.renewed {
+      animation: link-renew .72s cubic-bezier(.2, .8, .2, 1) both;
+    }
+
+    .url-value.renewed::after {
+      animation: link-renew-ring .72s ease-out both;
+    }
+
+    .connection-energy {
+      position: fixed;
+      left: 50vw;
+      top: 50vh;
+      width: 1px;
+      height: 1px;
+      z-index: 95;
+      pointer-events: none;
+    }
+
+    .connection-energy::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 92px;
+      height: 92px;
+      border: 1px solid color-mix(in srgb, var(--mint) 78%, transparent);
+      border-radius: 999px;
+      box-shadow:
+        inset 0 0 28px color-mix(in srgb, var(--mint) 22%, transparent),
+        0 0 36px color-mix(in srgb, var(--accent) 18%, transparent);
+      animation: connection-ring .82s ease-out both;
+    }
+
+    .connection-particle {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: var(--size, 7px);
+      height: var(--size, 7px);
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--mint) 86%, white);
+      box-shadow:
+        0 0 8px color-mix(in srgb, var(--mint) 78%, transparent),
+        0 0 18px color-mix(in srgb, var(--accent) 30%, transparent);
+      animation: connection-particle .86s cubic-bezier(.18, .78, .2, 1) both;
+      animation-delay: var(--delay, 0ms);
     }
 
     .drawer-backdrop {
@@ -1218,7 +1743,8 @@
       background: rgba(10, 18, 30, .42);
       opacity: 0;
       pointer-events: none;
-      transition: opacity .2s ease;
+      transition: opacity .24s ease, backdrop-filter .24s ease;
+      backdrop-filter: blur(0);
     }
 
     .qr-modal {
@@ -1254,6 +1780,7 @@
 
     .qr-modal[aria-hidden="false"] .qr-modal-card {
       transform: scale(1);
+      animation: modal-card-in .2s ease both;
     }
 
     .qr-modal-close {
@@ -1323,10 +1850,17 @@
     body.drawer-open .drawer-backdrop {
       opacity: 1;
       pointer-events: auto;
+      backdrop-filter: blur(5px);
     }
 
     body.drawer-open .drawer { pointer-events: auto; }
     body.drawer-open .drawer-panel { transform: translateX(0); }
+
+    body.drawer-open .drawer-panel > .panel,
+    body.drawer-open .drawer-panel > form.panel {
+      animation: drawer-item-in .28s ease both;
+      animation-delay: calc(var(--drawer-order, 0) * 45ms);
+    }
 
     .drawer-top,
     .admin-actions {
@@ -1459,9 +1993,9 @@
         flex-direction: column;
       }
       .dropzone {
-        min-height: 190px;
+        min-height: 122px;
         margin: 12px;
-        padding: 18px 12px;
+        padding: 12px;
       }
       .settings-grid,
       .admin-stats,
@@ -1601,10 +2135,11 @@
               <h2 class="panel-title">Send Files</h2>
               <span class="panel-subtitle">Drag in files or choose from this device.</span>
             </div>
-            <span class="counter">10 GB max</span>
+            <span id="uploadLimitBadge" class="counter">{{ upload_limit_label }}</span>
           </div>
           <div id="dropzone" class="dropzone">
             <div class="drop-scan" aria-hidden="true"></div>
+            <div class="drop-success-burst" aria-hidden="true"></div>
             <svg class="drop-border-trace" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
               <path class="trace-top" d="M3.2 1.2 H96.8"></path>
               <path class="trace-right" d="M98.8 3.2 V96.8"></path>
@@ -1616,9 +2151,10 @@
                 <svg viewBox="0 0 24 24"><path d="M9 4h6a2 2 0 0 1 2 2v1H7V6a2 2 0 0 1 2-2Z"/><path d="M9 4a3 3 0 0 1 6 0"/><path d="M7 7H5.8A1.8 1.8 0 0 0 4 8.8v10.4A1.8 1.8 0 0 0 5.8 21h12.4a1.8 1.8 0 0 0 1.8-1.8V8.8A1.8 1.8 0 0 0 18.2 7H17"/><path d="M8 13h8M8 17h5"/></svg>
               </button>
             </div>
-            <div>
+            <div class="dropzone-body">
               <div class="upload-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0 5 5m-5-5-5 5"/><path d="M5 15v2.5A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5V15"/></svg>
+                <svg class="upload-arrow" viewBox="0 0 24 24"><path d="M12 16V4m0 0 5 5m-5-5-5 5"/><path d="M5 15v2.5A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5V15"/></svg>
+                <svg class="upload-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
               </div>
               <strong>Drop files anywhere in this box</strong>
               <p>Upload progress includes speed and ETA.</p>
@@ -1628,6 +2164,7 @@
               </div>
               <div id="uploadState" class="upload-state" aria-live="polite">Idle</div>
               <div class="progress-shell" aria-hidden="true"><div id="progressBar" class="progress-bar"></div></div>
+              <div id="uploadQueue" class="upload-queue" aria-live="polite"></div>
             </div>
           </div>
           <div id="status" class="status">Ready.</div>
@@ -1706,7 +2243,7 @@
         <button id="closeAdminBtn" class="icon-btn" type="button" aria-label="Close admin">X</button>
       </div>
 
-      <section class="panel admin-card">
+      <section class="panel admin-card" style="--drawer-order: 0">
         <div class="drawer-top">
           <h3 class="panel-title">Status</h3>
           <button id="refreshAdminBtn" class="secondary-btn" type="button">Refresh</button>
@@ -1720,7 +2257,7 @@
         <div class="mini-path">Data: {{ stats.data_dir }}</div>
       </section>
 
-      <form id="settingsForm" class="panel admin-card">
+      <form id="settingsForm" class="panel admin-card" style="--drawer-order: 1">
         <h3 class="panel-title">Runtime Settings</h3>
         <div class="settings-grid">
           <label class="settings-field full">Access Code
@@ -1740,6 +2277,10 @@
           <label class="settings-field full">Max Stored Files
             <input id="setCleanupMaxFiles" type="number" min="0" step="1" />
           </label>
+          <label class="settings-field full">Upload Limit (GB)
+            <input id="setMaxUploadGb" type="number" min="0.01" max="1024" step="0.1" />
+          </label>
+          <p class="admin-note settings-field full">Changing this limit can make large uploads slower, use more disk space, or fail on some browsers and networks.</p>
           <label class="settings-field full">Open Browser On Start
             <select id="setLaunchBrowser">
               <option value="true">Enabled</option>
@@ -1750,7 +2291,7 @@
         <button class="primary-btn" id="settingsSave" type="submit">Save Settings</button>
       </form>
 
-      <section class="panel admin-card">
+      <section class="panel admin-card" style="--drawer-order: 2">
         <h3 class="panel-title">Housekeeping</h3>
         <div class="admin-actions">
           <button class="secondary-btn" type="button" data-cleanup="text">Clear Text</button>
@@ -1758,7 +2299,7 @@
         </div>
       </section>
 
-      <section class="panel admin-card">
+      <section class="panel admin-card" style="--drawer-order: 3">
         <div class="server-title-line">
           <h3 class="panel-title">Server</h3>
           <span id="serverVersion" class="version-chip">v{{ app_version }}</span>
@@ -1793,6 +2334,7 @@
     const initialSettings = {{ settings|tojson }};
     const initialStats = {{ stats|tojson }};
     const initialConnectionCount = {{ connected_count|default(0)|tojson }};
+    let maxUploadBytes = {{ upload_limit_bytes|tojson }};
     let publicUrl = {{ public_url|tojson }};
     const localUrl = {{ local_url|tojson }};
     let sessionSecondsRemaining = {{ session_seconds_remaining|default(300)|tojson }};
@@ -1803,6 +2345,8 @@
     const statusEl = document.getElementById("status");
     const progressBar = document.getElementById("progressBar");
     const uploadState = document.getElementById("uploadState");
+    const uploadQueue = document.getElementById("uploadQueue");
+    const uploadLimitBadge = document.getElementById("uploadLimitBadge");
     const filesBody = document.getElementById("filesBody");
     const incomingCount = document.getElementById("incomingCount");
     const textForm = document.getElementById("textForm");
@@ -1824,6 +2368,10 @@
     let expandedTextIds = new Set();
     let qrAnimationRun = 0;
     let connectionTimer;
+    let lastConnectionCount = Number(initialConnectionCount) || 0;
+    let knownFileNames = new Set({{ files|map(attribute='name')|list|tojson }});
+    let knownTextIds = new Set();
+    let textNavDirection = "";
 
     const adminEls = {
       openBtn: document.getElementById("openAdminBtn"),
@@ -1836,6 +2384,7 @@
       cleanupMinutes: document.getElementById("setCleanupMinutes"),
       cleanupDays: document.getElementById("setCleanupDays"),
       cleanupMaxFiles: document.getElementById("setCleanupMaxFiles"),
+      maxUploadGb: document.getElementById("setMaxUploadGb"),
       launchBrowser: document.getElementById("setLaunchBrowser"),
       generateCode: document.getElementById("generateCodeBtn"),
       copyGuestLink: document.getElementById("copyGuestLinkBtn"),
@@ -1900,6 +2449,37 @@
       const n = Number(count) || 0;
       if (connectionCount) connectionCount.textContent = String(n);
       if (connectionLabel) connectionLabel.textContent = n === 1 ? "device online" : "devices online";
+      if (n !== lastConnectionCount) {
+        const chip = connectionCount?.closest(".connection-chip");
+        chip?.classList.remove("bump");
+        void chip?.offsetWidth;
+        chip?.classList.add("bump");
+        setTimeout(() => chip?.classList.remove("bump"), 520);
+        if (n > lastConnectionCount) playConnectionEnergyBurst(Math.min(n - lastConnectionCount, 3));
+        lastConnectionCount = n;
+      }
+    }
+
+    function playConnectionEnergyBurst(intensity = 1) {
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      const burst = document.createElement("div");
+      burst.className = "connection-energy";
+      const total = 14 + intensity * 4;
+      for (let i = 0; i < total; i++) {
+        const particle = document.createElement("span");
+        particle.className = "connection-particle";
+        const side = i % 2 === 0 ? -1 : 1;
+        const spread = -72 + (144 / Math.max(total - 1, 1)) * i;
+        const distance = 150 + Math.random() * 120 + intensity * 18;
+        const vertical = spread + (Math.random() * 36 - 18);
+        particle.style.setProperty("--tx", `${side * distance}px`);
+        particle.style.setProperty("--ty", `${vertical}px`);
+        particle.style.setProperty("--size", `${5 + Math.random() * 5}px`);
+        particle.style.setProperty("--delay", `${Math.random() * 90}ms`);
+        burst.appendChild(particle);
+      }
+      document.body.appendChild(burst);
+      setTimeout(() => burst.remove(), 1200);
     }
 
     async function heartbeatConnection() {
@@ -1930,6 +2510,12 @@
       if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
       if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + " MB";
       return (n / (1024 * 1024 * 1024)).toFixed(1) + " GB";
+    }
+
+    function uploadLimitLabel(gb = initialSettings.max_upload_gb ?? 10) {
+      const value = Number(gb) || 10;
+      const amount = value >= 1 ? value : value * 1024;
+      return `${Number(amount.toFixed(2)).toString()} ${value >= 1 ? "GB" : "MB"} max`;
     }
 
     function stamp(unix) {
@@ -1991,6 +2577,16 @@
       if (uploadState) uploadState.textContent = label;
     }
 
+    function applyUploadLimitUi(settings = initialSettings) {
+      const gb = Number(settings.max_upload_gb ?? 10) || 10;
+      maxUploadBytes = gb * 1024 * 1024 * 1024;
+      if (uploadLimitBadge) uploadLimitBadge.textContent = uploadLimitLabel(gb);
+    }
+
+    function filesOverUploadLimit(files) {
+      return files.filter(file => Number(file.size || 0) > maxUploadBytes);
+    }
+
     function clipboardFileName(type) {
       const map = {
         "image/png": "png",
@@ -2033,7 +2629,81 @@
       dropzone.classList.remove("done");
       void dropzone.offsetWidth;
       dropzone.classList.add("done");
-      setTimeout(() => dropzone.classList.remove("done"), 700);
+      setTimeout(() => dropzone.classList.remove("done"), 820);
+    }
+
+    function playDropFlight(count = 1) {
+      const total = Math.min(Math.max(count, 1), 4);
+      for (let i = 0; i < total; i++) {
+        const chip = document.createElement("span");
+        chip.className = "fly-file";
+        const angle = (-88 + i * (176 / Math.max(total - 1, 1))) * Math.PI / 180;
+        const distance = 16 + i * 4;
+        chip.style.setProperty("--fly-x", `${Math.cos(angle) * distance}px`);
+        chip.style.setProperty("--fly-y", `${Math.sin(angle) * distance - 6}px`);
+        chip.style.animationDelay = `${i * 36}ms`;
+        dropzone.appendChild(chip);
+        setTimeout(() => chip.remove(), 900 + i * 36);
+      }
+    }
+
+    function pulsePasteButton(state = "pop") {
+      if (!pasteBtn) return;
+      pasteBtn.classList.remove("pop", "ready", "error");
+      void pasteBtn.offsetWidth;
+      pasteBtn.classList.add(state);
+      setTimeout(() => pasteBtn.classList.remove(state), state === "ready" ? 900 : 420);
+    }
+
+    function renderUploadQueue(files) {
+      if (!uploadQueue) return;
+      uploadQueue.innerHTML = "";
+      files.forEach((file, index) => {
+        const item = document.createElement("div");
+        item.className = "upload-queue-item";
+        item.dataset.index = String(index);
+        item.style.setProperty("--queue-order", index);
+        item.style.setProperty("--queue-progress", "0%");
+
+        const name = document.createElement("span");
+        name.className = "upload-queue-name";
+        name.textContent = file.name || `File ${index + 1}`;
+
+        const state = document.createElement("span");
+        state.className = "upload-queue-state";
+        state.textContent = "Queued";
+
+        const meter = document.createElement("span");
+        meter.className = "upload-queue-meter";
+        meter.setAttribute("aria-hidden", "true");
+
+        item.append(name, state, meter);
+        uploadQueue.appendChild(item);
+      });
+    }
+
+    function updateUploadQueueItem(index, percent, stateLabel, className = "") {
+      const item = uploadQueue?.querySelector(`[data-index="${index}"]`);
+      if (!item) return;
+      item.style.setProperty("--queue-progress", `${Math.max(0, Math.min(100, percent || 0))}%`);
+      item.classList.toggle("done", className === "done");
+      item.classList.toggle("failed", className === "failed");
+      const state = item.querySelector(".upload-queue-state");
+      if (state) state.textContent = stateLabel;
+    }
+
+    function collapseUploadQueue(delay = 650) {
+      if (!uploadQueue) return;
+      setTimeout(() => {
+        const items = [...uploadQueue.querySelectorAll(".upload-queue-item")];
+        items.forEach((item, index) => {
+          item.style.animationDelay = `${index * 45}ms`;
+          item.classList.add("collapsing");
+        });
+        setTimeout(() => {
+          uploadQueue.innerHTML = "";
+        }, 520 + items.length * 45);
+      }, delay);
     }
 
     async function fetchQrModules(url) {
@@ -2086,7 +2756,7 @@
       }
     }
 
-    async function playQrBuildAnimation(img, qrUrl) {
+    async function playQrBuildAnimation(img, qrUrl, totalDuration = 2000) {
       const stage = img.closest("[data-qr-stage]");
       const canvas = stage?.querySelector("[data-qr-canvas]");
       const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -2101,9 +2771,9 @@
       try {
         const qr = await fetchQrModules(src);
         drawQrModules(canvas, qr, 0);
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 420));
         const started = performance.now();
-        const duration = 5000;
+        const duration = Math.max(300, totalDuration - 420);
         await new Promise(resolve => {
           function frame(now) {
             if (run !== qrAnimationRun) {
@@ -2127,7 +2797,16 @@
       }
     }
 
-    async function copyText(value) {
+    function markCopied(trigger) {
+      const button = trigger?.closest?.("button");
+      if (!button) return;
+      button.classList.remove("copied");
+      void button.offsetWidth;
+      button.classList.add("copied");
+      setTimeout(() => button.classList.remove("copied"), 460);
+    }
+
+    async function copyText(value, trigger = null) {
       const text = String(value || "");
       if (!text) return;
       try {
@@ -2144,6 +2823,7 @@
           temp.remove();
         }
         showToast("Copied to clipboard");
+        markCopied(trigger);
       } catch (_) {
         showToast("Copy blocked by browser");
       }
@@ -2152,6 +2832,8 @@
     function commitTheme(next) {
       localStorage.setItem("dropAirTheme", next);
       document.documentElement.dataset.theme = next;
+      const themeIndex = { light: 0, dark: 1, system: 2 }[next] ?? 2;
+      document.querySelector(".theme-switch")?.style.setProperty("--theme-index", String(themeIndex));
       document.querySelectorAll("[data-theme-choice]").forEach(btn => {
         const active = btn.dataset.themeChoice === next;
         btn.classList.toggle("active", active);
@@ -2177,6 +2859,16 @@
       });
     }
 
+    function animatePublicUrlRenewal() {
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      document.querySelectorAll("[data-public-url]").forEach(el => {
+        el.classList.remove("renewed");
+        void el.offsetWidth;
+        el.classList.add("renewed");
+        setTimeout(() => el.classList.remove("renewed"), 760);
+      });
+    }
+
     function updateSessionUi(data, changed) {
       if (!data) return;
       if (data.key) sessionKey = data.key;
@@ -2185,6 +2877,7 @@
       document.querySelectorAll("[data-public-url]").forEach(el => {
         el.textContent = publicUrl;
       });
+      if (changed) animatePublicUrlRenewal();
       document.querySelectorAll("[data-session-status]").forEach(el => {
         const remaining = Math.max(0, sessionSecondsRemaining);
         const min = Math.floor(remaining / 60);
@@ -2193,13 +2886,13 @@
       });
       if (data.qr_url) {
         document.querySelectorAll("[data-qr-image]").forEach(img => {
-          const box = img.closest(".qr-box");
-          if (changed && box) {
-            box.classList.remove("updating");
-            void box.offsetWidth;
-            box.classList.add("updating");
-            setTimeout(() => box.classList.remove("updating"), 7000);
-            playQrBuildAnimation(img, data.qr_url);
+          if (changed) {
+            const box = img.closest(".qr-box");
+            box?.classList.remove("updating");
+            void box?.offsetWidth;
+            box?.classList.add("updating");
+            setTimeout(() => box?.classList.remove("updating"), 900);
+            playQrBuildAnimation(img, data.qr_url, 2000);
           } else if (!img.getAttribute("src")) {
             img.src = data.qr_url;
           }
@@ -2246,7 +2939,9 @@
       adminEls.cleanupMinutes.value = String(data.auto_cleanup_minutes ?? 10);
       adminEls.cleanupDays.value = String(data.auto_cleanup_days ?? 0);
       adminEls.cleanupMaxFiles.value = String(data.auto_cleanup_max_files ?? 0);
+      adminEls.maxUploadGb.value = String(data.max_upload_gb ?? 10);
       adminEls.launchBrowser.value = data.launch_browser_on_start ? "true" : "false";
+      applyUploadLimitUi(data);
     }
 
     function updateAdminStats(stats) {
@@ -2281,6 +2976,16 @@
       const value = Number.parseInt(raw, 10);
       if (!Number.isFinite(value) || value < 0) throw new Error("Settings must be non-negative whole numbers.");
       return value;
+    }
+
+    function parseUploadLimitField(el, fallback) {
+      const raw = String(el.value || "").trim();
+      if (!raw) return fallback;
+      const value = Number.parseFloat(raw);
+      if (!Number.isFinite(value) || value < 0.01 || value > 1024) {
+        throw new Error("Upload limit must be between 0.01 GB and 1024 GB.");
+      }
+      return Number(value.toFixed(3));
     }
 
     function openAdmin() {
@@ -2351,8 +3056,14 @@
           auto_cleanup_minutes: parseIntField(adminEls.cleanupMinutes, 10),
           auto_cleanup_days: parseIntField(adminEls.cleanupDays, 0),
           auto_cleanup_max_files: parseIntField(adminEls.cleanupMaxFiles, 0),
+          max_upload_gb: parseUploadLimitField(adminEls.maxUploadGb, 10),
           launch_browser_on_start: adminEls.launchBrowser.value === "true"
         };
+        const currentLimit = Number(initialSettings.max_upload_gb ?? 10);
+        if (nextSettings.max_upload_gb !== currentLimit) {
+          const ok = confirm(`Change upload limit from ${uploadLimitLabel(currentLimit)} to ${uploadLimitLabel(nextSettings.max_upload_gb)}? Large limits can use a lot of disk space and may fail on some devices.`);
+          if (!ok) return;
+        }
         const r = await fetch(`/api/settings${codeQuery()}`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...(accessCode ? { "X-Drop-Air-Code": accessCode } : {}) },
@@ -2361,6 +3072,7 @@
         if (!r.ok) throw new Error(await r.text() || "Failed to save settings.");
         const data = await r.json();
         fillSettingsForm(data.settings);
+        Object.assign(initialSettings, data.settings);
         showToast("Admin settings saved");
         if ((data.settings.access_code || "") !== accessCode) {
           accessCode = data.settings.access_code || "";
@@ -2390,8 +3102,8 @@
       showToast(target === "uploads" ? "Files cleared" : "Text cleared");
     }
 
-    async function deleteFile(name) {
-      if (!name || !confirm(`Delete ${name}?`)) return;
+    async function deleteFile(name, confirmFirst = true) {
+      if (!name || (confirmFirst && !confirm(`Delete ${name}?`))) return;
       const r = await fetch(`/api/files/${encodeURIComponent(name)}${codeQuery()}`, {
         method: "DELETE",
         headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {}
@@ -2403,8 +3115,18 @@
       showToast("File deleted");
     }
 
-    async function deleteTextItem(id) {
-      if (!id || !confirm("Delete this shared text?")) return;
+    async function animateDeleteFile(name, trigger) {
+      if (!name || !confirm(`Delete ${name}?`)) return;
+      const row = trigger?.closest?.("tr");
+      if (row) {
+        row.classList.add("removing");
+        await new Promise(resolve => setTimeout(resolve, 180));
+      }
+      await deleteFile(name, false);
+    }
+
+    async function deleteTextItem(id, confirmFirst = true) {
+      if (!id || (confirmFirst && !confirm("Delete this shared text?"))) return;
       const r = await fetch(`/api/text/${encodeURIComponent(id)}${codeQuery()}`, {
         method: "DELETE",
         headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {}
@@ -2507,8 +3229,10 @@
       }, 900);
     }
 
-    function fileRow(f) {
+    function fileRow(f, isNew = false, isUploadComplete = false) {
       const row = document.createElement("tr");
+      if (isNew) row.classList.add("new-row");
+      if (isUploadComplete) row.classList.add("upload-complete-row");
       const link = withCode(f.url);
       const absolute = new URL(link, window.location.href).toString();
       const info = fileInfo(f.name);
@@ -2544,42 +3268,69 @@
       const actions = document.createElement("div");
       actions.className = "row-actions";
       const copy = document.createElement("button");
-      copy.className = "icon-btn";
+      copy.className = "icon-btn copy-file";
       copy.type = "button";
       copy.setAttribute("aria-label", "Copy file link");
       copy.innerHTML = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>';
-      copy.addEventListener("click", () => copyText(absolute));
+      copy.dataset.url = absolute;
       const del = document.createElement("button");
-      del.className = "icon-btn danger-icon";
+      del.className = "icon-btn danger-icon delete-file";
       del.type = "button";
       del.setAttribute("aria-label", "Delete file");
+      del.dataset.name = f.name;
       del.innerHTML = trashIcon();
-      del.addEventListener("click", () => deleteFile(f.name).catch(err => showToast(err.message)));
       actions.append(copy, del);
       action.appendChild(actions);
       row.append(name, size, modified, action);
       return row;
     }
 
-    async function refreshFiles() {
+    async function refreshFiles(options = {}) {
+      const completedNames = options.completedNames || new Set();
       const r = await fetch(`/api/files${codeQuery()}`, { headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {} });
       if (!r.ok) return;
       const data = await r.json();
       filesBody.innerHTML = "";
       incomingCount.textContent = `Files (${data.files.length})`;
+      const nextNames = new Set((data.files || []).map(f => f.name));
       if (!data.files.length) {
         filesBody.innerHTML = '<tr><td class="empty" colspan="4">No incoming files yet</td></tr>';
+        knownFileNames = nextNames;
         return;
       }
-      data.files.forEach(f => filesBody.appendChild(fileRow(f)));
+      data.files.forEach(f => filesBody.appendChild(fileRow(f, !knownFileNames.has(f.name), completedNames.has(f.name))));
+      knownFileNames = nextNames;
+    }
+
+    function prepareTextExpansion(body) {
+      if (!body) return;
+      requestAnimationFrame(() => {
+        body.style.setProperty("--expanded-height", `${body.scrollHeight + 2}px`);
+      });
+    }
+
+    function toggleTextExpansion(itemId, card, body, button) {
+      if (!itemId || !body) return;
+      const nextExpanded = !expandedTextIds.has(itemId);
+      if (nextExpanded) {
+        expandedTextIds.add(itemId);
+      } else {
+        expandedTextIds.delete(itemId);
+      }
+      body.style.setProperty("--expanded-height", `${body.scrollHeight + 2}px`);
+      body.classList.toggle("expanded", nextExpanded);
+      card?.classList.toggle("expanded", nextExpanded);
+      if (button) button.textContent = nextExpanded ? "Collapse" : "Expand";
     }
 
     function renderTextItems(items) {
       textList.innerHTML = "";
       textCount.textContent = `Text (${items.length})`;
+      const nextTextIds = new Set((items || []).map(item => item.id));
       if (!items.length) {
         currentTextIndex = 0;
         expandedTextIds = new Set();
+        knownTextIds = nextTextIds;
         const empty = document.createElement("div");
         empty.className = "empty";
         empty.textContent = "No shared text yet";
@@ -2593,6 +3344,9 @@
 
       const card = document.createElement("article");
       card.className = "text-viewer";
+      if (!knownTextIds.has(item.id)) card.classList.add("new");
+      if (textNavDirection) card.classList.add(textNavDirection);
+      textNavDirection = "";
 
       const nav = document.createElement("div");
       nav.className = "text-nav";
@@ -2606,6 +3360,7 @@
       prev.disabled = currentTextIndex === 0;
       prev.addEventListener("click", () => {
         currentTextIndex = Math.max(0, currentTextIndex - 1);
+        textNavDirection = "slide-right";
         renderTextItems(items);
       });
       const position = document.createElement("span");
@@ -2619,6 +3374,7 @@
       next.disabled = currentTextIndex >= items.length - 1;
       next.addEventListener("click", () => {
         currentTextIndex = Math.min(items.length - 1, currentTextIndex + 1);
+        textNavDirection = "slide-left";
         renderTextItems(items);
       });
       navGroup.append(prev, position, next);
@@ -2638,26 +3394,23 @@
       expand.className = "secondary-btn";
       expand.type = "button";
       expand.textContent = expanded ? "Collapse" : "Expand";
-      expand.addEventListener("click", () => {
-        if (expandedTextIds.has(item.id)) {
-          expandedTextIds.delete(item.id);
-        } else {
-          expandedTextIds.add(item.id);
-        }
-        renderTextItems(items);
-      });
       const copy = document.createElement("button");
       copy.className = "icon-btn";
       copy.type = "button";
       copy.setAttribute("aria-label", "Copy shared text");
       copy.innerHTML = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>';
-      copy.addEventListener("click", () => copyText(display));
+      copy.addEventListener("click", e => copyText(display, e.currentTarget));
       const del = document.createElement("button");
       del.className = "icon-btn danger-icon";
       del.type = "button";
       del.setAttribute("aria-label", "Delete shared text");
       del.innerHTML = trashIcon();
-      del.addEventListener("click", () => deleteTextItem(item.id).catch(err => showToast(err.message)));
+      del.addEventListener("click", async () => {
+        if (!confirm("Delete this shared text?")) return;
+        card.classList.add("removing");
+        await new Promise(resolve => setTimeout(resolve, 160));
+        deleteTextItem(item.id, false).catch(err => showToast(err.message));
+      });
       actionGroup.append(expand, copy, del);
       top.append(pill, actionGroup);
 
@@ -2665,6 +3418,7 @@
       body.className = "text-copy";
       if (expanded) body.classList.add("expanded");
       body.textContent = display;
+      expand.addEventListener("click", () => toggleTextExpansion(item.id, card, body, expand));
 
       const original = document.createElement("div");
       original.className = "text-original";
@@ -2673,6 +3427,8 @@
 
       card.append(nav, top, body, original);
       textList.appendChild(card);
+      prepareTextExpansion(body);
+      knownTextIds = nextTextIds;
     }
 
     async function refreshTextItems() {
@@ -2705,31 +3461,40 @@
 
     async function pasteClipboard() {
       if (!navigator.clipboard) {
+        pulsePasteButton("error");
         showToast("Clipboard is not available in this browser");
         return;
       }
 
       pasteBtn.disabled = true;
+      pulsePasteButton("pop");
       setUploadState("Reading clipboard");
       try {
         const files = [];
         let text = "";
+        let clipboardReadError = null;
 
         if (navigator.clipboard.read) {
-          const items = await navigator.clipboard.read();
-          for (const item of items) {
-            for (const type of item.types) {
-              if (type.startsWith("text/")) {
-                text = text || await item.getType(type).then(blob => blob.text());
-                continue;
+          try {
+            const items = await navigator.clipboard.read();
+            for (const item of items) {
+              for (const type of item.types) {
+                if (type.startsWith("text/")) {
+                  text = text || await item.getType(type).then(blob => blob.text());
+                  continue;
+                }
+                const blob = await item.getType(type);
+                files.push(new File([blob], clipboardFileName(type), { type: blob.type || type }));
               }
-              const blob = await item.getType(type);
-              files.push(new File([blob], clipboardFileName(type), { type: blob.type || type }));
             }
+          } catch (err) {
+            clipboardReadError = err;
           }
         }
 
         if (files.length) {
+          pulsePasteButton("ready");
+          playDropFlight(files.length);
           flashDropTrace();
           await uploadMany(files);
           showToast(`Pasted ${files.length} clipboard item${files.length === 1 ? "" : "s"}`);
@@ -2737,15 +3502,28 @@
         }
 
         if (!text && navigator.clipboard.readText) {
-          text = await navigator.clipboard.readText();
+          try {
+            text = await navigator.clipboard.readText();
+          } catch (err) {
+            clipboardReadError = clipboardReadError || err;
+          }
+        }
+        if (!text && clipboardReadError) {
+          throw clipboardReadError;
         }
         await postTextItem(text);
+        pulsePasteButton("ready");
         textStatus.textContent = "Clipboard text shared.";
         showToast("Clipboard text shared");
         setUploadState("Idle");
       } catch (err) {
+        pulsePasteButton("error");
         setUploadState("Idle");
-        showToast(err.message || "Could not paste clipboard");
+        const rawMessage = String(err?.message || "");
+        const blocked = /clipboard|permission|read|denied|notallowed/i.test(rawMessage) || err?.name === "NotAllowedError";
+        const message = blocked ? "Clipboard blocked. Use Choose Files or allow clipboard permission." : rawMessage || "Could not paste clipboard";
+        setStatus(message, blocked);
+        showToast(message);
       } finally {
         pasteBtn.disabled = false;
       }
@@ -2766,11 +3544,14 @@
           const filePct = ev.lengthComputable && ev.total > 0 ? Math.floor((ev.loaded / ev.total) * 100) : 0;
           const totalPct = ctx.totalBytes > 0 ? Math.floor((sentBytes / ctx.totalBytes) * 100) : filePct;
           setProgress(totalPct);
+          updateUploadQueueItem(ctx.index, filePct, `${filePct}%`);
           setStatus(`Uploading ${file.name} (${ctx.index + 1}/${ctx.totalFiles}) ${filePct}% - ${human(speed)}/s - ETA ${eta}`);
         };
         xhr.onload = () => {
           if (xhr.status >= 200 && xhr.status < 300) {
-            resolve();
+            const data = JSON.parse(xhr.responseText || "{}");
+            updateUploadQueueItem(ctx.index, 100, "Done", "done");
+            resolve(data.filename || file.name);
             return;
           }
           let msg = `Upload failed for ${file.name} (HTTP ${xhr.status})`;
@@ -2784,6 +3565,7 @@
         const fd = new FormData();
         fd.append("file", file);
         setUploadState("Uploading");
+        updateUploadQueueItem(ctx.index, 2, "Starting");
         setStatus(`Uploading ${file.name} (${ctx.index + 1}/${ctx.totalFiles})`);
         xhr.send(fd);
       });
@@ -2791,25 +3573,42 @@
 
     async function uploadMany(files) {
       if (!files.length) return;
+      const tooLarge = filesOverUploadLimit(files);
+      if (tooLarge.length) {
+        pulsePasteButton("error");
+        setUploadState("Idle");
+        const names = tooLarge.slice(0, 2).map(file => file.name).join(", ");
+        setStatus(`${names}${tooLarge.length > 2 ? "..." : ""} exceeds ${uploadLimitBadge?.textContent || "the upload limit"}.`, true);
+        showToast(`File exceeds ${uploadLimitBadge?.textContent || "upload limit"}`);
+        return;
+      }
       pickBtn.disabled = true;
       dropzone.classList.add("uploading");
       setUploadState("Preparing");
       setProgress(0);
+      renderUploadQueue(files);
       const totalBytes = files.reduce((sum, f) => sum + (f.size || 0), 0);
       const startedAt = performance.now();
       let completedBytes = 0;
+      const completedNames = new Set();
       try {
         for (let i = 0; i < files.length; i++) {
-          await uploadFile(files[i], { startedAt, totalBytes, completedBytes, index: i, totalFiles: files.length });
+          updateUploadQueueItem(i, 0, "Uploading");
+          const storedName = await uploadFile(files[i], { startedAt, totalBytes, completedBytes, index: i, totalFiles: files.length });
+          completedNames.add(storedName);
           completedBytes += files[i].size || 0;
           setStatus(`Uploaded ${i + 1}/${files.length}`);
         }
         setProgress(100);
-        await refreshFiles();
+        await refreshFiles({ completedNames });
         setUploadState("Complete");
         flashUploadDone();
         setStatus("All uploads finished.");
+        collapseUploadQueue();
       } catch (e) {
+        const active = [...uploadQueue?.querySelectorAll(".upload-queue-item") || []]
+          .find(item => !item.classList.contains("done"));
+        if (active) updateUploadQueueItem(active.dataset.index, 100, "Failed", "failed");
         setUploadState("Failed");
         setStatus(e.message, true);
       } finally {
@@ -2823,6 +3622,7 @@
     }
 
     applyTheme(localStorage.getItem("dropAirTheme") || "system");
+    applyUploadLimitUi(initialSettings);
     setConnectionCount(initialConnectionCount);
     heartbeatConnection();
     connectionTimer = setInterval(heartbeatConnection, 10000);
@@ -2831,8 +3631,8 @@
     fillSettingsForm(initialSettings);
     updateAdminStats(initialStats);
     document.querySelectorAll("[data-theme-choice]").forEach(btn => btn.addEventListener("click", () => applyTheme(btn.dataset.themeChoice)));
-    document.querySelectorAll("[data-copy]").forEach(btn => btn.addEventListener("click", () => copyText(btn.dataset.copy)));
-    document.querySelectorAll("[data-copy-public]").forEach(btn => btn.addEventListener("click", () => copyText(publicUrl)));
+    document.querySelectorAll("[data-copy]").forEach(btn => btn.addEventListener("click", e => copyText(btn.dataset.copy, e.currentTarget)));
+    document.querySelectorAll("[data-copy-public]").forEach(btn => btn.addEventListener("click", e => copyText(publicUrl, e.currentTarget)));
     document.querySelectorAll("[data-cleanup]").forEach(btn => btn.addEventListener("click", () => cleanupTarget(btn.dataset.cleanup).catch(err => showToast(err.message))));
     document.querySelectorAll("[data-qr-image]").forEach(img => {
       img.addEventListener("click", () => openQrModal(img.currentSrc || img.src));
@@ -2847,7 +3647,7 @@
       img.setAttribute("aria-label", "Open larger QR code");
       playQrBuildAnimation(img, img.getAttribute("src") || img.src);
     });
-    document.getElementById("copyPublicUrlBtn")?.addEventListener("click", () => copyText(publicUrl));
+    document.getElementById("copyPublicUrlBtn")?.addEventListener("click", e => copyText(publicUrl, e.currentTarget));
     qrModalClose?.addEventListener("click", closeQrModal);
     qrModal?.addEventListener("click", e => {
       if (e.target === qrModal) closeQrModal();
@@ -2871,7 +3671,7 @@
         adminEls.accessCode.value = "";
         showToast("Code cleared in form. Save to apply.");
       });
-      adminEls.copyGuestLink.addEventListener("click", () => copyText(linkForCode(publicUrl, adminEls.accessCode.value.trim())));
+      adminEls.copyGuestLink.addEventListener("click", e => copyText(linkForCode(publicUrl, adminEls.accessCode.value.trim()), e.currentTarget));
       adminEls.refresh.addEventListener("click", () => refreshAdmin().catch(err => showToast(err.message)));
       adminEls.update.addEventListener("click", () => applyUpdate().catch(err => {
         adminEls.update.disabled = false;
@@ -2890,9 +3690,9 @@
     });
     filesBody.addEventListener("click", e => {
       const copyButton = e.target.closest(".copy-file");
-      if (copyButton) copyText(new URL(copyButton.dataset.url, window.location.href).toString());
+      if (copyButton) copyText(new URL(copyButton.dataset.url, window.location.href).toString(), copyButton);
       const deleteButton = e.target.closest(".delete-file");
-      if (deleteButton) deleteFile(deleteButton.dataset.name).catch(err => showToast(err.message));
+      if (deleteButton) animateDeleteFile(deleteButton.dataset.name, deleteButton).catch(err => showToast(err.message));
     });
     ["dragenter", "dragover"].forEach(evt => {
       dropzone.addEventListener(evt, e => {
@@ -2909,6 +3709,7 @@
       });
     });
     dropzone.addEventListener("drop", e => {
+      playDropFlight(e.dataTransfer.files.length);
       flashDropTrace();
       uploadMany([...e.dataTransfer.files]);
     });

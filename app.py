@@ -22,6 +22,7 @@ from urllib.request import Request, urlopen
 
 import qrcode
 from flask import Flask, Response, jsonify, redirect, render_template, request, send_from_directory, url_for
+from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.utils import secure_filename
 
 if getattr(sys, "frozen", False):
@@ -56,7 +57,8 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 SETTINGS_FILE = DATA_DIR / "settings.json"
 LOG_FILE = DATA_DIR / "drop-air.log"
 
-MAX_CONTENT_LENGTH = 10 * 1024 * 1024 * 1024  # 10 GB
+DEFAULT_MAX_UPLOAD_GB = 10.0
+MAX_CONTENT_LENGTH = int(DEFAULT_MAX_UPLOAD_GB * 1024 * 1024 * 1024)
 ALLOWED_ORIGINS = "*"
 _ENV_SESSION_KEY = os.getenv("DROP_AIR_SESSION_KEY", "").strip()
 SESSION_KEY = _ENV_SESSION_KEY if len(_ENV_SESSION_KEY) == 32 else secrets.token_hex(16)
@@ -102,11 +104,16 @@ def detect_update_repo() -> str:
 
 
 UPDATE_REPO = detect_update_repo()
+try:
+    ENV_MAX_UPLOAD_GB = float(os.getenv("DROP_AIR_MAX_UPLOAD_GB", str(DEFAULT_MAX_UPLOAD_GB)) or DEFAULT_MAX_UPLOAD_GB)
+except ValueError:
+    ENV_MAX_UPLOAD_GB = DEFAULT_MAX_UPLOAD_GB
 DEFAULT_SETTINGS = {
     "access_code": os.getenv("DROP_AIR_CODE", "").strip(),
     "auto_cleanup_minutes": int(os.getenv("DROP_AIR_AUTO_CLEANUP_MINUTES", "10") or "10"),
     "auto_cleanup_days": int(os.getenv("DROP_AIR_AUTO_CLEANUP_DAYS", "0") or "0"),
     "auto_cleanup_max_files": int(os.getenv("DROP_AIR_AUTO_CLEANUP_MAX_FILES", "0") or "0"),
+    "max_upload_gb": ENV_MAX_UPLOAD_GB,
     "launch_browser_on_start": os.getenv("DROP_AIR_OPEN_BROWSER", "1").strip().lower()
     not in {"0", "false", "no", "off"},
 }
@@ -560,6 +567,16 @@ def _coerce_non_negative_int(value, fallback: int) -> int:
         return fallback
 
 
+def _coerce_positive_float(value, fallback: float, minimum: float = 0.01, maximum: float = 1024.0) -> float:
+    try:
+        val = float(value)
+        if not minimum <= val <= maximum:
+            return fallback
+        return round(val, 3)
+    except (TypeError, ValueError):
+        return fallback
+
+
 def _coerce_bool(value, fallback: bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -595,6 +612,10 @@ def _normalize_settings(raw: dict) -> dict:
         "auto_cleanup_max_files": _coerce_non_negative_int(
             raw.get("auto_cleanup_max_files", DEFAULT_SETTINGS["auto_cleanup_max_files"]),
             DEFAULT_SETTINGS["auto_cleanup_max_files"],
+        ),
+        "max_upload_gb": _coerce_positive_float(
+            raw.get("max_upload_gb", DEFAULT_SETTINGS["max_upload_gb"]),
+            DEFAULT_SETTINGS["max_upload_gb"],
         ),
         "launch_browser_on_start": _coerce_bool(
             raw.get("launch_browser_on_start", DEFAULT_SETTINGS["launch_browser_on_start"]),
@@ -637,6 +658,21 @@ def set_settings(new_values: dict) -> dict:
 
 
 SETTINGS = load_settings()
+
+
+def upload_limit_bytes(settings: dict | None = None) -> int:
+    settings = settings or get_settings()
+    return int(float(settings.get("max_upload_gb", DEFAULT_MAX_UPLOAD_GB)) * 1024 * 1024 * 1024)
+
+
+def upload_limit_label(settings: dict | None = None) -> str:
+    settings = settings or get_settings()
+    gb = float(settings.get("max_upload_gb", DEFAULT_MAX_UPLOAD_GB))
+    if gb >= 1:
+        label = f"{gb:g} GB"
+    else:
+        label = f"{gb * 1024:g} MB"
+    return f"{label} max"
 
 
 def _normalize_text_item(raw: dict) -> dict | None:
@@ -929,6 +965,19 @@ def not_found(_error):
     ), 404
 
 
+@app.errorhandler(RequestEntityTooLarge)
+def upload_too_large(_error):
+    message = f"Upload is larger than {upload_limit_label()}."
+    if request.path.startswith("/api/"):
+        return jsonify({"error": message}), 413
+    return render_template(
+        "not_found.html",
+        title="Upload Too Large",
+        message=message,
+        hint="Ask the host to raise the runtime upload limit if this transfer is intentional.",
+    ), 413
+
+
 def list_files():
     items = []
     for p in sorted(UPLOAD_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
@@ -1110,6 +1159,11 @@ def add_headers(resp):
     return resp
 
 
+@app.before_request
+def apply_runtime_upload_limit():
+    app.config["MAX_CONTENT_LENGTH"] = upload_limit_bytes()
+
+
 @app.route("/", methods=["GET"])
 def index():
     cleanup_uploads()
@@ -1135,6 +1189,8 @@ def index():
         session_param=SESSION_PARAM,
         session_seconds_remaining=session["seconds_remaining"],
         settings=settings,
+        upload_limit_label=upload_limit_label(settings),
+        upload_limit_bytes=upload_limit_bytes(settings),
         is_admin=is_admin_request(),
         public_url=public_url,
         local_url=build_local_url(settings["access_code"]),
@@ -1249,12 +1305,18 @@ def api_upload():
     if not check_code():
         return jsonify({"error": "code not found"}), 404
 
+    limit = upload_limit_bytes()
+    if request.content_length and request.content_length > limit:
+        return jsonify({"error": f"Upload is larger than {upload_limit_label()}."}), 413
+
     if "file" not in request.files:
         return jsonify({"error": "missing file"}), 400
 
     f = request.files["file"]
     if not f.filename:
         return jsonify({"error": "empty filename"}), 400
+    if f.content_length and f.content_length > limit:
+        return jsonify({"error": f"{f.filename} is larger than {upload_limit_label()}."}), 413
 
     safe_name = secure_filename(f.filename)
     if not safe_name:
@@ -1350,6 +1412,15 @@ def api_settings():
         except (TypeError, ValueError):
             return jsonify({"error": f"{field} must be a non-negative integer"}), 400
 
+    if "max_upload_gb" in payload:
+        try:
+            value = float(payload["max_upload_gb"])
+            if not 0.01 <= value <= 1024:
+                raise ValueError
+            updates["max_upload_gb"] = round(value, 3)
+        except (TypeError, ValueError):
+            return jsonify({"error": "max_upload_gb must be between 0.01 and 1024"}), 400
+
     if "launch_browser_on_start" in payload:
         updates["launch_browser_on_start"] = _coerce_bool(
             payload.get("launch_browser_on_start"),
@@ -1359,6 +1430,7 @@ def api_settings():
     merged = dict(current)
     merged.update(updates)
     saved = set_settings(_normalize_settings(merged))
+    app.config["MAX_CONTENT_LENGTH"] = upload_limit_bytes(saved)
     cleanup_uploads()
     app.logger.info("Updated runtime settings.")
     return jsonify({"ok": True, "settings": saved})
