@@ -18,6 +18,7 @@ class DropAirReleaseUiTests(unittest.TestCase):
     def setUpClass(cls):
         cls.client = app.app.test_client()
         cls.template_source = (Path(__file__).resolve().parents[1] / "templates" / "index.html").read_text(encoding="utf-8")
+        cls.update_template_source = (Path(__file__).resolve().parents[1] / "templates" / "update.html").read_text(encoding="utf-8")
 
     def test_index_contains_gui_hooks(self):
         response = self.client.get("/")
@@ -170,6 +171,35 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["update_available"])
 
+    def test_update_page_contains_live_progress_ui(self):
+        response = self.client.get("/update", environ_overrides={"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8000"})
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("Drop Air Updater", body)
+        self.assertIn("updateProgressBar", body)
+        self.assertIn("updatePercent", body)
+        self.assertIn("/api/admin/update/status", body)
+        self.assertIn("role=\"progressbar\"", body)
+
+    def test_update_status_endpoint_returns_progress_shape(self):
+        response = self.client.get(
+            "/api/admin/update/status",
+            environ_overrides={"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8000"},
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertIn("percent", data)
+        self.assertIn("eta_seconds", data)
+        self.assertIn("speed_bps", data)
+        self.assertIn("running", data)
+
+    def test_update_template_formats_eta_and_percentage(self):
+        source = self.update_template_source
+        self.assertIn("formatEta", source)
+        self.assertIn("human(data.speed_bps)", source)
+        self.assertIn("aria-valuenow", source)
+        self.assertIn("Waiting for Drop Air to restart", source)
+
     def test_runtime_upload_limit_setting_updates(self):
         response = self.client.post(
             "/api/settings",
@@ -190,12 +220,18 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIsNotNone(asset)
         self.assertEqual(asset["browser_download_url"], "setup")
 
+    def test_updater_restart_resets_pyinstaller_environment(self):
+        source = Path(app.__file__).read_text(encoding="utf-8")
+        self.assertIn('env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"', source)
+        self.assertIn("$env:PYINSTALLER_RESET_ENVIRONMENT = '1'", source)
+
     def test_admin_update_post_starts_install(self):
-        expected = {"ok": True, "message": "Update started. Watch the terminal for progress."}
+        expected = {"ok": True, "message": "Update started.", "status_url": "/update"}
         with patch.object(app, "start_update_install", return_value=expected):
             response = self.client.post("/api/admin/update", json={}, environ_overrides={"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8000"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["ok"], True)
+        self.assertIn("status_url", response.get_json())
 
 
 if __name__ == "__main__":

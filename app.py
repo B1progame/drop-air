@@ -104,6 +104,24 @@ def detect_update_repo() -> str:
 
 
 UPDATE_REPO = detect_update_repo()
+UPDATE_STATUS_LOCK = Lock()
+UPDATE_STATUS = {
+    "running": False,
+    "phase": "idle",
+    "label": "Idle",
+    "message": "No update is running.",
+    "percent": 0,
+    "current": 0,
+    "total": 0,
+    "eta_seconds": None,
+    "speed_bps": 0,
+    "started_at": None,
+    "updated_at": None,
+    "ok": True,
+    "error": "",
+    "current_version": APP_VERSION,
+    "latest_version": "",
+}
 try:
     ENV_MAX_UPLOAD_GB = float(os.getenv("DROP_AIR_MAX_UPLOAD_GB", str(DEFAULT_MAX_UPLOAD_GB)) or DEFAULT_MAX_UPLOAD_GB)
 except ValueError:
@@ -344,6 +362,65 @@ def progress_bar(label: str, current: int, total: int | None) -> None:
     print(f"\r{label}: [{bar}] {ratio * 100:5.1f}%", end="", flush=True)
 
 
+def update_status_snapshot() -> dict:
+    with UPDATE_STATUS_LOCK:
+        return dict(UPDATE_STATUS)
+
+
+def set_update_status(**updates) -> dict:
+    updates["updated_at"] = time.time()
+    with UPDATE_STATUS_LOCK:
+        UPDATE_STATUS.update(updates)
+        return dict(UPDATE_STATUS)
+
+
+def reset_update_status(info: dict) -> dict:
+    now = time.time()
+    with UPDATE_STATUS_LOCK:
+        UPDATE_STATUS.clear()
+        UPDATE_STATUS.update(
+            {
+                "running": True,
+                "phase": "preparing",
+                "label": "Preparing update",
+                "message": "Preparing Drop Air for update.",
+                "percent": 0,
+                "current": 0,
+                "total": 0,
+                "eta_seconds": None,
+                "speed_bps": 0,
+                "started_at": now,
+                "updated_at": now,
+                "ok": True,
+                "error": "",
+                "current_version": APP_VERSION,
+                "latest_version": str(info.get("latest_version", "")).lstrip("v"),
+            }
+        )
+        return dict(UPDATE_STATUS)
+
+
+def update_download_status(label: str, current: int, total: int | None, started_at: float) -> None:
+    elapsed = max(time.time() - started_at, 0.001)
+    speed = current / elapsed
+    percent = int(min(max((current / total) * 100, 0), 100)) if total else 0
+    remaining = max((total or 0) - current, 0)
+    eta = int(remaining / speed) if total and speed > 0 else None
+    set_update_status(
+        running=True,
+        phase="downloading",
+        label=label,
+        message=f"{label}...",
+        percent=percent,
+        current=current,
+        total=total or 0,
+        eta_seconds=eta,
+        speed_bps=int(speed),
+        ok=True,
+        error="",
+    )
+
+
 def github_json(url: str) -> dict:
     req = Request(
         url,
@@ -402,12 +479,15 @@ def download_file_with_progress(url: str, target: Path, label: str) -> None:
     with urlopen(req, timeout=30) as response, target.open("wb") as out:
         total = int(response.headers.get("Content-Length") or "0")
         done = 0
+        started_at = time.time()
+        update_download_status(label, done, total, started_at)
         while True:
             chunk = response.read(1024 * 256)
             if not chunk:
                 break
             out.write(chunk)
             done += len(chunk)
+            update_download_status(label, done, total, started_at)
             progress_bar(label, done, total)
     print()
 
@@ -451,13 +531,22 @@ def powershell_literal(value: Path | str) -> str:
 
 def restart_current_app() -> None:
     args = [sys.executable] + sys.argv
-    subprocess.Popen(args, cwd=str(APP_DIR), close_fds=True)
+    env = os.environ.copy()
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    subprocess.Popen(args, cwd=str(APP_DIR), close_fds=True, env=env)
     os._exit(0)
 
 
 def install_update_from_release(info: dict) -> None:
     print()
     print(f"Updating Drop Air {APP_VERSION} -> {info.get('latest_version')}")
+    set_update_status(
+        running=True,
+        phase="preparing",
+        label="Preparing update",
+        message="Cleaning shared files and text before restart.",
+        percent=1,
+    )
     cleanup_all_uploads_on_shutdown()
     clear_text_items()
 
@@ -469,6 +558,14 @@ def install_update_from_release(info: dict) -> None:
                 raise RuntimeError("No setup .exe release asset found. Upload the Drop Air setup installer to the release.")
             setup_exe = tmp_path / Path(asset["name"]).name
             download_file_with_progress(asset["browser_download_url"], setup_exe, "Downloading setup")
+            set_update_status(
+                running=True,
+                phase="installing",
+                label="Launching installer",
+                message="Download finished. Handing off to the installer.",
+                percent=100,
+                eta_seconds=0,
+            )
             helper = DATA_DIR / "finish-update.ps1"
             helper.write_text(
                 "\n".join(
@@ -497,6 +594,7 @@ def install_update_from_release(info: dict) -> None:
                         "Show-Bar 'Installing setup' 100",
                         "Write-Host ''",
                         "Write-Host 'Restarting Drop Air...'",
+                        "$env:PYINSTALLER_RESET_ENVIRONMENT = '1'",
                         "Start-Process -FilePath $app",
                     ]
                 ),
@@ -511,15 +609,55 @@ def install_update_from_release(info: dict) -> None:
         archive = tmp_path / "source.zip"
         download_file_with_progress(info["zipball_url"], archive, "Downloading")
         print("Installing: extracting release...")
+        set_update_status(
+            running=True,
+            phase="extracting",
+            label="Extracting release",
+            message="Unpacking the release archive.",
+            percent=82,
+            eta_seconds=None,
+        )
         with zipfile.ZipFile(archive) as zf:
             zf.extractall(tmp_path / "release")
         roots = [p for p in (tmp_path / "release").iterdir() if p.is_dir()]
         if not roots:
             raise RuntimeError("Release archive did not contain a source folder.")
         print("Installing: copying source files...")
+        set_update_status(
+            running=True,
+            phase="installing",
+            label="Installing update",
+            message="Copying the new Drop Air files.",
+            percent=92,
+            eta_seconds=None,
+        )
         copy_source_tree(roots[0], APP_DIR)
         print("Restarting Drop Air...")
+        set_update_status(
+            running=True,
+            phase="restarting",
+            label="Restarting Drop Air",
+            message="Install complete. Drop Air is restarting.",
+            percent=100,
+            eta_seconds=0,
+        )
         restart_current_app()
+
+
+def run_update_install(info: dict) -> None:
+    try:
+        install_update_from_release(info)
+    except Exception as exc:
+        app.logger.exception("Update failed.")
+        set_update_status(
+            running=False,
+            phase="failed",
+            label="Update failed",
+            message=str(exc),
+            ok=False,
+            error=str(exc),
+            eta_seconds=None,
+        )
 
 
 def start_update_install() -> dict:
@@ -528,9 +666,14 @@ def start_update_install() -> dict:
         return {"ok": False, "error": info["message"]}
     if not info.get("update_available"):
         return {"ok": False, "error": "No update available."}
-    thread = threading.Thread(target=lambda: install_update_from_release(info), daemon=True)
+    reset_update_status(info)
+    thread = threading.Thread(target=lambda: run_update_install(info), daemon=True)
     thread.start()
-    return {"ok": True, "message": "Update started. Watch the terminal for progress."}
+    return {
+        "ok": True,
+        "message": "Update started.",
+        "status_url": url_for("update_page", **dict(request.args)),
+    }
 
 
 class WerkzeugRequestFilter(logging.Filter):
@@ -1203,6 +1346,23 @@ def index():
     )
 
 
+@app.route("/update", methods=["GET"])
+def update_page():
+    admin_error = require_admin()
+    if admin_error:
+        return admin_error
+    if not check_code():
+        return code_error()
+    settings = get_settings()
+    return render_template(
+        "update.html",
+        status=update_status_snapshot(),
+        auth_query=build_auth_query(settings["access_code"]),
+        app_version=APP_VERSION,
+        dashboard_url=url_for("index", **dict(request.args)),
+    )
+
+
 @app.route("/enter", methods=["POST"])
 def enter():
     settings = get_settings()
@@ -1521,6 +1681,18 @@ def api_admin_update():
     if not result.get("ok"):
         return jsonify(result), 400
     return jsonify(result)
+
+
+@app.route("/api/admin/update/status", methods=["GET", "OPTIONS"])
+def api_admin_update_status():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_error = require_admin()
+    if admin_error:
+        return admin_error
+    if not check_code():
+        return jsonify({"error": "unauthorized"}), 401
+    return jsonify(update_status_snapshot())
 
 
 @app.route("/api/admin/quit", methods=["POST", "OPTIONS"])

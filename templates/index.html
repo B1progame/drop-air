@@ -3210,7 +3210,7 @@
       const ok = confirm("Install this update now? Every connection will be lost, shared files and text will be cleaned up, and Drop Air will restart.");
       if (!ok) return;
       adminEls.update.disabled = true;
-      adminEls.updateStatus.textContent = "Starting update. Watch the terminal for progress.";
+      adminEls.updateStatus.textContent = "Starting updater...";
       const r = await fetch(`/api/admin/update${codeQuery()}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(accessCode ? { "X-Drop-Air-Code": accessCode } : {}) },
@@ -3222,11 +3222,7 @@
         adminEls.updateStatus.textContent = data.error || "Could not start update.";
         return;
       }
-      document.body.innerHTML = '<main class="wrap"><section class="panel admin-card"><h1 class="panel-title">Drop Air is updating</h1><p class="admin-note">The server is cleaning up, installing the release, and restarting. Watch the terminal for progress.</p></section></main>';
-      setTimeout(() => {
-        window.open("", "_self");
-        window.close();
-      }, 900);
+      window.location.href = data.status_url || `/update${codeQuery()}`;
     }
 
     function fileRow(f, isNew = false, isUploadComplete = false) {
