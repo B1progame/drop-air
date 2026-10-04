@@ -49,12 +49,12 @@ def icon_for_app() -> QIcon:
 class DropAirPage(QWebEnginePage):
     """Keep Drop Air routes in the app and open unrelated links in a browser."""
 
-    def acceptNavigationRequest(self, url: QUrl, navigation_type, is_main_frame: bool) -> bool:
+    def acceptNavigationRequest(self, url: QUrl, _navigation_type, is_main_frame: bool) -> bool:
         host = (url.host() or "").lower()
         if url.scheme() in {"http", "https"} and host not in {"127.0.0.1", "localhost", "::1"}:
             webbrowser.open(url.toString())
             return False
-        return super().acceptNavigationRequest(url, navigation_type, is_main_frame)
+        return super().acceptNavigationRequest(url, _navigation_type, is_main_frame)
 
 
 class DropAirWindow(QMainWindow):
