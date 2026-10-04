@@ -86,11 +86,6 @@
 
     * { box-sizing: border-box; }
 
-    @keyframes rise-in {
-      from { opacity: 0; transform: translateY(10px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
     @keyframes progress-run {
       from { background-position: 0 0, 0 0; }
       to { background-position: 44px 0, 0 0; }
@@ -203,7 +198,6 @@
       border: 1px solid var(--line);
       border-radius: var(--radius);
       box-shadow: var(--shadow);
-      animation: rise-in .34s ease both;
     }
 
     .panel::before {
@@ -265,6 +259,7 @@
         conic-gradient(var(--mint) calc(var(--pct, 0) * 1%), color-mix(in srgb, var(--line) 70%, transparent) 0),
         color-mix(in srgb, var(--surface-soft) 78%, transparent);
       box-shadow: inset 0 0 0 1px var(--line), 0 18px 42px color-mix(in srgb, var(--accent) 18%, transparent);
+      transition: box-shadow .3s ease;
     }
 
     .meter-orb::before {
@@ -302,15 +297,16 @@
     }
 
     .progress-fill {
-      width: var(--pct, 0%);
+      width: 100%;
       height: 100%;
       border-radius: inherit;
+      transform: scaleX(var(--scale, 0));
+      transform-origin: left center;
       background:
         linear-gradient(90deg, transparent 0 16%, rgba(255,255,255,.32) 16% 30%, transparent 30% 44%),
         linear-gradient(90deg, var(--accent), var(--mint));
       background-size: 44px 100%, 100% 100%;
       animation: progress-run 1s linear infinite;
-      transition: width .35s cubic-bezier(.2, .75, .2, 1);
     }
 
     .metrics {
@@ -358,9 +354,19 @@
       border-radius: 50%;
       border: 3px solid color-mix(in srgb, var(--accent) 18%, transparent);
       border-top-color: var(--mint);
-      animation: orbit-spin .75s linear infinite;
+      animation: orbit-spin 1.1s linear infinite;
       flex: 0 0 auto;
     }
+
+    .complete .meter-orb {
+      box-shadow: inset 0 0 0 1px var(--line), 0 18px 42px color-mix(in srgb, var(--mint) 30%, transparent);
+    }
+
+    .complete .meter-orb::after { animation-duration: 2.8s; }
+
+    .motion-paused .progress-fill,
+    .motion-paused .meter-orb::after,
+    .motion-paused .spinner { animation-play-state: paused; }
 
     .failed .progress-fill {
       background: linear-gradient(90deg, var(--danger), var(--warning));
@@ -371,6 +377,14 @@
       background:
         conic-gradient(var(--danger) calc(var(--pct, 0) * 1%), color-mix(in srgb, var(--line) 70%, transparent) 0),
         color-mix(in srgb, var(--surface-soft) 78%, transparent);
+    }
+
+    .failed .meter-orb::after { border-color: color-mix(in srgb, var(--danger) 58%, transparent); }
+
+    @media (prefers-reduced-motion: reduce) {
+      .progress-fill,
+      .meter-orb::after,
+      .spinner { animation: none !important; }
     }
 
     @media (max-width: 720px) {
@@ -440,6 +454,7 @@
     </section>
   </main>
 
+  <script src="{{ url_for('static', filename='vendor/gsap/gsap.min.js') }}"></script>
   <script>
     const initialStatus = {{ status|tojson }};
     const authQuery = {{ auth_query|tojson }};
@@ -459,6 +474,106 @@
     const activity = document.getElementById("updateActivity");
     const spinner = document.getElementById("updateSpinner");
     let failures = 0;
+    let reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const progressValue = { value: 0 };
+    let progressTarget = null;
+    let progressTween = null;
+    let entranceTimeline = null;
+    let lastAriaPercent = -1;
+    let lastRenderedPercent = -1;
+
+    function renderProgress() {
+      const value = Math.max(0, Math.min(100, progressValue.value));
+      const rounded = Math.round(value);
+      meter.style.setProperty("--pct", value.toFixed(2));
+      panel.style.setProperty("--progress", `${value.toFixed(2)}%`);
+      progress.style.setProperty("--scale", String(value / 100));
+      if (rounded !== lastRenderedPercent) {
+        percent.textContent = `${rounded}%`;
+        lastRenderedPercent = rounded;
+      }
+      if (rounded !== lastAriaPercent) {
+        progressShell.setAttribute("aria-valuenow", String(rounded));
+        lastAriaPercent = rounded;
+      }
+    }
+
+    function animateProgress(nextValue) {
+      if (nextValue === progressTarget) return;
+      progressTarget = nextValue;
+      if (progressTween) progressTween.kill();
+      if (!window.gsap || reducedMotion) {
+        progressValue.value = nextValue;
+        renderProgress();
+        return;
+      }
+      progressTween = gsap.to(progressValue, {
+        value: nextValue,
+        duration: nextValue >= 100 ? 0.65 : 0.55,
+        ease: "power2.out",
+        overwrite: true,
+        onUpdate: renderProgress
+      });
+      if (document.hidden) progressTween.pause();
+    }
+
+    function updateText(element, value, animate = false) {
+      const next = String(value ?? "");
+      if (element.textContent === next) return false;
+      element.textContent = next;
+      if (animate && window.gsap && !reducedMotion) {
+        gsap.fromTo(element,
+          { autoAlpha: 0.55, y: 5, scale: 0.99 },
+          { autoAlpha: 1, y: 0, scale: 1, duration: 0.24, ease: "power2.out", overwrite: true }
+        );
+      }
+      return true;
+    }
+
+    function playEntrance() {
+      if (!window.gsap || reducedMotion) return;
+      entranceTimeline = gsap.timeline({ defaults: { ease: "power2.out" } });
+      entranceTimeline
+        .fromTo(".hero", { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0, duration: 0.34 })
+        .fromTo(panel, { autoAlpha: 0, y: 12 }, { autoAlpha: 1, y: 0, duration: 0.42 }, "-=0.12")
+        .fromTo(meter, { scale: 0.9 }, { scale: 1, duration: 0.36 }, "-=0.18")
+        .fromTo(".metric", { autoAlpha: 0, y: 7 }, { autoAlpha: 1, y: 0, duration: 0.28, stagger: 0.045 }, "-=0.14");
+    }
+
+    if (window.gsap?.matchMedia) {
+      const motionMedia = gsap.matchMedia();
+      motionMedia.add({
+        reduced: "(prefers-reduced-motion: reduce)",
+        full: "(prefers-reduced-motion: no-preference)"
+      }, ({ conditions }) => {
+        reducedMotion = conditions.reduced;
+        if (reducedMotion && progressTarget !== null) {
+          if (progressTween) progressTween.kill();
+          progressTween = null;
+          progressValue.value = progressTarget;
+          renderProgress();
+        } else {
+          playEntrance();
+        }
+        return () => {
+          if (entranceTimeline) entranceTimeline.kill();
+          entranceTimeline = null;
+        };
+      });
+    }
+
+    function syncMotionVisibility() {
+      document.body.classList.toggle("motion-paused", document.hidden);
+      const method = document.hidden ? "pause" : "resume";
+      progressTween?.[method]();
+      entranceTimeline?.[method]();
+    }
+    document.addEventListener("visibilitychange", syncMotionVisibility);
+    window.addEventListener("pagehide", () => {
+      progressTween?.kill();
+      entranceTimeline?.kill();
+      document.removeEventListener("visibilitychange", syncMotionVisibility);
+    }, { once: true });
 
     function clampPercent(value) {
       const numeric = Number(value);
@@ -489,25 +604,26 @@
       const pct = clampPercent(data.percent);
       const total = Number(data.total) || 0;
       const current = Number(data.current) || 0;
-      panel.classList.toggle("failed", data.ok === false || data.phase === "failed");
-      panel.style.setProperty("--progress", `${pct}%`);
-      meter.style.setProperty("--pct", pct);
-      progress.style.setProperty("--pct", `${pct}%`);
-      progressShell.setAttribute("aria-valuenow", String(pct));
-      percent.textContent = `${pct}%`;
+      const failed = data.ok === false || data.phase === "failed";
+      panel.classList.toggle("failed", failed);
+      panel.classList.toggle("complete", !failed && data.phase === "restarting");
+      animateProgress(pct);
       phase.textContent = String(data.phase || "idle").replaceAll("_", " ");
-      label.textContent = data.label || "Updater";
-      message.textContent = data.message || data.error || "Waiting for updater status...";
+      updateText(label, data.label || "Updater", true);
+      updateText(message, data.message || data.error || "Waiting for updater status...", true);
       eta.textContent = formatEta(data.eta_seconds);
       speed.textContent = `${human(data.speed_bps)}/s`;
-      bytes.textContent = total ? `${human(current)} / ${human(total)}` : human(current);
+      updateText(bytes, total ? `${human(current)} / ${human(total)}` : human(current), true);
       version.textContent = data.latest_version ? `${data.current_version || "{{ app_version }}"} -> ${data.latest_version}` : (data.current_version || "{{ app_version }}");
 
       if (data.phase === "failed" || data.ok === false) {
         activity.textContent = data.error || "Update failed.";
         spinner.hidden = true;
-      } else if (data.phase === "restarting" || pct >= 100) {
+      } else if (data.phase === "restarting") {
         activity.textContent = "Drop Air is restarting. This page may reconnect in a moment.";
+        spinner.hidden = false;
+      } else if (pct >= 100) {
+        activity.textContent = data.message || "Download complete. Installing the update.";
         spinner.hidden = false;
       } else if (data.running) {
         activity.textContent = "Updater is running.";
@@ -539,6 +655,7 @@
     }
 
     applyStatus(initialStatus);
+    syncMotionVisibility();
     pollStatus();
   </script>
 </body>

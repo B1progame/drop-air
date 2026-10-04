@@ -19,7 +19,7 @@
 #endif
 
 #ifndef MyAppIconFile
-#define MyAppIconFile "..\\assets\\icon\\drop_air_minimal.ico"
+#define MyAppIconFile "..\\assets\\icon\\drop_air.ico"
 #endif
 
 [Setup]

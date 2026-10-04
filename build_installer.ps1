@@ -3,7 +3,7 @@ param(
   [string]$AppVersion = "",
   [string]$Publisher = "Drop Air",
   [string]$OutputBaseFilename = "",
-  [string]$IconPath = "assets\icon\drop_air_minimal.ico",
+  [string]$IconPath = "assets\icon\drop_air.ico",
   [string]$ReleaseDir = "",
   [switch]$SkipExeBuild,
   [switch]$SkipReleaseBundle,

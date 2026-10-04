@@ -2120,6 +2120,59 @@
       }
     }
 
+    body.desktop-transfer .desktop-qrbar {
+      display: grid;
+      grid-template-columns: 112px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 16px;
+      margin: 0 0 18px;
+      padding: 12px 16px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(110deg, color-mix(in srgb, var(--accent) 9%, var(--surface)), var(--surface));
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .12);
+    }
+    .desktop-qrbar { display: none; }
+    .desktop-qrbar .qr-stage {
+      width: 112px;
+      height: 112px;
+      padding: 5px;
+      border-radius: 10px;
+      cursor: zoom-in;
+    }
+    .desktop-qrbar .qr-stage img { border-radius: 5px; }
+    .desktop-qrbar-copy { display: grid; gap: 4px; min-width: 0; }
+    .desktop-qrbar-kicker {
+      color: var(--accent-strong);
+      font-size: .7rem;
+      font-weight: 850;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+    .desktop-qrbar-title { margin: 0; font-size: 1rem; letter-spacing: -.02em; }
+    .desktop-qrbar .url-value {
+      max-width: 100%;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      font-size: .78rem;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    .desktop-qrbar .qr-status { font-size: .72rem; }
+    .desktop-qrbar .primary-btn { min-width: 132px; }
+    body.desktop-transfer article[data-mobile-task="connect"] { display: none; }
+
+    @media (max-width: 700px) {
+      body.desktop-transfer .desktop-qrbar {
+        grid-template-columns: 84px minmax(0, 1fr);
+        gap: 10px;
+        padding: 10px;
+      }
+      body.desktop-transfer .desktop-qrbar .qr-stage { width: 84px; height: 84px; }
+      body.desktop-transfer .desktop-qrbar .primary-btn { grid-column: 1 / -1; min-height: 42px; }
+    }
+
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
         animation-duration: 0.01ms !important;
@@ -2196,6 +2249,22 @@
         {% endif %}
       </div>
     </header>
+
+    <section class="desktop-qrbar" aria-label="Connect a phone or tablet">
+      <div class="qr-stage" data-qr-stage>
+        <img data-qr-image data-qr-svg-url="{{ qr_svg_url }}" alt="QR code to connect a phone or tablet to Drop Air" src="{{ qr_url }}">
+      </div>
+      <div class="desktop-qrbar-copy">
+        <span class="desktop-qrbar-kicker">Connect another device</span>
+        <h2 class="desktop-qrbar-title">Scan to open Drop Air</h2>
+        <div class="url-value" data-public-url>{{ public_url }}</div>
+        <div class="qr-status" data-session-status>QR key refreshes every 5 minutes.</div>
+      </div>
+      <button class="primary-btn" type="button" data-copy-public>
+        <svg viewBox="0 0 24 24"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>
+        Copy Link
+      </button>
+    </section>
 
     <div class="download-activity" id="downloadActivity" aria-live="polite" aria-relevant="additions text"></div>
     <div class="mobile-task-tabs" id="mobileTaskTabs" role="tablist" aria-label="Transfer task">
@@ -4050,7 +4119,9 @@
 
     const qrConnectQuery = window.matchMedia("(max-width: 1100px)");
     const syncQrConnectMode = () => {
-      const transferView = new URLSearchParams(location.search).get("view") === "transfers";
+      const params = new URLSearchParams(location.search);
+      const transferView = params.get("view") === "transfers";
+      document.body.classList.toggle("desktop-transfer", transferView && params.get("desktop") === "1");
       document.body.classList.toggle("qr-only", qrConnectQuery.matches && !transferView);
     };
     syncQrConnectMode();

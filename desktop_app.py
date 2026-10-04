@@ -18,8 +18,6 @@ if getattr(sys, "frozen", False) and hasattr(os, "add_dll_directory"):
         if directory.is_dir():
             _DLL_SEARCH_HANDLES.append(os.add_dll_directory(str(directory)))
 
-from urllib.parse import urlparse
-
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QAction, QIcon, QKeySequence
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
@@ -158,7 +156,7 @@ def start_backend():
 
     local_url = backend.build_local_url(settings["access_code"])
     separator = "&" if "?" in local_url else "?"
-    desktop_url = f"{local_url}{separator}view=transfers"
+    desktop_url = f"{local_url}{separator}view=transfers&desktop=1"
     print(f"Drop Air running on {backend.build_public_url(settings['access_code'])}")
     print(f"Desktop dashboard on {desktop_url}")
     return server, thread, desktop_url
