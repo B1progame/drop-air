@@ -175,6 +175,7 @@ def app_icon_path() -> Path | None:
         Path(env_icon).expanduser() if env_icon else None,
         APP_DIR / "assets" / "icon" / "drop_air_brand.ico",
         APP_DIR / "assets" / "icon" / "drop_air.ico",
+        BUNDLE_DIR / "assets" / "icon" / "drop_air_brand.ico",
         BUNDLE_DIR / "assets" / "icon" / "drop_air.ico",
     ]
     for candidate in candidates:

@@ -609,6 +609,14 @@
     .stack > article[data-mobile-task="text"] { grid-row: 2; }
     .stack > article[data-mobile-task="connect"] { grid-row: 3; }
 
+    @media (min-width: 1101px) {
+      .layout > .stack { display: contents; }
+      .layout > article[data-mobile-task="send"] { grid-column: 1; grid-row: 1; }
+      .layout > article[data-mobile-task="receive"] { grid-column: 2; grid-row: 1; }
+      .layout > article[data-mobile-task="text"] { grid-column: 1; grid-row: 2; }
+      .layout > article[data-mobile-task="connect"] { grid-column: 2; grid-row: 2; }
+    }
+
     .chip,
     .icon-btn,
     .secondary-btn,

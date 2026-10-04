@@ -25,13 +25,13 @@ $templatesAbs = (Resolve-Path "templates").Path
 $assetsAbs = (Resolve-Path "assets").Path
 $staticAbs = (Resolve-Path "static").Path
 $versionAbs = (Resolve-Path "VERSION").Path
-$appAbs = (Resolve-Path "app.py").Path
+$appAbs = (Resolve-Path "desktop_app.py").Path
 
 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $workPath = "build\work_$stamp"
 $specPath = "build\spec_$stamp"
 
-& .\.venv\Scripts\pyinstaller.exe `
+& .\.venv\Scripts\python.exe -m PyInstaller `
   --noconfirm `
   --clean `
   --name $AppName `

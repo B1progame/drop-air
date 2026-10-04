@@ -1,6 +1,6 @@
 ﻿# Drop Air
 
-Fast local file sharing from your laptop to iPhone/iPad (and back) using a browser on the same Wi-Fi network.
+Fast local file sharing from a native desktop window to iPhone/iPad (and back) over the same Wi-Fi network.
 
 ## Features
 
@@ -14,8 +14,7 @@ Fast local file sharing from your laptop to iPhone/iPad (and back) using a brows
 - Host-only quit button to stop Drop Air from the admin panel
 - Optional GitHub Releases updater in the host-only admin panel
 - Light, dark, and system theme modes
-- Optional auto-open of the local admin page in the default browser
-- Windows packaged builds run from the system tray with dashboard, log, folder, and quit actions
+- Windows runs in a native PySide desktop window with the Drop Air taskbar icon; the QR link still opens the same web interface on phones and tablets
 - Clipboard paste button for sharing copied images/files or text
 - Optional one-time passcode (`DROP_AIR_CODE`)
 - Phones and tablets open on a QR-first connection screen, with a direct link to the full transfer workspace
@@ -33,18 +32,10 @@ Fast local file sharing from your laptop to iPhone/iPad (and back) using a brows
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python app.py
+python desktop_app.py
 ```
 
-Open the shown URL on your iPhone/iPad, or scan the QR code in terminal. The Wi-Fi URL includes a temporary `k=...` connection key generated on each launch.
-The host machine also opens the local admin page automatically by default.
-
-Disable browser auto-open:
-
-```powershell
-$env:DROP_AIR_OPEN_BROWSER="0"
-python app.py
-```
+The desktop window hosts the local dashboard. Scan its QR code with your phone or tablet to open the mobile connection screen. The Wi-Fi URL includes a temporary `k=...` connection key generated on each launch.
 
 ## Optional security
 
@@ -52,7 +43,7 @@ Set a code before starting server:
 
 ```powershell
 $env:DROP_AIR_CODE="123456"
-python app.py
+python desktop_app.py
 ```
 
 Then open `http://<server-ip>:8000/?code=123456`.
@@ -67,7 +58,7 @@ You can enable cleanup with env vars:
 $env:DROP_AIR_AUTO_CLEANUP_MINUTES="10"
 $env:DROP_AIR_AUTO_CLEANUP_DAYS="7"
 $env:DROP_AIR_AUTO_CLEANUP_MAX_FILES="300"
-python app.py
+python desktop_app.py
 ```
 
 - `DROP_AIR_AUTO_CLEANUP_MINUTES`: delete files older than N minutes (default `10`, `0` disables)
@@ -82,10 +73,10 @@ By default it uses `B1progame/drop-air`. If you run from another git checkout, i
 
 ```powershell
 $env:DROP_AIR_UPDATE_REPO="your-github-name/your-repo"
-python app.py
+python desktop_app.py
 ```
 
-Create GitHub releases with tags like `1.0.0`, `1.0.1`, etc. The admin panel compares the latest release tag with `VERSION`. Version 1.3.1 keeps the QR visible during refresh and uses a wider quiet zone for reliable scanning. Phones and tablets open on the QR-first screen; select **Open transfers on this device** to use the full file and text workspace locally.
+Create GitHub releases with tags like `1.0.0`, `1.0.1`, etc. The admin panel compares the latest release tag with `VERSION`. Version 1.4 adds a native PySide desktop container and a balanced desktop workspace. Phones and tablets keep the QR-first connection screen; select **Open transfers on this device** to use the full file and text workspace locally.
 For packaged builds, attach the setup installer release asset, for example `Drop-Air-Setup-1.1.0.exe`. The updater downloads that setup file, runs it silently, skips rebuilding Inno locally, and restarts Drop Air.
 
 Release flow:
