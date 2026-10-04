@@ -1,13 +1,18 @@
 import os
 import io
+import re
 import socket
 import sys
 import tempfile
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from html import unescape
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
+
+from PIL import Image
 
 
 os.environ.setdefault("DROP_AIR_DATA_DIR", tempfile.mkdtemp(prefix="drop-air-test-"))
@@ -49,6 +54,14 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn('el.href = publicUrl', body)
         self.assertIn('view=transfers', body)
         self.assertIn("qrConnectQuery", body)
+        self.assertIn(".qr-stage.generating .qr-build-canvas", body)
+        self.assertIn("display: none;", body)
+        self.assertNotIn("fetchQrModules", body)
+        self.assertNotIn("drawQrModules", body)
+        qr_src = unescape(re.search(r'<img data-qr-image[^>]+src="([^"]+)"', body).group(1))
+        qr_params = parse_qs(urlparse(qr_src).query)
+        self.assertIn("view=transfers", qr_params["url"][0])
+        self.assertEqual(qr_params["url"][0], unescape(re.search(r'data-public-url>([^<]+)<', body).group(1)))
         logo = self.client.get("/static/brand/drop-air-logo.png")
         self.assertEqual(logo.status_code, 200)
         self.assertTrue(logo.mimetype.startswith("image/"))
@@ -58,7 +71,16 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertEqual(qr.status_code, 200)
         self.assertEqual(qr.mimetype, "image/png")
         self.assertTrue(qr.data.startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertIn("no-store", qr.headers.get("Cache-Control", ""))
+        with Image.open(io.BytesIO(qr.data)) as qr_image:
+            self.assertEqual(qr_image.getpixel((31, 31)), (255, 255, 255))
+            self.assertEqual(qr_image.getpixel((32, 32)), (0, 0, 0))
         qr.close()
+        svg = self.client.get("/qr.svg?url=https%3A%2F%2Fexample.test%2Fdrop%3Fk%3Dabc%26view%3Dtransfers")
+        self.assertEqual(svg.status_code, 200)
+        self.assertIn("no-store", svg.headers.get("Cache-Control", ""))
+        self.assertIn('viewBox=', svg.get_data(as_text=True))
+        svg.close()
         self.assertEqual(app.app_icon_path().name, "drop_air_brand.ico")
 
     def test_template_contains_text_viewer_and_animation_hooks(self):

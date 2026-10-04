@@ -290,9 +290,9 @@
     }
 
     @keyframes qr-scan {
-      0% { opacity: 0; transform: translateY(-16px); }
-      10%, 88% { opacity: 1; }
-      100% { opacity: 0; transform: translateY(188px); }
+      0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--mint) 0%, transparent); }
+      45% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--mint) 48%, transparent); }
+      100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--mint) 0%, transparent); }
     }
 
     @keyframes modal-card-in {
@@ -436,7 +436,7 @@
       .qr-connect-screen .qr-stage img { width: 100%; height: 100%; object-fit: contain; }
       .qr-connect-screen .qr-stage.generating img { opacity: 1; }
       .qr-connect-screen .qr-stage.generating .qr-build-canvas,
-      .qr-connect-screen .qr-stage.generating .qr-spinner { opacity: 0; }
+      .qr-connect-screen .qr-stage.generating .qr-spinner { display: none; }
       .qr-connect-screen .url-box { display: grid; gap: 14px; text-align: left; }
       .qr-connect-screen .url-value { max-height: 4.5em; overflow-wrap: anywhere; color: #edf2f4; }
       .qr-connect-screen .qr-status { color: #aab5ba; }
@@ -1599,21 +1599,6 @@
       cursor: zoom-in;
     }
 
-    .qr-stage::after {
-      content: "";
-      position: absolute;
-      left: 10px;
-      right: 10px;
-      top: 10px;
-      height: 2px;
-      border-radius: 999px;
-      background: linear-gradient(90deg, transparent, var(--mint), transparent);
-      box-shadow: 0 0 12px color-mix(in srgb, var(--mint) 50%, transparent);
-      opacity: 0;
-      pointer-events: none;
-      z-index: 4;
-    }
-
     .qr-stage img,
     .qr-build-canvas {
       width: 188px;
@@ -1630,13 +1615,7 @@
     }
 
     .qr-build-canvas {
-      position: absolute;
-      inset: 10px;
-      width: calc(100% - 20px);
-      height: calc(100% - 20px);
-      opacity: 0;
-      pointer-events: none;
-      z-index: 2;
+      display: none;
     }
 
     .qr-spinner {
@@ -1681,11 +1660,11 @@
 
     .qr-stage.generating .qr-build-canvas,
     .qr-stage.generating .qr-spinner {
-      opacity: 1;
+      display: none;
     }
 
-    .qr-stage.generating::after {
-      animation: qr-scan 1.05s ease-in-out infinite;
+    .qr-stage.generating {
+      animation: qr-scan .6s ease-out 2;
     }
 
     .qr-box.updating .qr-stage {
@@ -2860,63 +2839,12 @@
       }, delay);
     }
 
-    async function fetchQrModules(url) {
-      const r = await fetch(url, { cache: "no-store" });
-      if (!r.ok) throw new Error("Could not prepare QR animation");
-      const svgText = await r.text();
-      const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
-      const svg = doc.documentElement;
-      const viewBox = (svg.getAttribute("viewBox") || "0 0 37 37").split(/\s+/).map(Number);
-      const size = viewBox[2] || Number(svg.getAttribute("width")) || 37;
-      const modules = [...doc.querySelectorAll("g rect")].map(rect => ({
-        x: Number(rect.getAttribute("x") || 0),
-        y: Number(rect.getAttribute("y") || 0),
-        w: Number(rect.getAttribute("width") || 1),
-        h: Number(rect.getAttribute("height") || 1)
-      }));
-      const center = size / 2;
-      modules.sort((a, b) => {
-        const da = Math.hypot(a.x + a.w / 2 - center, a.y + a.h / 2 - center);
-        const db = Math.hypot(b.x + b.w / 2 - center, b.y + b.h / 2 - center);
-        return da - db || (a.y - b.y) || (a.x - b.x);
-      });
-      return { size, modules };
-    }
-
-    function drawQrModules(canvas, qr, progress) {
-      const dpr = Math.max(1, window.devicePixelRatio || 1);
-      const rect = canvas.getBoundingClientRect();
-      const px = Math.max(1, Math.round(rect.width * dpr));
-      const py = Math.max(1, Math.round(rect.height * dpr));
-      if (canvas.width !== px || canvas.height !== py) {
-        canvas.width = px;
-        canvas.height = py;
-      }
-      const ctx = canvas.getContext("2d");
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, rect.width, rect.height);
-      const scale = rect.width / qr.size;
-      const count = Math.floor(qr.modules.length * progress);
-      ctx.fillStyle = "#111827";
-      for (let i = 0; i < count; i++) {
-        const cell = qr.modules[i];
-        ctx.fillRect(
-          Math.round(cell.x * scale),
-          Math.round(cell.y * scale),
-          Math.ceil(cell.w * scale),
-          Math.ceil(cell.h * scale)
-        );
-      }
-    }
-
-    async function playQrBuildAnimation(img, qrUrl, totalDuration = 2000) {
+    async function playQrBuildAnimation(img, _qrUrl, totalDuration = 1200) {
       const stage = img.closest("[data-qr-stage]");
-      const canvas = stage?.querySelector("[data-qr-canvas]");
       const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      const src = `${qrUrl}${qrUrl.includes("?") ? "&" : "?"}t=${Date.now()}`;
       const imageSrcBase = img.dataset.qrImageUrl || img.getAttribute("src") || img.src;
       const imageSrc = `${imageSrcBase}${imageSrcBase.includes("?") ? "&" : "?"}t=${Date.now()}`;
-      if (!stage || !canvas || reduceMotion) {
+      if (!stage || reduceMotion) {
         img.src = imageSrcBase;
         return;
       }
@@ -2925,25 +2853,8 @@
       stage.classList.add("generating");
       img.src = imageSrc;
       try {
-        const qr = await fetchQrModules(src);
-        drawQrModules(canvas, qr, 0);
-        await new Promise(resolve => setTimeout(resolve, 420));
-        const started = performance.now();
-        const duration = Math.max(300, totalDuration - 420);
-        await new Promise(resolve => {
-          function frame(now) {
-            if (run !== qrAnimationRuns.get(stage)) {
-              resolve();
-              return;
-            }
-            const raw = Math.min(1, (now - started) / duration);
-            const eased = 1 - Math.pow(1 - raw, 3);
-            drawQrModules(canvas, qr, eased);
-            if (raw < 1) requestAnimationFrame(frame);
-            else resolve();
-          }
-          requestAnimationFrame(frame);
-        });
+        if (img.decode) await img.decode();
+        await new Promise(resolve => setTimeout(resolve, totalDuration));
       } catch (_) {
         img.src = imageSrcBase;
       } finally {

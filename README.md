@@ -85,14 +85,14 @@ $env:DROP_AIR_UPDATE_REPO="your-github-name/your-repo"
 python app.py
 ```
 
-Create GitHub releases with tags like `1.0.0`, `1.0.1`, etc. The admin panel compares the latest release tag with `VERSION`. Version 1.3.0 uses the QR-first screen for phone and tablet widths; select **Open transfers on this device** to use the full file and text workspace locally.
+Create GitHub releases with tags like `1.0.0`, `1.0.1`, etc. The admin panel compares the latest release tag with `VERSION`. Version 1.3.1 keeps the QR visible during refresh and uses a wider quiet zone for reliable scanning. Phones and tablets open on the QR-first screen; select **Open transfers on this device** to use the full file and text workspace locally.
 For packaged builds, attach the setup installer release asset, for example `Drop-Air-Setup-1.1.0.exe`. The updater downloads that setup file, runs it silently, skips rebuilding Inno locally, and restarts Drop Air.
 
 Release flow:
 
 1. Update `VERSION` in the repo.
 2. Build the standalone EXE with `.\build_exe.ps1`.
-3. Push the commit and create a matching Git tag such as `1.3.0`.
+3. Push the commit and create a matching Git tag such as `1.3.1`.
 4. Create a GitHub Release from that tag and attach `dist\DropAir.exe`.
 5. On the host machine, the admin panel will show a red `!` and a rainbow update button when a newer release exists.
 
@@ -141,13 +141,13 @@ Output:
 You can customize metadata/version:
 
 ```powershell
-.\build_installer.ps1 -AppVersion "1.3.0" -Publisher "Drop Air" -IconPath "assets\icon\drop_air_brand.ico"
+.\build_installer.ps1 -AppVersion "1.3.1" -Publisher "Drop Air" -IconPath "assets\icon\drop_air_brand.ico"
 ```
 
 Create a ready-to-publish GitHub draft release in the current repo:
 
 ```powershell
-.\build_installer.ps1 -AppVersion "1.3.0" -IconPath "assets\icon\drop_air_brand.ico" -CreateDraftRelease
+.\build_installer.ps1 -AppVersion "1.3.1" -IconPath "assets\icon\drop_air_brand.ico" -CreateDraftRelease
 ```
 
 ### Icon styles

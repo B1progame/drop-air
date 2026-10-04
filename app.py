@@ -1061,7 +1061,7 @@ def build_local_url(access_code: str | None = None) -> str:
 
 
 def make_qr_svg(url: str) -> str:
-    qr = qrcode.QRCode(border=2, box_size=8)
+    qr = qrcode.QRCode(border=4, box_size=8, error_correction=qrcode.constants.ERROR_CORRECT_M)
     qr.add_data(url)
     qr.make(fit=True)
     matrix = qr.get_matrix()
@@ -1082,10 +1082,10 @@ def make_qr_svg(url: str) -> str:
 
 
 def make_qr_png(url: str) -> bytes:
-    qr = qrcode.QRCode(border=2, box_size=8)
+    qr = qrcode.QRCode(border=4, box_size=8, error_correction=qrcode.constants.ERROR_CORRECT_M)
     qr.add_data(url)
     qr.make(fit=True)
-    image = qr.make_image(fill_color="#111827", back_color="#ffffff")
+    image = qr.make_image(fill_color="#000000", back_color="#ffffff")
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
@@ -1822,13 +1822,17 @@ def api_admin_quit():
 @app.route("/qr.svg", methods=["GET"])
 def qr_code():
     url = request.args.get("url", build_public_url())
-    return Response(make_qr_svg(url), mimetype="image/svg+xml")
+    response = Response(make_qr_svg(url), mimetype="image/svg+xml")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    return response
 
 
 @app.route("/qr.png", methods=["GET"])
 def qr_png():
     url = request.args.get("url", build_public_url())
-    return Response(make_qr_png(url), mimetype="image/png")
+    response = Response(make_qr_png(url), mimetype="image/png")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    return response
 
 
 @app.route("/favicon.ico", methods=["GET"])
