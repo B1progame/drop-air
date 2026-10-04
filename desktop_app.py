@@ -65,7 +65,7 @@ class DropAirWindow(QMainWindow):
         self._shutting_down = False
         self.setWindowTitle(f"Drop Air {backend.APP_VERSION}")
         self.setWindowIcon(icon)
-        self.resize(1280, 900)
+        self.resize(1092, 1255)
 
         self.web = QWebEngineView(self)
         self.web.setPage(DropAirPage(self.web))
@@ -148,7 +148,7 @@ def main() -> int:
         return 1
 
     window = DropAirWindow(server, thread, url, icon)
-    window.showMaximized()
+    window.show()
     return app.exec()
 
 
