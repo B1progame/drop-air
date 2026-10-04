@@ -76,7 +76,7 @@ $env:DROP_AIR_UPDATE_REPO="your-github-name/your-repo"
 python desktop_app.py
 ```
 
-Create GitHub releases with tags like `1.0.0`, `1.0.1`, etc. The admin panel compares the latest release tag with `VERSION`. Version 1.4 adds a native PySide desktop container and a balanced desktop workspace. Phones and tablets keep the QR-first connection screen; select **Open transfers on this device** to use the full file and text workspace locally.
+Create GitHub releases with tags like `1.0.0`, `1.0.1`, etc. The admin panel compares the latest release tag with `VERSION`. Version 1.4 adds a native PySide desktop container and a balanced desktop workspace. Version 1.4.1 fixes Qt DLL lookup in packaged desktop builds. Phones and tablets keep the QR-first connection screen; select **Open transfers on this device** to use the full file and text workspace locally.
 For packaged builds, attach the setup installer release asset, for example `Drop-Air-Setup-1.1.0.exe`. The updater downloads that setup file, runs it silently, skips rebuilding Inno locally, and restarts Drop Air.
 
 Release flow:

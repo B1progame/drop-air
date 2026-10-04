@@ -3,10 +3,21 @@
 from __future__ import annotations
 
 import ctypes
+import os
 import sys
 import threading
 import webbrowser
 from pathlib import Path
+
+# In frozen builds QtCore.pyd must resolve Qt and Shiboken DLLs from this
+# application's bundle, even when another Qt installation is on the host PATH.
+_DLL_SEARCH_HANDLES = []
+if getattr(sys, "frozen", False) and hasattr(os, "add_dll_directory"):
+    bundle_root = Path(sys._MEIPASS)
+    for directory in (bundle_root / "PySide6", bundle_root / "shiboken6"):
+        if directory.is_dir():
+            _DLL_SEARCH_HANDLES.append(os.add_dll_directory(str(directory)))
+
 from urllib.parse import urlparse
 
 from PySide6.QtCore import QUrl
@@ -119,6 +130,10 @@ def start_backend():
 
 
 def main() -> int:
+    if "--version" in sys.argv[1:]:
+        print(f"Drop Air {backend.APP_VERSION}")
+        return 0
+
     set_windows_app_id()
     app = QApplication(sys.argv)
     app.setApplicationName("Drop Air")
