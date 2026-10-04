@@ -7,6 +7,7 @@ import secrets
 import signal
 import socket
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -68,6 +69,8 @@ SESSION_GRACE_SECONDS = int(os.getenv("DROP_AIR_SESSION_GRACE_SECONDS", "120") o
 SESSION_EXPIRES_AT = time.time() + SESSION_TTL_SECONDS
 SESSION_PREVIOUS_KEYS = {}
 SESSION_LOCK = Lock()
+DEFAULT_PORT = int(os.getenv("PORT", "8000") or "8000")
+ACTIVE_PORT = DEFAULT_PORT
 VERSION_FILE = APP_DIR / "VERSION"
 BUNDLE_VERSION_FILE = BUNDLE_DIR / "VERSION"
 APP_VERSION = (
@@ -143,6 +146,16 @@ TEXT_ITEMS = []
 MAX_TEXT_ITEMS = 40
 MAX_TEXT_CHARS = 20000
 TEXT_TTL_MINUTES = int(os.getenv("DROP_AIR_TEXT_TTL_MINUTES", "10") or "10")
+
+# Upload directory metadata is shared by listing and stats requests. Keep only
+# primitive values here (never DirEntry objects), and rescan periodically so
+# edits made in the data folder outside the app become visible.
+UPLOAD_SNAPSHOT_TTL_SECONDS = 1.0
+UPLOAD_SNAPSHOT_LOCK = Lock()
+UPLOAD_SNAPSHOT = {"expires_at": 0.0, "files": []}
+UPLOAD_CLEANUP_LOCK = Lock()
+UPLOAD_CLEANUP_INTERVAL_SECONDS = 30.0
+UPLOAD_CLEANUP_NEXT_AT = 0.0
 
 app = Flask(__name__, template_folder=str(TEMPLATE_DIR))
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
@@ -979,8 +992,31 @@ def get_local_ip() -> str:
         s.close()
 
 
+def is_port_available(host: str, port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+            return False
+    except OSError:
+        pass
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind((host, port))
+        return True
+    except OSError:
+        return False
+
+
+def select_server_port(preferred_port: int) -> int:
+    scan_limit = int(os.getenv("DROP_AIR_PORT_SCAN_LIMIT", "50") or "50")
+    for port in range(preferred_port, preferred_port + max(scan_limit, 1)):
+        if is_port_available("0.0.0.0", port):
+            return port
+    raise OSError(f"No available port found from {preferred_port} to {preferred_port + scan_limit - 1}.")
+
+
 def build_public_url(access_code: str | None = None) -> str:
-    port = int(os.getenv("PORT", "8000"))
+    port = ACTIVE_PORT
     base_url = f"http://{get_local_ip()}:{port}/"
     return f"{base_url}{build_auth_query(access_code)}"
 
@@ -1013,7 +1049,7 @@ def build_auth_query(access_code: str | None = None) -> str:
 
 
 def build_local_url(access_code: str | None = None) -> str:
-    port = int(os.getenv("PORT", "8000"))
+    port = ACTIVE_PORT
     base_url = f"http://127.0.0.1:{port}/"
     code = access_code if access_code is not None else get_settings()["access_code"]
     return f"{base_url}?code={code}" if code else base_url
@@ -1041,16 +1077,10 @@ def make_qr_svg(url: str) -> str:
 
 
 def upload_stats() -> dict:
-    files = [p for p in UPLOAD_DIR.iterdir() if p.is_file()]
-    total_size = 0
-    for p in files:
-        try:
-            total_size += p.stat().st_size
-        except OSError:
-            continue
+    files = upload_snapshot()
     return {
         "file_count": len(files),
-        "total_size": total_size,
+        "total_size": sum(item["size"] for item in files),
         "text_count": len(list_text_items()),
         "data_dir": str(DATA_DIR),
         "uploads_dir": str(UPLOAD_DIR),
@@ -1121,19 +1151,54 @@ def upload_too_large(_error):
     ), 413
 
 
+def invalidate_upload_snapshot() -> None:
+    with UPLOAD_SNAPSHOT_LOCK:
+        UPLOAD_SNAPSHOT["expires_at"] = 0.0
+
+
+def upload_snapshot() -> list[dict]:
+    now = time.monotonic()
+    with UPLOAD_SNAPSHOT_LOCK:
+        if UPLOAD_SNAPSHOT["expires_at"] > now:
+            return [dict(item) for item in UPLOAD_SNAPSHOT["files"]]
+
+        files = []
+        try:
+            with os.scandir(UPLOAD_DIR) as entries:
+                for entry in entries:
+                    if entry.name.startswith(".dropair-staging-"):
+                        continue
+                    try:
+                        info = entry.stat(follow_symlinks=False)
+                        if not stat.S_ISREG(info.st_mode):
+                            continue
+                        files.append({
+                            "name": entry.name,
+                            "size": info.st_size,
+                            "modified": int(info.st_mtime),
+                            "mtime": info.st_mtime,
+                        })
+                    except OSError:
+                        # Files may be renamed or deleted while the directory is scanned.
+                        continue
+        except OSError:
+            files = []
+        files.sort(key=lambda item: item["mtime"], reverse=True)
+        UPLOAD_SNAPSHOT["files"] = files
+        UPLOAD_SNAPSHOT["expires_at"] = time.monotonic() + UPLOAD_SNAPSHOT_TTL_SECONDS
+        return [dict(item) for item in files]
+
+
 def list_files():
-    items = []
-    for p in sorted(UPLOAD_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
-        if p.is_file():
-            items.append(
-                {
-                    "name": p.name,
-                    "size": p.stat().st_size,
-                    "modified": int(p.stat().st_mtime),
-                    "url": url_for("download_file", filename=p.name),
-                }
-            )
-    return items
+    return [
+        {
+            "name": item["name"],
+            "size": item["size"],
+            "modified": item["modified"],
+            "url": url_for("download_file", filename=item["name"]),
+        }
+        for item in upload_snapshot()
+    ]
 
 
 def delete_upload_file(filename: str) -> bool:
@@ -1148,10 +1213,12 @@ def delete_upload_file(filename: str) -> bool:
         target.unlink()
     except OSError:
         return False
+    invalidate_upload_snapshot()
     return True
 
 
-def cleanup_uploads() -> None:
+def cleanup_uploads(force: bool = False) -> None:
+    global UPLOAD_CLEANUP_NEXT_AT
     settings = get_settings()
     auto_cleanup_minutes = settings["auto_cleanup_minutes"]
     auto_cleanup_days = settings["auto_cleanup_days"]
@@ -1160,7 +1227,13 @@ def cleanup_uploads() -> None:
     if auto_cleanup_minutes <= 0 and auto_cleanup_days <= 0 and auto_cleanup_max_files <= 0:
         return
 
-    files = [p for p in UPLOAD_DIR.iterdir() if p.is_file()]
+    now_mono = time.monotonic()
+    with UPLOAD_CLEANUP_LOCK:
+        if not force and now_mono < UPLOAD_CLEANUP_NEXT_AT:
+            return
+        UPLOAD_CLEANUP_NEXT_AT = now_mono + UPLOAD_CLEANUP_INTERVAL_SECONDS
+
+    files = upload_snapshot()
     if not files:
         return
 
@@ -1169,35 +1242,37 @@ def cleanup_uploads() -> None:
 
     if auto_cleanup_minutes > 0:
         cutoff = now - (auto_cleanup_minutes * 60)
-        for p in files:
+        for item in files:
             try:
-                if p.stat().st_mtime < cutoff:
-                    p.unlink(missing_ok=True)
+                if item["mtime"] < cutoff:
+                    (UPLOAD_DIR / item["name"]).unlink(missing_ok=True)
                     removed += 1
             except OSError:
                 continue
 
     if auto_cleanup_days > 0:
         cutoff = now - (auto_cleanup_days * 24 * 60 * 60)
-        for p in files:
+        for item in files:
             try:
-                if p.stat().st_mtime < cutoff:
-                    p.unlink(missing_ok=True)
+                if item["mtime"] < cutoff:
+                    (UPLOAD_DIR / item["name"]).unlink(missing_ok=True)
                     removed += 1
             except OSError:
                 continue
 
     if auto_cleanup_max_files > 0:
-        files = [p for p in UPLOAD_DIR.iterdir() if p.is_file()]
-        files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
-        for p in files[auto_cleanup_max_files:]:
+        if removed:
+            invalidate_upload_snapshot()
+        files = upload_snapshot()
+        for item in files[auto_cleanup_max_files:]:
             try:
-                p.unlink(missing_ok=True)
+                (UPLOAD_DIR / item["name"]).unlink(missing_ok=True)
                 removed += 1
             except OSError:
                 continue
 
     if removed:
+        invalidate_upload_snapshot()
         print(f"Auto-cleanup removed {removed} upload file(s).")
 
 
@@ -1212,6 +1287,7 @@ def cleanup_all_uploads_on_shutdown() -> None:
         except OSError:
             continue
     if removed:
+        invalidate_upload_snapshot()
         print(f"Shutdown cleanup removed {removed} upload file(s).")
 
 
@@ -1231,6 +1307,7 @@ def clear_uploads() -> int:
             removed += 1
         except OSError:
             continue
+    invalidate_upload_snapshot()
     return removed
 
 
@@ -1309,7 +1386,6 @@ def apply_runtime_upload_limit():
 
 @app.route("/", methods=["GET"])
 def index():
-    cleanup_uploads()
     settings = get_settings()
     session = session_snapshot()
     theme = (request.args.get("theme", "") or "").lower()
@@ -1431,13 +1507,13 @@ def api_connections():
 
 @app.route("/api/files", methods=["GET", "OPTIONS"])
 def api_files():
-    cleanup_uploads()
     if request.method == "OPTIONS":
         return ("", 204)
     if not check_session_key():
         return jsonify({"error": "invalid session link"}), 404
     if not check_code():
         return jsonify({"error": "code not found"}), 404
+    cleanup_uploads()
     return jsonify({"files": list_files()})
 
 
@@ -1457,7 +1533,6 @@ def api_delete_file(filename: str):
 
 @app.route("/api/upload", methods=["POST", "OPTIONS"])
 def api_upload():
-    cleanup_uploads()
     if request.method == "OPTIONS":
         return ("", 204)
     if not check_session_key():
@@ -1482,19 +1557,36 @@ def api_upload():
     if not safe_name:
         safe_name = f"file_{int(time.time())}"
 
-    target = UPLOAD_DIR / safe_name
-    stem, suffix = target.stem, target.suffix
-    i = 1
-    while target.exists():
-        target = UPLOAD_DIR / f"{stem}_{i}{suffix}"
-        i += 1
-
+    stem, suffix = Path(safe_name).stem, Path(safe_name).suffix
+    staging = None
     try:
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        f.save(target)
-    except OSError as exc:
-        return jsonify({"error": f"Could not save upload: {exc.strerror or str(exc)}"}), 500
-    cleanup_uploads()
+        # Stage outside the visible namespace, then atomically link into place.
+        # The bounded buffer avoids Werkzeug's small default copy buffer.
+        fd, staging_name = tempfile.mkstemp(prefix=".dropair-staging-", dir=UPLOAD_DIR)
+        os.close(fd)
+        staging = Path(staging_name)
+        f.save(staging, buffer_size=1024 * 1024)
+        index = 0
+        while True:
+            candidate_name = safe_name if index == 0 else f"{stem}_{index}{suffix}"
+            target = UPLOAD_DIR / candidate_name
+            try:
+                os.link(staging, target)
+                break
+            except FileExistsError:
+                index += 1
+        staging.unlink(missing_ok=True)
+        staging = None
+    except Exception as exc:
+        if staging:
+            try:
+                staging.unlink(missing_ok=True)
+            except OSError:
+                app.logger.exception("Could not remove incomplete upload staging file %s.", staging.name)
+        return jsonify({"error": f"Could not save upload: {getattr(exc, 'strerror', None) or str(exc)}"}), 500
+    invalidate_upload_snapshot()
+    cleanup_uploads(force=get_settings()["auto_cleanup_max_files"] > 0)
     app.logger.info("Uploaded file %s (%s bytes).", target.name, target.stat().st_size)
     return jsonify({"ok": True, "filename": target.name, "size": target.stat().st_size})
 
@@ -1591,7 +1683,7 @@ def api_settings():
     merged.update(updates)
     saved = set_settings(_normalize_settings(merged))
     app.config["MAX_CONTENT_LENGTH"] = upload_limit_bytes(saved)
-    cleanup_uploads()
+    cleanup_uploads(force=True)
     app.logger.info("Updated runtime settings.")
     return jsonify({"ok": True, "settings": saved})
 
@@ -1750,12 +1842,15 @@ if __name__ == "__main__":
     _stdio_log_handle = redirect_stdio_to_log_if_windowless()
     set_console_window_icon()
     host = "0.0.0.0"
-    port = int(os.getenv("PORT", "8000"))
+    port = select_server_port(DEFAULT_PORT)
+    ACTIVE_PORT = port
     settings = get_settings()
     access_code = settings["access_code"]
     url = build_public_url(access_code)
     local_url = build_local_url(access_code)
 
+    if port != DEFAULT_PORT:
+        print(f"Port {DEFAULT_PORT} is already in use; using {port} instead.")
     print(f"Drop Air running on {url}")
     print(f"Admin dashboard on {local_url}")
     print("Data folder:", DATA_DIR)
@@ -1773,7 +1868,7 @@ if __name__ == "__main__":
             f"max_files={settings['auto_cleanup_max_files']}",
         )
     register_shutdown_cleanup()
-    cleanup_uploads()
+    cleanup_uploads(force=True)
     print_qr(url)
     if settings["launch_browser_on_start"]:
         Timer(1.0, lambda: open_admin_browser(local_url)).start()

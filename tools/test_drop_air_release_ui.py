@@ -1,8 +1,11 @@
 import os
+import io
+import socket
 import sys
 import tempfile
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -73,6 +76,11 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("startViewTransition", source)
         self.assertIn("heartbeatConnection", source)
         self.assertIn("pasteClipboard", source)
+        self.assertIn("scheduleFilePoll", source)
+        self.assertIn("scheduleTextPoll", source)
+        self.assertIn("visibilitychange", source)
+        self.assertIn("Math.min(2, files.length)", source)
+        self.assertIn("lastTextState", source)
         self.assertIn("Clipboard blocked. Use Choose Files", source)
         self.assertIn("max_upload_gb", source)
         self.assertIn("postTextItem", source)
@@ -105,6 +113,18 @@ class DropAirReleaseUiTests(unittest.TestCase):
             payload = response.get_json()
             self.assertNotEqual(payload["key"], old_key)
             self.assertIn(f"k={payload['key']}", payload["public_url"])
+        finally:
+            app.SESSION_EXPIRES_AT = max(previous_expires, time.time() + app.SESSION_TTL_SECONDS)
+
+    def test_file_api_accepts_previous_session_key_during_grace_period(self):
+        old_key = app.session_snapshot()["key"]
+        previous_expires = app.SESSION_EXPIRES_AT
+        env = {"REMOTE_ADDR": "192.168.1.62", "HTTP_HOST": "192.168.1.2:8000"}
+        try:
+            app.SESSION_EXPIRES_AT = time.time() - 1
+            response = self.client.get(f"/api/files?k={old_key}", environ_overrides=env)
+            self.assertEqual(response.status_code, 200)
+            self.assertNotEqual(app.session_snapshot()["key"], old_key)
         finally:
             app.SESSION_EXPIRES_AT = max(previous_expires, time.time() + app.SESSION_TTL_SECONDS)
 
@@ -145,6 +165,94 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertEqual(delete_response.status_code, 200)
         self.assertFalse(target.exists())
 
+    def test_same_name_uploads_publish_unique_completed_files(self):
+        key = app.session_snapshot()["key"]
+        env = {"REMOTE_ADDR": "192.168.1.59", "HTTP_HOST": "192.168.1.2:8000"}
+        names = {"parallel-same-name.bin", "parallel-same-name_1.bin"}
+        try:
+            def upload(payload):
+                client = app.app.test_client()
+                with io.BytesIO(payload) as stream:
+                    response = client.post(
+                        f"/api/upload?k={key}",
+                        data={"file": (stream, "parallel-same-name.bin")},
+                        environ_overrides=env,
+                    )
+                return response.status_code, response.get_json()
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(upload, (b"first", b"second")))
+            self.assertEqual([status for status, _ in results], [200, 200])
+            self.assertEqual({body["filename"] for _, body in results}, names)
+            self.assertEqual({(app.UPLOAD_DIR / name).read_bytes() for name in names}, {b"first", b"second"})
+        finally:
+            for name in names:
+                (app.UPLOAD_DIR / name).unlink(missing_ok=True)
+            app.invalidate_upload_snapshot()
+
+    def test_failed_upload_staging_is_hidden_and_removed(self):
+        key = app.session_snapshot()["key"]
+        env = {"REMOTE_ADDR": "192.168.1.60", "HTTP_HOST": "192.168.1.2:8000"}
+        app.invalidate_upload_snapshot()
+
+        def fail_after_partial_write(_storage, dst, buffer_size=16384):
+            Path(dst).write_bytes(b"partial")
+            self.assertFalse(any(item["name"].startswith(".dropair-staging-") for item in app.upload_snapshot()))
+            raise OSError("simulated write failure")
+
+        with patch("werkzeug.datastructures.FileStorage.save", fail_after_partial_write):
+            response = self.client.post(
+                f"/api/upload?k={key}",
+                data={"file": (io.BytesIO(b"complete"), "failure-cleanup.bin")},
+                environ_overrides=env,
+            )
+        self.assertEqual(response.status_code, 500)
+        self.assertFalse((app.UPLOAD_DIR / "failure-cleanup.bin").exists())
+        self.assertFalse(any(path.name.startswith(".dropair-staging-") for path in app.UPLOAD_DIR.iterdir()))
+
+    def test_upload_snapshot_can_be_invalidated_after_external_edit(self):
+        previous_ttl = app.UPLOAD_SNAPSHOT_TTL_SECONDS
+        path = app.UPLOAD_DIR / "external-edit-cache-test.bin"
+        try:
+            app.UPLOAD_SNAPSHOT_TTL_SECONDS = 60
+            app.invalidate_upload_snapshot()
+            self.assertNotIn(path.name, {item["name"] for item in app.upload_snapshot()})
+            path.write_bytes(b"external")
+            self.assertNotIn(path.name, {item["name"] for item in app.upload_snapshot()})
+            app.invalidate_upload_snapshot()
+            self.assertIn(path.name, {item["name"] for item in app.upload_snapshot()})
+        finally:
+            path.unlink(missing_ok=True)
+            app.UPLOAD_SNAPSHOT_TTL_SECONDS = previous_ttl
+            app.invalidate_upload_snapshot()
+
+    def test_cleanup_enforces_file_count_and_preserves_newest(self):
+        previous = app.get_settings()
+        paths = [app.UPLOAD_DIR / f"retention-{i}.bin" for i in range(4)]
+        try:
+            app.set_settings({**previous, "auto_cleanup_minutes": 1, "auto_cleanup_days": 0, "auto_cleanup_max_files": 2})
+            for index, path in enumerate(paths):
+                path.write_bytes(bytes([index]))
+                age = 1000 if index == 0 else 4 - index
+                os.utime(path, (time.time() - age,) * 2)
+            app.invalidate_upload_snapshot()
+            app.cleanup_uploads(force=True)
+            self.assertEqual({path.name for path in paths if path.exists()}, {"retention-2.bin", "retention-3.bin"})
+        finally:
+            for path in paths:
+                path.unlink(missing_ok=True)
+            app.set_settings(previous)
+            app.invalidate_upload_snapshot()
+
+    def test_unauthenticated_file_list_does_not_run_cleanup(self):
+        with patch.object(app, "cleanup_uploads") as cleanup:
+            response = self.client.get(
+                "/api/files?k=invalid-session-key",
+                environ_overrides={"REMOTE_ADDR": "192.168.1.61", "HTTP_HOST": "192.168.1.2:8000"},
+            )
+        self.assertEqual(response.status_code, 404)
+        cleanup.assert_not_called()
+
     def test_connection_heartbeat_counts_active_clients(self):
         app.ACTIVE_CONNECTIONS.clear()
         key = app.session_snapshot()["key"]
@@ -155,6 +263,25 @@ class DropAirReleaseUiTests(unittest.TestCase):
         second = self.client.post(f"/api/connections?k={key}", json={"client_id": "phone-b"}, environ_overrides=env)
         self.assertEqual(second.status_code, 200)
         self.assertEqual(second.get_json()["count"], 2)
+
+    def test_server_port_skips_occupied_default(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as blocker:
+            blocker.bind(("127.0.0.1", 0))
+            blocker.listen(1)
+            occupied_port = blocker.getsockname()[1]
+
+            chosen_port = app.select_server_port(occupied_port)
+
+        self.assertGreater(chosen_port, occupied_port)
+
+    def test_urls_use_active_port(self):
+        previous_port = app.ACTIVE_PORT
+        try:
+            app.ACTIVE_PORT = 8123
+            self.assertIn("http://127.0.0.1:8123/", app.build_local_url(""))
+            self.assertIn(":8123/", app.build_public_url(""))
+        finally:
+            app.ACTIVE_PORT = previous_port
 
     def test_admin_update_get_uses_release_info(self):
         expected = {
@@ -208,6 +335,25 @@ class DropAirReleaseUiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["settings"]["max_upload_gb"], 1.5)
+
+    def test_runtime_upload_limit_is_enforced_before_saving(self):
+        previous = app.get_settings()
+        path = app.UPLOAD_DIR / "over-runtime-limit.bin"
+        try:
+            app.set_settings({**previous, "max_upload_gb": 0.01})
+            app.app.config["MAX_CONTENT_LENGTH"] = app.upload_limit_bytes()
+            payload = b"x" * (app.upload_limit_bytes() + 1)
+            response = self.client.post(
+                f"/api/upload?k={app.session_snapshot()['key']}",
+                data={"file": (io.BytesIO(payload), path.name)},
+                environ_overrides={"REMOTE_ADDR": "192.168.1.63", "HTTP_HOST": "192.168.1.2:8000"},
+            )
+            self.assertEqual(response.status_code, 413)
+            self.assertFalse(path.exists())
+        finally:
+            path.unlink(missing_ok=True)
+            app.set_settings(previous)
+            app.app.config["MAX_CONTENT_LENGTH"] = app.upload_limit_bytes()
 
     def test_update_prefers_setup_installer_asset(self):
         info = {
