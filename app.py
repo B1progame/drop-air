@@ -1,4 +1,5 @@
 import atexit
+import io
 import json
 import logging
 import os
@@ -29,9 +30,11 @@ from werkzeug.utils import secure_filename
 if getattr(sys, "frozen", False):
     APP_DIR = Path(sys.executable).resolve().parent
     TEMPLATE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR)) / "templates"
+    STATIC_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR)) / "static"
 else:
     APP_DIR = Path(__file__).resolve().parent
     TEMPLATE_DIR = APP_DIR / "templates"
+    STATIC_DIR = APP_DIR / "static"
 BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
 
 def get_data_dir() -> Path:
@@ -157,7 +160,7 @@ UPLOAD_CLEANUP_LOCK = Lock()
 UPLOAD_CLEANUP_INTERVAL_SECONDS = 30.0
 UPLOAD_CLEANUP_NEXT_AT = 0.0
 
-app = Flask(__name__, template_folder=str(TEMPLATE_DIR))
+app = Flask(__name__, template_folder=str(TEMPLATE_DIR), static_folder=str(STATIC_DIR), static_url_path="/static")
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 BROWSER_PROCESS = None
 BROWSER_PROFILE_DIR = DATA_DIR / "browser-profile"
@@ -170,6 +173,7 @@ def app_icon_path() -> Path | None:
     env_icon = (os.getenv("DROP_AIR_ICON") or "").strip()
     candidates = [
         Path(env_icon).expanduser() if env_icon else None,
+        APP_DIR / "assets" / "icon" / "drop_air_brand.ico",
         APP_DIR / "assets" / "icon" / "drop_air.ico",
         BUNDLE_DIR / "assets" / "icon" / "drop_air.ico",
     ]
@@ -1018,7 +1022,8 @@ def select_server_port(preferred_port: int) -> int:
 def build_public_url(access_code: str | None = None) -> str:
     port = ACTIVE_PORT
     base_url = f"http://{get_local_ip()}:{port}/"
-    return f"{base_url}{build_auth_query(access_code)}"
+    auth_query = build_auth_query(access_code).lstrip("?")
+    return f"{base_url}?{auth_query}&view=transfers"
 
 
 def session_snapshot(force_rotate: bool = False) -> dict:
@@ -1074,6 +1079,16 @@ def make_qr_svg(url: str) -> str:
         f'{"".join(rects)}'
         "</g></svg>"
     )
+
+
+def make_qr_png(url: str) -> bytes:
+    qr = qrcode.QRCode(border=2, box_size=8)
+    qr.add_data(url)
+    qr.make(fit=True)
+    image = qr.make_image(fill_color="#111827", back_color="#ffffff")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def upload_stats() -> dict:
@@ -1413,7 +1428,8 @@ def index():
         is_admin=is_admin_request(),
         public_url=public_url,
         local_url=build_local_url(settings["access_code"]),
-        qr_url=url_for("qr_code", url=public_url),
+        qr_url=url_for("qr_png", url=public_url),
+        qr_svg_url=url_for("qr_code", url=public_url),
         stats=upload_stats(),
         connected_count=active_connection_count(),
         app_version=APP_VERSION,
@@ -1481,7 +1497,8 @@ def api_session():
             "ttl_seconds": session["ttl_seconds"],
             "seconds_remaining": session["seconds_remaining"],
             "public_url": public_url,
-            "qr_url": url_for("qr_code", url=public_url),
+            "qr_url": url_for("qr_png", url=public_url),
+            "qr_svg_url": url_for("qr_code", url=public_url),
         }
     )
 
@@ -1705,7 +1722,8 @@ def api_admin():
             "is_admin": True,
             "public_url": public_url,
             "local_url": build_local_url(settings["access_code"]),
-            "qr_url": url_for("qr_code", url=public_url),
+            "qr_url": url_for("qr_png", url=public_url),
+            "qr_svg_url": url_for("qr_code", url=public_url),
             "session": session,
             "stats": upload_stats(),
             "connected_count": active_connection_count(),
@@ -1805,6 +1823,12 @@ def api_admin_quit():
 def qr_code():
     url = request.args.get("url", build_public_url())
     return Response(make_qr_svg(url), mimetype="image/svg+xml")
+
+
+@app.route("/qr.png", methods=["GET"])
+def qr_png():
+    url = request.args.get("url", build_public_url())
+    return Response(make_qr_png(url), mimetype="image/png")
 
 
 @app.route("/favicon.ico", methods=["GET"])

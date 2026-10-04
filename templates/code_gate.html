@@ -4,9 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Drop Air - Access</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='brand/drop-air-logo.png') }}" />
   <style>
     :root {
       --bg-1: #04131f;
@@ -187,6 +185,16 @@
         animation: none !important;
       }
     }
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #171a1d; }
+    .bg-anim, .content-shade, .noise { display: none; }
+    .card { background: #202428; border: 1px solid #373f43; box-shadow: 0 24px 70px rgba(0,0,0,.28); backdrop-filter: none; }
+    h1 { font-family: inherit; text-transform: none; letter-spacing: -.035em; }
+    h2 { margin: 0 0 8px; font-size: 1rem; }
+    p { color: #aab5ba; }
+    input { background: #171a1d; border-color: #373f43; }
+    button { color: #07191c; background: #22b8c8; }
+    .gate-brand { display:flex; align-items:center; gap:12px; margin-bottom:18px; }
+    .gate-brand img { width:48px; height:48px; border-radius:14px; }
   </style>
 </head>
 <body>
@@ -199,7 +207,8 @@
   <div class="noise" aria-hidden="true"></div>
 
   <form class="card" method="post" action="/enter">
-    <h1>Secure Entry</h1>
+    <div class="gate-brand"><img src="{{ url_for('static', filename='brand/drop-air-logo.png') }}" alt="Drop Air paper plane logo" /><h1>Drop Air</h1></div>
+    <h2>Enter access code</h2>
     <p>This Drop Air node is locked. Enter the access code to continue.</p>
     {% if error %}
       <div class="error">{{ error }}</div>

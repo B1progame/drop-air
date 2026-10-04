@@ -4,29 +4,27 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Drop Air Updater</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='brand/drop-air-logo.png') }}" />
   <script>
     (function () {
       const saved = localStorage.getItem("dropAirTheme") || "system";
       document.documentElement.dataset.theme = ["light", "dark", "system"].includes(saved) ? saved : "system";
     })();
   </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
       color-scheme: light dark;
-      --bg: #f5f7fb;
-      --wash-a: rgba(14, 165, 183, .13);
-      --wash-b: rgba(249, 115, 91, .1);
-      --surface: #ffffff;
-      --surface-soft: #f0f8fb;
-      --ink: #172033;
-      --muted: #5d6f86;
-      --line: #dce5ee;
-      --accent: #0ea5b7;
-      --accent-strong: #047b8f;
-      --mint: #12b981;
+      --bg: #171a1d;
+      --wash-a: rgba(34, 184, 200, .12);
+      --wash-b: rgba(34, 184, 200, .06);
+      --surface: #202428;
+      --surface-soft: #272c30;
+      --ink: #edf2f4;
+      --muted: #aab5ba;
+      --line: #373f43;
+      --accent: #22b8c8;
+      --accent-strong: #22b8c8;
+      --mint: #22b8c8;
       --danger: #d43f5e;
       --warning: #f59e0b;
       --shadow: 0 18px 60px rgba(36, 55, 84, .12);
@@ -35,17 +33,17 @@
 
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg: #0b111b;
-        --wash-a: rgba(34, 184, 200, .14);
-        --wash-b: rgba(255, 138, 112, .09);
-        --surface: #121b28;
-        --surface-soft: #172636;
-        --ink: #edf6ff;
-        --muted: #9fb1c7;
-        --line: #26384b;
+        --bg: #171a1d;
+        --wash-a: rgba(34, 184, 200, .12);
+        --wash-b: rgba(34, 184, 200, .06);
+        --surface: #202428;
+        --surface-soft: #272c30;
+        --ink: #edf2f4;
+        --muted: #aab5ba;
+        --line: #373f43;
         --accent: #22b8c8;
         --accent-strong: #5ee5f0;
-        --mint: #34d399;
+        --mint: #22b8c8;
         --danger: #fb7185;
         --warning: #fbbf24;
         --shadow: 0 18px 60px rgba(0, 0, 0, .3);
@@ -54,33 +52,33 @@
 
     html[data-theme="light"] {
       --bg: #f5f7fb;
-      --wash-a: rgba(14, 165, 183, .13);
-      --wash-b: rgba(249, 115, 91, .1);
+      --wash-a: rgba(34, 184, 200, .1);
+      --wash-b: rgba(34, 184, 200, .05);
       --surface: #ffffff;
-      --surface-soft: #f0f8fb;
+      --surface-soft: #eff8f9;
       --ink: #172033;
       --muted: #5d6f86;
       --line: #dce5ee;
-      --accent: #0ea5b7;
-      --accent-strong: #047b8f;
-      --mint: #12b981;
+      --accent: #0e9eae;
+      --accent-strong: #087789;
+      --mint: #0e9eae;
       --danger: #d43f5e;
       --warning: #f59e0b;
       --shadow: 0 18px 60px rgba(36, 55, 84, .12);
     }
 
     html[data-theme="dark"] {
-      --bg: #0b111b;
-      --wash-a: rgba(34, 184, 200, .14);
-      --wash-b: rgba(255, 138, 112, .09);
-      --surface: #121b28;
-      --surface-soft: #172636;
-      --ink: #edf6ff;
-      --muted: #9fb1c7;
-      --line: #26384b;
+      --bg: #171a1d;
+      --wash-a: rgba(34, 184, 200, .12);
+      --wash-b: rgba(34, 184, 200, .06);
+      --surface: #202428;
+      --surface-soft: #272c30;
+      --ink: #edf2f4;
+      --muted: #aab5ba;
+      --line: #373f43;
       --accent: #22b8c8;
       --accent-strong: #5ee5f0;
-      --mint: #34d399;
+      --mint: #22b8c8;
       --danger: #fb7185;
       --warning: #fbbf24;
       --shadow: 0 18px 60px rgba(0, 0, 0, .3);
@@ -111,7 +109,7 @@
     body {
       margin: 0;
       min-height: 100vh;
-      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: var(--ink);
       background:
         radial-gradient(560px circle at 50% 12%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 54%),
@@ -153,13 +151,12 @@
       border-radius: var(--radius);
       display: grid;
       place-items: center;
-      color: white;
-      background: linear-gradient(135deg, var(--accent), var(--mint));
-      box-shadow: 0 12px 28px rgba(14, 165, 183, .24);
+      background: transparent;
+      box-shadow: none;
       flex: 0 0 auto;
     }
 
-    .mark svg { width: 27px; height: 27px; }
+    .mark img { width: 48px; height: 48px; border-radius: 14px; }
 
     h1 {
       margin: 0;
@@ -388,12 +385,8 @@
   <main class="wrap">
     <header class="hero">
       <div class="brand">
-        <div class="mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 19V5" />
-            <path d="m5 12 7-7 7 7" />
-            <path d="M5 19h14" />
-          </svg>
+        <div class="mark">
+          <img src="{{ url_for('static', filename='brand/drop-air-logo.png') }}" alt="" />
         </div>
         <div>
           <h1>Drop Air Updater</h1>

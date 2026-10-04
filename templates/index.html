@@ -4,21 +4,19 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Drop Air</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='brand/drop-air-logo.png') }}" />
   <script>
     (function () {
       const mode = new URLSearchParams(location.search).get("mode");
       const saved = ["light", "dark", "system"].includes(mode)
         ? mode
-        : (localStorage.getItem("dropAirTheme") || "system");
+        : (localStorage.getItem("dropAirTheme") || "dark");
       if (["light", "dark", "system"].includes(mode)) {
         localStorage.setItem("dropAirTheme", mode);
       }
       document.documentElement.dataset.theme = saved;
     })();
   </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
       color-scheme: light dark;
@@ -46,17 +44,17 @@
 
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg: #0b111b;
-        --wash-a: rgba(34, 184, 200, .14);
-        --wash-b: rgba(255, 138, 112, .09);
-        --surface: #121b28;
-        --surface-soft: #172636;
-        --ink: #edf6ff;
-        --muted: #9fb1c7;
-        --line: #26384b;
+        --bg: #171a1d;
+        --wash-a: rgba(34, 184, 200, .08);
+        --wash-b: rgba(34, 184, 200, .035);
+        --surface: #202428;
+        --surface-soft: #272c30;
+        --ink: #edf2f4;
+        --muted: #aab5ba;
+        --line: #373f43;
         --accent: #22b8c8;
         --accent-strong: #5ee5f0;
-        --mint: #34d399;
+        --mint: #22b8c8;
         --danger: #fb7185;
         --warning: #fbbf24;
         --file-image: #22d3ee;
@@ -64,7 +62,7 @@
         --file-code: #a78bfa;
         --file-archive: #fbbf24;
         --file-media: #f472b6;
-        --shadow: 0 18px 60px rgba(0, 0, 0, .3);
+        --shadow: 0 10px 32px rgba(0, 0, 0, .22);
       }
     }
 
@@ -91,17 +89,17 @@
     }
 
     html[data-theme="dark"] {
-      --bg: #0b111b;
-      --wash-a: rgba(34, 184, 200, .14);
-      --wash-b: rgba(255, 138, 112, .09);
-      --surface: #121b28;
-      --surface-soft: #172636;
-      --ink: #edf6ff;
-      --muted: #9fb1c7;
-      --line: #26384b;
+      --bg: #171a1d;
+      --wash-a: rgba(34, 184, 200, .08);
+      --wash-b: rgba(34, 184, 200, .035);
+      --surface: #202428;
+      --surface-soft: #272c30;
+      --ink: #edf2f4;
+      --muted: #aab5ba;
+      --line: #373f43;
       --accent: #22b8c8;
       --accent-strong: #5ee5f0;
-      --mint: #34d399;
+      --mint: #22b8c8;
       --danger: #fb7185;
       --warning: #fbbf24;
       --file-image: #22d3ee;
@@ -109,7 +107,7 @@
       --file-code: #a78bfa;
       --file-archive: #fbbf24;
       --file-media: #f472b6;
-      --shadow: 0 18px 60px rgba(0, 0, 0, .3);
+      --shadow: 0 10px 32px rgba(0, 0, 0, .22);
     }
 
     * { box-sizing: border-box; }
@@ -396,17 +394,12 @@
     }
 
     body {
-      --mouse-x: 50vw;
-      --mouse-y: 18vh;
       margin: 0;
       min-height: 100vh;
-      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 16px;
       color: var(--ink);
-      background:
-        radial-gradient(560px circle at var(--mouse-x) var(--mouse-y), color-mix(in srgb, var(--accent) 18%, transparent), transparent 52%),
-        linear-gradient(120deg, var(--wash-a), transparent 34%),
-        linear-gradient(260deg, var(--wash-b), transparent 30%),
-        var(--bg);
+      background: var(--bg);
       transition: background .28s ease, color .24s ease;
     }
 
@@ -418,6 +411,37 @@
     body.qr-modal-open {
       overflow: hidden;
       touch-action: none;
+    }
+
+    .qr-connect-screen { display: none; }
+
+    @media (max-width: 1100px) {
+      body.qr-only .wrap { display: none; }
+      body.qr-only .qr-connect-screen {
+        display: grid;
+        min-height: 100svh;
+        place-items: center;
+        padding: max(24px, env(safe-area-inset-top)) 20px max(28px, env(safe-area-inset-bottom));
+        background: #171a1d;
+        color: #edf2f4;
+      }
+      .qr-connect-card { width: min(100%, 480px); text-align: center; }
+      .qr-connect-brand { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 24px; }
+      .qr-connect-brand img { width: 52px; height: 52px; border-radius: 15px; }
+      .qr-connect-brand strong { font-size: 1.3rem; letter-spacing: -.03em; }
+      .qr-connect-title { margin: 0; font-size: clamp(1.6rem, 6vw, 2.1rem); letter-spacing: -.04em; }
+      .qr-connect-copy { color: #aab5ba; margin: 10px auto 22px; max-width: 34ch; line-height: 1.5; }
+      .qr-connect-screen .qr-box { display: grid; gap: 18px; padding: 18px; border: 1px solid #373f43; border-radius: 22px; background: #202428; }
+      .qr-connect-screen .qr-stage { width: min(64vw, 270px); height: min(64vw, 270px); margin: auto; border-radius: 18px; background: white; }
+      .qr-connect-screen .qr-stage img { width: 100%; height: 100%; object-fit: contain; }
+      .qr-connect-screen .qr-stage.generating img { opacity: 1; }
+      .qr-connect-screen .qr-stage.generating .qr-build-canvas,
+      .qr-connect-screen .qr-stage.generating .qr-spinner { opacity: 0; }
+      .qr-connect-screen .url-box { display: grid; gap: 14px; text-align: left; }
+      .qr-connect-screen .url-value { max-height: 4.5em; overflow-wrap: anywhere; color: #edf2f4; }
+      .qr-connect-screen .qr-status { color: #aab5ba; }
+      .qr-connect-screen .primary-btn { width: 100%; min-height: 48px; background: #22b8c8; color: #07191c; }
+      .qr-connect-open { display: inline-block; margin-top: 20px; padding: 10px 12px; color: #aab5ba; text-underline-offset: 4px; }
     }
 
     button, input, textarea, select { font: inherit; }
@@ -449,13 +473,11 @@
       border-radius: var(--radius);
       display: grid;
       place-items: center;
-      color: white;
-      background: linear-gradient(135deg, var(--accent), var(--mint));
-      box-shadow: 0 12px 28px rgba(14, 165, 183, .24);
+      background: transparent;
       flex: 0 0 auto;
     }
 
-    .mark svg { width: 27px; height: 27px; }
+    .mark img { width: 48px; height: 48px; border-radius: 14px; object-fit: cover; }
     .brand-copy { min-width: 0; }
 
     .brand-title-row {
@@ -552,12 +574,40 @@
 
     .layout {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(360px, .86fr);
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 14px;
       align-items: start;
     }
 
+    .mobile-task-tabs { display: none; }
+    .download-activity { display: grid; gap: 8px; margin: 0 0 14px; }
+    .download-task {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px 12px;
+      align-items: center;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .download-task-copy { min-width: 0; }
+    .download-task-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 750; }
+    .download-task-state { color: var(--muted); font-size: .84rem; }
+    .download-progress { grid-column: 1 / -1; height: 4px; overflow: hidden; border-radius: 9px; background: var(--line); }
+    .download-progress-fill { width: 100%; height: 100%; transform: scaleX(0); transform-origin: left; background: var(--accent); transition: transform .12s linear; }
+    .download-task.is-indeterminate .download-progress-fill { width: 32%; transform: translateX(-110%); animation: download-scan 1.1s ease-in-out infinite alternate; }
+    @keyframes download-scan { to { transform: translateX(340%); } }
+    .download-task-actions { display: flex; gap: 8px; align-items: center; }
+    .file-download { min-width: 84px; padding-inline: 10px; }
+    .download-task button, .file-download { min-height: 44px; }
+    .download-task.is-ready { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+    .download-task.is-failed { border-color: color-mix(in srgb, #ef4444 55%, var(--line)); }
+
     .stack { display: grid; gap: 14px; }
+    .stack > article[data-mobile-task="send"] { grid-row: 1; }
+    .stack > article[data-mobile-task="text"] { grid-row: 2; }
+    .stack > article[data-mobile-task="connect"] { grid-row: 3; }
 
     .chip,
     .icon-btn,
@@ -702,7 +752,8 @@
     .row-actions {
       display: inline-flex;
       justify-content: flex-end;
-      gap: 7px;
+      gap: 6px;
+      flex-wrap: wrap;
     }
 
     svg {
@@ -1432,9 +1483,9 @@
     }
 
     th:nth-child(1), td:nth-child(1) { width: 46%; }
-    th:nth-child(2), td:nth-child(2) { width: 17%; }
-    th:nth-child(3), td:nth-child(3) { width: 21%; }
-    th:nth-child(4), td:nth-child(4) { width: 16%; text-align: right; }
+    th:nth-child(2), td:nth-child(2) { width: 15%; }
+    th:nth-child(3), td:nth-child(3) { width: 15%; }
+    th:nth-child(4), td:nth-child(4) { width: 24%; text-align: right; }
 
     .file-cell {
       display: grid;
@@ -1625,7 +1676,7 @@
     }
 
     .qr-stage.generating img {
-      opacity: 0;
+      opacity: 1;
     }
 
     .qr-stage.generating .qr-build-canvas,
@@ -1959,16 +2010,21 @@
 
     @media (max-width: 980px) {
       .layout { grid-template-columns: 1fr; }
-      .table-wrap { max-height: 360px; }
+      .stack { display: contents; }
+      .layout > .stack > article[data-mobile-task="send"] { grid-row: 1; }
+      .layout > article[data-mobile-task="receive"] { grid-row: 2; }
+      .layout > .stack > article[data-mobile-task="text"] { grid-row: 3; }
+      .layout > .stack > article[data-mobile-task="connect"] { grid-row: 4; }
+      .table-wrap { max-height: 560px; }
     }
 
     @media (max-width: 700px) {
       .wrap {
-        max-width: 390px;
-        margin-left: 0;
-        margin-right: 0;
-        padding-left: 12px;
-        padding-right: 12px;
+        width: 100%;
+        max-width: none;
+        margin: 0;
+        padding-left: max(16px, env(safe-area-inset-left));
+        padding-right: max(16px, env(safe-area-inset-right));
       }
       .hero {
         grid-template-columns: 1fr;
@@ -1986,6 +2042,36 @@
         display: grid;
         grid-template-columns: 1fr;
       }
+      .mobile-task-tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4px;
+        padding: 4px;
+        margin: 0 0 12px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--surface-soft);
+      }
+      .mobile-task-tabs button {
+        min-height: 46px;
+        border: 0;
+        border-radius: 10px;
+        color: var(--muted);
+        background: transparent;
+        font: inherit;
+        font-weight: 750;
+      }
+      .mobile-task-tabs button[aria-selected="true"] { color: var(--ink); background: var(--surface); box-shadow: 0 1px 4px #0002; }
+      .layout[data-mobile-view="send"] > article[data-mobile-task="receive"],
+      .layout[data-mobile-view="receive"] > .stack > article[data-mobile-task="send"],
+      .layout[data-mobile-view="receive"] > .stack > article[data-mobile-task="text"],
+      .layout[data-mobile-view="receive"] > .stack > article[data-mobile-task="connect"] { display: none; }
+      .layout[data-mobile-view="send"] > .stack > article[data-mobile-task="connect"] { display: none; }
+      .layout { grid-template-columns: minmax(0, 1fr); }
+      .stack { display: contents; }
+      .layout > article[data-mobile-task="receive"] { grid-row: 1; }
+      .layout[data-mobile-view="send"] > .stack > article[data-mobile-task="send"] { grid-row: 1; }
+      .layout[data-mobile-view="send"] > .stack > article[data-mobile-task="text"] { grid-row: 2; }
       .theme-switch { grid-template-columns: repeat(3, 1fr); }
       .chip, .secondary-btn, .primary-btn { width: 100%; }
       .panel-head {
@@ -2003,11 +2089,20 @@
       .qr-stage { width: 210px; height: 210px; }
       .code-tools { grid-template-columns: 1fr; }
       .text-actions { align-items: stretch; }
-      th:nth-child(3), td:nth-child(3) { display: none; }
-      th:nth-child(1), td:nth-child(1) { width: 50%; }
-      th:nth-child(2), td:nth-child(2) { width: 22%; }
-      th:nth-child(4), td:nth-child(4) { width: 28%; }
-      th, td { padding: 10px 9px; font-size: .84rem; }
+      table { display: block; }
+      thead { display: none; }
+      tbody, tbody tr[data-file-name] { display: grid; width: 100%; }
+      tbody tr[data-file-name] { grid-template-columns: minmax(0, 1fr) auto; gap: 0 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+      tbody tr[data-file-name] td { width: auto !important; padding: 4px 0; border: 0; font-size: .94rem; }
+      tbody tr[data-file-name] td:first-child { grid-column: 1 / -1; }
+      tbody tr[data-file-name] td:nth-child(2) { color: var(--muted); }
+      tbody tr[data-file-name] td:nth-child(3) { display: none; }
+      tbody tr[data-file-name] td:nth-child(4) { grid-column: 1 / -1; text-align: left; }
+      .file-download { flex: 1; }
+      .row-actions .file-download { width: auto; flex: 1 1 132px; }
+      .row-actions { width: 100%; }
+      .row-actions .copy-file, .row-actions .delete-file { min-width: 44px; min-height: 44px; }
+      .table-wrap { overflow: visible; max-height: none; }
       .drawer {
         inset: auto 0 0 0;
         width: 100dvw;
@@ -2045,15 +2140,38 @@
         scroll-behavior: auto !important;
         transition-duration: 0.01ms !important;
       }
+      .download-task.is-indeterminate .download-progress-fill { animation: none; transform: translateX(100%); }
     }
   </style>
 </head>
 <body>
+  <section class="qr-connect-screen" aria-labelledby="qrConnectTitle">
+    <div class="qr-connect-card">
+      <div class="qr-connect-brand">
+        <img src="{{ url_for('static', filename='brand/drop-air-logo.png') }}" alt="Drop Air paper plane logo" />
+        <strong>Drop Air</strong>
+      </div>
+      <h1 class="qr-connect-title" id="qrConnectTitle">Connect your devices</h1>
+      <p class="qr-connect-copy">Scan this code from the device you want to connect, or copy the Wi-Fi link.</p>
+      <div class="qr-box">
+        <div class="qr-stage" data-qr-stage>
+          <img data-qr-image data-qr-svg-url="{{ qr_svg_url }}" alt="QR code with the secure Drop Air transfer link" src="{{ qr_url }}">
+          <canvas class="qr-build-canvas" data-qr-canvas aria-hidden="true"></canvas>
+        </div>
+        <div class="url-box">
+          <div class="url-value" data-public-url>{{ public_url }}</div>
+          <div class="qr-status" data-session-status>QR key refreshes every 5 minutes.</div>
+          <button class="primary-btn" type="button" data-copy-public>Copy Link</button>
+        </div>
+      </div>
+      <a class="qr-connect-open" data-transfer-view-link href="{{ public_url }}">Open transfers on this device</a>
+    </div>
+  </section>
   <main class="wrap">
     <header class="hero">
       <div class="brand">
-        <div class="mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24"><path d="M12 3v12m0-12 4 4m-4-4-4 4" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 14v3.5A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5V14" stroke="currentColor" stroke-linecap="round"/></svg>
+        <div class="mark">
+          <img src="{{ url_for('static', filename='brand/drop-air-logo.png') }}" alt="" />
         </div>
         <div class="brand-copy">
           <div class="brand-title-row">
@@ -2092,10 +2210,16 @@
       </div>
     </header>
 
+    <div class="download-activity" id="downloadActivity" aria-live="polite" aria-relevant="additions text"></div>
+    <div class="mobile-task-tabs" id="mobileTaskTabs" role="tablist" aria-label="Transfer task">
+      <button type="button" role="tab" id="sendTaskTab" aria-controls="sendFilesPanel" tabindex="-1" data-mobile-tab="send" aria-selected="false">Send</button>
+      <button type="button" role="tab" id="receiveTaskTab" aria-controls="receivePanel" tabindex="-1" data-mobile-tab="receive" aria-selected="false">Receive</button>
+    </div>
+
     <section class="layout">
       <div class="stack">
         {% if is_admin %}
-        <article class="panel">
+        <article class="panel" data-mobile-task="connect">
           <div class="panel-head">
             <div>
               <h2 class="panel-title">Connect Devices</h2>
@@ -2106,7 +2230,7 @@
           <div class="admin-card">
             <div class="qr-box">
               <div class="qr-stage" data-qr-stage>
-                <img data-qr-image alt="QR code for Drop Air connection" src="{{ qr_url }}">
+                <img data-qr-image data-qr-svg-url="{{ qr_svg_url }}" alt="QR code for Drop Air connection" src="{{ qr_url }}">
                 <canvas class="qr-build-canvas" data-qr-canvas aria-hidden="true"></canvas>
                 <span class="qr-spinner" aria-hidden="true">
                   <span class="qr-star" style="--a: 18deg; --d: 0s"></span>
@@ -2129,7 +2253,7 @@
         </article>
         {% endif %}
 
-        <article class="panel">
+        <article class="panel" id="sendFilesPanel" data-mobile-task="send">
           <div class="panel-head">
             <div>
               <h2 class="panel-title">Send Files</h2>
@@ -2170,7 +2294,7 @@
           <div id="status" class="status">Ready.</div>
         </article>
 
-        <article class="panel">
+        <article class="panel" data-mobile-task="text">
           <div class="panel-head">
             <div>
               <h2 class="panel-title">Text Relay</h2>
@@ -2192,7 +2316,7 @@
         </article>
       </div>
 
-      <article class="panel">
+      <article class="panel" id="receivePanel" data-mobile-task="receive">
         <div class="panel-head">
           <div>
             <h2 class="panel-title">Incoming Files</h2>
@@ -2212,12 +2336,13 @@
             </thead>
             <tbody id="filesBody">
               {% for f in files %}
-              <tr>
+              <tr data-file-name="{{ f.name }}">
                 <td><a href="{{ f.url }}{{ auth_query }}" title="{{ f.name }}">{{ f.name }}</a></td>
-                <td>{{ f.size }}</td>
+                <td>{{ f.size|filesizeformat }}</td>
                 <td>{{ f.modified }}</td>
                 <td>
                   <div class="row-actions">
+                    <button class="primary-btn file-download" type="button" data-name="{{ f.name }}" data-size="{{ f.size }}" data-url="{{ f.url }}{{ auth_query }}">Download</button>
                     <button class="icon-btn copy-file" type="button" data-url="{{ f.url }}{{ auth_query }}" aria-label="Copy file link"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg></button>
                     <button class="icon-btn danger-icon delete-file" type="button" data-name="{{ f.name }}" aria-label="Delete file"><svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 15H6L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
                   </div>
@@ -2327,6 +2452,7 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
+  <script src="{{ url_for('static', filename='vendor/gsap/gsap.min.js') }}"></script>
   <script>
     let accessCode = "{{ access_code }}";
     let sessionKey = {{ session_key|tojson }};
@@ -2362,12 +2488,11 @@
     const connectionLabel = document.getElementById("connectionLabel");
     const toast = document.getElementById("toast");
     let toastTimer;
-    let mouseFrame;
     let sessionSyncTimer;
     let currentTextIndex = 0;
     let currentTextItemId = "";
     let expandedTextIds = new Set();
-    let qrAnimationRun = 0;
+    const qrAnimationRuns = new WeakMap();
     let connectionTimer;
     let lastConnectionCount = Number(initialConnectionCount) || 0;
     let knownFileNames = new Set({{ files|map(attribute='name')|list|tojson }});
@@ -2382,6 +2507,25 @@
     let filePollErrors = 0;
     let textPollErrors = 0;
     let uploadBatchActive = false;
+    const MAX_TRACKED_DOWNLOAD_BYTES = 16 * 1024 * 1024;
+    const MAX_READY_DOWNLOAD_BYTES = 24 * 1024 * 1024;
+    const MAX_ACTIVE_TRACKED_DOWNLOADS = 2;
+    const downloadTasks = new Map();
+    let readyDownloadBytes = 0;
+    let transferMotionEnabled = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const transferTweens = new Set();
+    const progressTweens = new WeakMap();
+    const transferMotionMedia = window.gsap?.matchMedia();
+    transferMotionMedia?.add({
+      reduced: "(prefers-reduced-motion: reduce)",
+      phone: "(max-width: 700px)"
+    }, context => {
+      transferMotionEnabled = !context.conditions.reduced;
+      return () => {
+        transferTweens.forEach(tween => tween.kill());
+        transferTweens.clear();
+      };
+    });
 
     const adminEls = {
       openBtn: document.getElementById("openAdminBtn"),
@@ -2750,8 +2894,7 @@
       }
       const ctx = canvas.getContext("2d");
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.fillStyle = "#fff";
-      ctx.fillRect(0, 0, rect.width, rect.height);
+      ctx.clearRect(0, 0, rect.width, rect.height);
       const scale = rect.width / qr.size;
       const count = Math.floor(qr.modules.length * progress);
       ctx.fillStyle = "#111827";
@@ -2771,13 +2914,16 @@
       const canvas = stage?.querySelector("[data-qr-canvas]");
       const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       const src = `${qrUrl}${qrUrl.includes("?") ? "&" : "?"}t=${Date.now()}`;
+      const imageSrcBase = img.dataset.qrImageUrl || img.getAttribute("src") || img.src;
+      const imageSrc = `${imageSrcBase}${imageSrcBase.includes("?") ? "&" : "?"}t=${Date.now()}`;
       if (!stage || !canvas || reduceMotion) {
-        img.src = src;
+        img.src = imageSrcBase;
         return;
       }
-      const run = ++qrAnimationRun;
+      const run = (qrAnimationRuns.get(stage) || 0) + 1;
+      qrAnimationRuns.set(stage, run);
       stage.classList.add("generating");
-      img.src = src;
+      img.src = imageSrc;
       try {
         const qr = await fetchQrModules(src);
         drawQrModules(canvas, qr, 0);
@@ -2786,7 +2932,7 @@
         const duration = Math.max(300, totalDuration - 420);
         await new Promise(resolve => {
           function frame(now) {
-            if (run !== qrAnimationRun) {
+            if (run !== qrAnimationRuns.get(stage)) {
               resolve();
               return;
             }
@@ -2799,9 +2945,9 @@
           requestAnimationFrame(frame);
         });
       } catch (_) {
-        img.src = src;
+        img.src = imageSrcBase;
       } finally {
-        if (run === qrAnimationRun) {
+        if (run === qrAnimationRuns.get(stage)) {
           stage.classList.remove("generating");
         }
       }
@@ -2853,20 +2999,7 @@
 
     function applyTheme(choice) {
       const next = choice || "system";
-      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      if (document.startViewTransition && !reduceMotion) {
-        document.startViewTransition(() => commitTheme(next));
-      } else {
-        commitTheme(next);
-      }
-    }
-
-    function updatePointerGlow(x, y) {
-      cancelAnimationFrame(mouseFrame);
-      mouseFrame = requestAnimationFrame(() => {
-        document.body.style.setProperty("--mouse-x", `${x}px`);
-        document.body.style.setProperty("--mouse-y", `${y}px`);
-      });
+      commitTheme(next);
     }
 
     function animatePublicUrlRenewal() {
@@ -2887,6 +3020,9 @@
       document.querySelectorAll("[data-public-url]").forEach(el => {
         el.textContent = publicUrl;
       });
+      document.querySelectorAll("[data-transfer-view-link]").forEach(el => {
+        el.href = publicUrl;
+      });
       if (changed) animatePublicUrlRenewal();
       document.querySelectorAll("[data-session-status]").forEach(el => {
         const remaining = Math.max(0, sessionSecondsRemaining);
@@ -2896,13 +3032,15 @@
       });
       if (data.qr_url) {
         document.querySelectorAll("[data-qr-image]").forEach(img => {
+          img.dataset.qrImageUrl = data.qr_url;
+          if (data.qr_svg_url) img.dataset.qrSvgUrl = data.qr_svg_url;
           if (changed) {
             const box = img.closest(".qr-box");
             box?.classList.remove("updating");
             void box?.offsetWidth;
             box?.classList.add("updating");
             setTimeout(() => box?.classList.remove("updating"), 900);
-            playQrBuildAnimation(img, data.qr_url, 2000);
+            playQrBuildAnimation(img, data.qr_svg_url || data.qr_url, 2000);
           } else if (!img.getAttribute("src")) {
             img.src = data.qr_url;
           }
@@ -2974,7 +3112,8 @@
         updateSessionUi({
           ...data.session,
           public_url: data.public_url,
-          qr_url: data.qr_url
+          qr_url: data.qr_url,
+          qr_svg_url: data.qr_svg_url
         }, false);
       }
       showToast("Admin status refreshed");
@@ -3255,6 +3394,14 @@
       anchor.href = link;
       anchor.title = f.name;
       anchor.textContent = f.name;
+      anchor.addEventListener("click", event => {
+        if (Number(f.size) <= MAX_TRACKED_DOWNLOAD_BYTES && canTrackDownload(Number(f.size) || 0)) {
+          event.preventDefault();
+          startTrackedDownload(f, link);
+        } else {
+          showDownloadNotice(f.name, "Continue in your browser’s downloads");
+        }
+      });
       const meta = document.createElement("div");
       meta.className = "file-meta";
       const kind = document.createElement("span");
@@ -3273,6 +3420,13 @@
       const action = document.createElement("td");
       const actions = document.createElement("div");
       actions.className = "row-actions";
+      const download = document.createElement("button");
+      download.className = "primary-btn file-download";
+      download.type = "button";
+      download.textContent = "Download";
+      download.dataset.name = f.name;
+      download.dataset.size = String(f.size || 0);
+      download.dataset.url = link;
       const copy = document.createElement("button");
       copy.className = "icon-btn copy-file";
       copy.type = "button";
@@ -3285,11 +3439,269 @@
       del.setAttribute("aria-label", "Delete file");
       del.dataset.name = f.name;
       del.innerHTML = trashIcon();
-      actions.append(copy, del);
+      actions.append(download, copy, del);
       action.appendChild(actions);
       row.append(name, size, modified, action);
       return row;
     }
+
+    function canTrackDownload(incomingBytes = 0, exceptTask = null) {
+      const activeTasks = [...downloadTasks.values()].filter(task => task !== exceptTask && ["connecting", "receiving"].includes(task.state));
+      const activeBytes = activeTasks.reduce((sum, task) => sum + (Number(task.size) || 0), 0);
+      return typeof XMLHttpRequest !== "undefined" && activeTasks.length < MAX_ACTIVE_TRACKED_DOWNLOADS && readyDownloadBytes + activeBytes + incomingBytes <= MAX_READY_DOWNLOAD_BYTES;
+    }
+
+    function showDownloadNotice(name, message) {
+      const key = `notice:${name}`;
+      let task = downloadTasks.get(key);
+      if (!task) {
+        task = { key, state: "handed-to-browser", name, bytes: 0, size: 0 };
+        downloadTasks.set(key, task);
+      }
+      renderDownloadTask(task, message);
+    }
+
+    function requestDownload(file, href) {
+      if (Number(file.size) <= MAX_TRACKED_DOWNLOAD_BYTES && canTrackDownload(Number(file.size) || 0)) {
+        startTrackedDownload(file, href);
+        return;
+      }
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = file.name;
+      link.hidden = true;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      const reason = Number(file.size) > MAX_TRACKED_DOWNLOAD_BYTES || readyDownloadBytes + Number(file.size || 0) > MAX_READY_DOWNLOAD_BYTES
+        ? "Continue in your browser’s downloads"
+        : "Opened in your browser’s downloads";
+      showDownloadNotice(file.name, reason);
+    }
+
+    function renderDownloadTask(task, message) {
+      const root = document.getElementById("downloadActivity");
+      let card = root.querySelector(`[data-download-id="${CSS.escape(task.key)}"]`);
+      if (!card) {
+        card = document.createElement("section");
+        card.className = "download-task";
+        card.dataset.downloadId = task.key;
+        const copy = document.createElement("div");
+        copy.className = "download-task-copy";
+        const name = document.createElement("div");
+        name.className = "download-task-name";
+        name.textContent = task.name;
+        const state = document.createElement("div");
+        state.className = "download-task-state";
+        state.setAttribute("aria-live", "polite");
+        const actions = document.createElement("div");
+        actions.className = "download-task-actions";
+        const progress = document.createElement("div");
+        progress.className = "download-progress";
+        const fill = document.createElement("div");
+        fill.className = "download-progress-fill";
+        progress.appendChild(fill);
+        copy.append(name, state);
+        card.append(copy, actions, progress);
+        root.prepend(card);
+        task.card = card;
+        if (transferMotionEnabled && window.gsap) {
+          const tween = window.gsap.fromTo(card, { opacity: 0, y: 5 }, { opacity: 1, y: 0, duration: 0.18, ease: "power2.out", onComplete: () => transferTweens.delete(tween) });
+          transferTweens.add(tween);
+        }
+      }
+      const state = card.querySelector(".download-task-state");
+      const fill = card.querySelector(".download-progress-fill");
+      const actions = card.querySelector(".download-task-actions");
+      state.textContent = message || (task.lengthKnown ? `${human(task.bytes)} of ${human(task.size)} received` : `${human(task.bytes)} received`);
+      if (task.lengthKnown && task.size > 0) {
+        const progress = card.querySelector(".download-progress");
+        progress.setAttribute("role", "progressbar");
+        progress.setAttribute("aria-label", `Downloading ${task.name}`);
+        progress.setAttribute("aria-valuemin", "0");
+        progress.setAttribute("aria-valuemax", String(task.size));
+        progress.setAttribute("aria-valuenow", String(Math.min(task.bytes, task.size)));
+        const scale = Math.min(task.bytes / task.size, 1);
+        if (transferMotionEnabled && window.gsap) {
+          const previousTween = progressTweens.get(fill);
+          if (previousTween) { previousTween.kill(); transferTweens.delete(previousTween); }
+          const tween = window.gsap.to(fill, { scaleX: scale, duration: 0.12, ease: "power2.out", overwrite: "auto", onComplete: () => { transferTweens.delete(tween); progressTweens.delete(fill); } });
+          transferTweens.add(tween);
+          progressTweens.set(fill, tween);
+        } else fill.style.transform = `scaleX(${scale})`;
+      } else {
+        card.querySelector(".download-progress").removeAttribute("role");
+        card.querySelector(".download-progress").removeAttribute("aria-valuenow");
+        fill.style.removeProperty("transform");
+        card.classList.toggle("is-indeterminate", task.state === "connecting" || task.state === "receiving");
+      }
+      card.classList.toggle("is-ready", task.state === "ready-to-save" || task.state === "handed-to-browser");
+      card.classList.toggle("is-failed", task.state === "failed");
+      actions.replaceChildren();
+      const addAction = (label, handler, className = "secondary-btn") => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = className;
+        button.textContent = label;
+        button.addEventListener("click", handler);
+        actions.appendChild(button);
+      };
+      if (task.state === "connecting" || task.state === "receiving") addAction("Cancel", () => cancelDownload(task), "secondary-btn");
+      if (task.state === "ready-to-save") addAction("Save File", () => saveTrackedDownload(task), "primary-btn");
+      if (["failed", "cancelled"].includes(task.state)) addAction("Retry", () => startTrackedDownload(task.file, task.href, task), "primary-btn");
+      addAction("Dismiss", () => dismissDownload(task), "secondary-btn");
+    }
+
+    function startTrackedDownload(file, href, existingTask) {
+      if (!file || Number(file.size || 0) > MAX_TRACKED_DOWNLOAD_BYTES || !canTrackDownload(Number(file.size) || 0, existingTask)) {
+        if (file && href) requestDownload({ ...file, size: MAX_TRACKED_DOWNLOAD_BYTES + 1 }, href);
+        return;
+      }
+      const key = existingTask?.key || `download:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+      if (existingTask?.blob) {
+        readyDownloadBytes = Math.max(0, readyDownloadBytes - existingTask.blob.size);
+        URL.revokeObjectURL(existingTask.url);
+      }
+      const task = existingTask || { key, name: file.name };
+      Object.assign(task, { file, href, key, name: file.name, state: "connecting", bytes: 0, size: Number(file.size) || 0, lengthKnown: false, startedAt: performance.now() });
+      const reservedBytes = readyDownloadBytes + [...downloadTasks.values()].filter(item => item !== task && ["connecting", "receiving"].includes(item.state)).reduce((sum, item) => sum + (Number(item.size) || 0), 0);
+      task.reservedBytes = Math.max(0, MAX_READY_DOWNLOAD_BYTES - reservedBytes);
+      downloadTasks.set(key, task);
+      renderDownloadTask(task, "Connecting…");
+      const xhr = new XMLHttpRequest();
+      task.xhr = xhr;
+      xhr.open("GET", href);
+      xhr.responseType = "blob";
+      if (accessCode) xhr.setRequestHeader("X-Drop-Air-Code", accessCode);
+      xhr.onprogress = event => {
+        if (event.loaded > task.reservedBytes || (event.lengthComputable && event.total > task.reservedBytes)) {
+          task.fallbackForBudget = true;
+          xhr.abort();
+          return;
+        }
+        task.state = "receiving";
+        const now = performance.now();
+        const deltaBytes = Math.max(0, (event.loaded || 0) - (task.lastLoaded || 0));
+        const deltaSeconds = Math.max((now - (task.lastProgressAt || task.startedAt)) / 1000, 0.001);
+        const sampleSpeed = deltaBytes / deltaSeconds;
+        if (sampleSpeed > 0) task.speed = task.speed ? task.speed * 0.7 + sampleSpeed * 0.3 : sampleSpeed;
+        task.lastLoaded = event.loaded || 0;
+        task.lastProgressAt = now;
+        task.bytes = Math.max(task.bytes, event.loaded || 0);
+        task.lengthKnown = Boolean(event.lengthComputable && event.total > 0);
+        if (task.lengthKnown) task.size = event.total;
+        const remaining = task.lengthKnown ? Math.max(0, task.size - task.bytes) : 0;
+        const estimate = task.lengthKnown && task.speed > 0 ? ` · ${human(task.speed)}/s · about ${formatEta(remaining / task.speed)}` : "";
+        renderDownloadTask(task, `${task.lengthKnown ? `${human(task.bytes)} of ${human(task.size)}` : `${human(task.bytes)}`} received${estimate}`);
+      };
+      xhr.onload = () => {
+        const type = (xhr.getResponseHeader("Content-Type") || "").toLowerCase();
+        if (xhr.status < 200 || xhr.status >= 300 || type.includes("text/html") || !xhr.response || !xhr.response.size) {
+          task.state = "failed";
+          task.error = xhr.status === 404 ? "This file is no longer available." : "Download failed. Check the link and try again.";
+          renderDownloadTask(task, task.error);
+          return;
+        }
+        if (readyDownloadBytes + xhr.response.size > MAX_READY_DOWNLOAD_BYTES) {
+          task.state = "failed";
+          task.error = "The ready-to-save memory limit was reached. Use the file link to continue in your browser.";
+          renderDownloadTask(task, task.error);
+          return;
+        }
+        task.blob = xhr.response;
+        task.url = URL.createObjectURL(task.blob);
+        readyDownloadBytes += task.blob.size;
+        task.bytes = task.blob.size;
+        task.size = task.blob.size;
+        task.lengthKnown = true;
+        task.state = "ready-to-save";
+        renderDownloadTask(task, `Ready to save · ${human(task.blob.size)}`);
+      };
+      xhr.onerror = () => { task.state = "failed"; task.error = "Connection interrupted. Try again."; renderDownloadTask(task, task.error); };
+      xhr.onabort = () => {
+        if (task.fallbackForBudget) {
+          task.state = "failed";
+          task.error = "This file exceeds the tracked-save memory budget. Use its file link to continue in your browser.";
+          renderDownloadTask(task, task.error);
+        } else {
+          task.state = "cancelled";
+          renderDownloadTask(task, "Download cancelled.");
+        }
+      };
+      xhr.send();
+    }
+
+    function cancelDownload(task) {
+      if (task.xhr && ["connecting", "receiving"].includes(task.state)) task.xhr.abort();
+    }
+
+    function saveTrackedDownload(task) {
+      if (!task.url || task.state !== "ready-to-save") return;
+      const anchor = document.createElement("a");
+      anchor.href = task.url;
+      anchor.download = task.name;
+      anchor.hidden = true;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      task.state = "handed-to-browser";
+      renderDownloadTask(task, "Opened in your browser’s downloads");
+      task.releaseTimer = setTimeout(() => releaseDownload(task), 60000);
+    }
+
+    function releaseDownload(task) {
+      if (task.url) URL.revokeObjectURL(task.url);
+      if (task.blob) readyDownloadBytes = Math.max(0, readyDownloadBytes - task.blob.size);
+      task.url = "";
+      task.blob = null;
+    }
+
+    function dismissDownload(task) {
+      clearTimeout(task.releaseTimer);
+      if (task.xhr && ["connecting", "receiving"].includes(task.state)) task.xhr.abort();
+      releaseDownload(task);
+      task.card?.remove();
+      downloadTasks.delete(task.key);
+    }
+
+    const mobileTaskQuery = window.matchMedia("(max-width: 700px)");
+    function setMobileTaskView(view, persist = true) {
+      const layout = document.querySelector(".layout");
+      const selected = view === "receive" ? "receive" : "send";
+      layout.dataset.mobileView = selected;
+      document.querySelectorAll("[data-mobile-tab]").forEach(tab => {
+        const active = tab.dataset.mobileTab === selected;
+        tab.setAttribute("aria-selected", String(active));
+        tab.tabIndex = active ? 0 : -1;
+      });
+      if (persist) localStorage.setItem("dropAirMobileView", selected);
+    }
+
+    function syncMobileTaskView() {
+      if (!mobileTaskQuery.matches) {
+        document.querySelector(".layout")?.removeAttribute("data-mobile-view");
+        return;
+      }
+      const savedView = localStorage.getItem("dropAirMobileView");
+      const initialView = savedView === "send" || savedView === "receive"
+        ? savedView
+        : ({{ files|length|tojson }} > 0 ? "receive" : "send");
+      setMobileTaskView(initialView, false);
+    }
+
+    document.querySelectorAll("[data-mobile-tab]").forEach(button => button.addEventListener("click", () => setMobileTaskView(button.dataset.mobileTab)));
+    mobileTaskQuery.addEventListener("change", syncMobileTaskView);
+    document.getElementById("mobileTaskTabs")?.addEventListener("keydown", event => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const tabs = [...document.querySelectorAll("[data-mobile-tab]")];
+      const current = tabs.indexOf(document.activeElement);
+      if (current < 0) return;
+      event.preventDefault();
+      const next = (current + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
+      tabs[next].focus();
+      tabs[next].click();
+    });
+    syncMobileTaskView();
 
     async function refreshFiles(options = {}) {
       const completedNames = options.completedNames || new Set();
@@ -3717,7 +4129,14 @@
       }
     }
 
-    applyTheme(localStorage.getItem("dropAirTheme") || "system");
+    const qrConnectQuery = window.matchMedia("(max-width: 1100px)");
+    const syncQrConnectMode = () => {
+      const transferView = new URLSearchParams(location.search).get("view") === "transfers";
+      document.body.classList.toggle("qr-only", qrConnectQuery.matches && !transferView);
+    };
+    syncQrConnectMode();
+    qrConnectQuery.addEventListener?.("change", syncQrConnectMode);
+    applyTheme(localStorage.getItem("dropAirTheme") || "dark");
     applyUploadLimitUi(initialSettings);
     setConnectionCount(initialConnectionCount);
     heartbeatConnection();
@@ -3741,18 +4160,13 @@
       img.setAttribute("tabindex", "0");
       img.setAttribute("role", "button");
       img.setAttribute("aria-label", "Open larger QR code");
-      playQrBuildAnimation(img, img.getAttribute("src") || img.src);
+      playQrBuildAnimation(img, img.dataset.qrSvgUrl || img.getAttribute("src") || img.src);
     });
     document.getElementById("copyPublicUrlBtn")?.addEventListener("click", e => copyText(publicUrl, e.currentTarget));
     qrModalClose?.addEventListener("click", closeQrModal);
     qrModal?.addEventListener("click", e => {
       if (e.target === qrModal) closeQrModal();
     });
-    window.addEventListener("pointermove", e => updatePointerGlow(e.clientX, e.clientY), { passive: true });
-    window.addEventListener("touchmove", e => {
-      const touch = e.touches && e.touches[0];
-      if (touch) updatePointerGlow(touch.clientX, touch.clientY);
-    }, { passive: true });
     pickBtn.addEventListener("click", () => picker.click());
     pasteBtn.addEventListener("click", pasteClipboard);
     picker.addEventListener("change", () => uploadMany([...picker.files]));
@@ -3785,6 +4199,8 @@
       }
     });
     filesBody.addEventListener("click", e => {
+      const downloadButton = e.target.closest(".file-download");
+      if (downloadButton) requestDownload({ name: downloadButton.dataset.name, size: Number(downloadButton.dataset.size) || 0 }, withCode(downloadButton.dataset.url));
       const copyButton = e.target.closest(".copy-file");
       if (copyButton) copyText(new URL(copyButton.dataset.url, window.location.href).toString(), copyButton);
       const deleteButton = e.target.closest(".delete-file");

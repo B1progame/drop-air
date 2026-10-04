@@ -23,6 +23,7 @@ $root = (Get-Location).Path
 $iconAbs = (Resolve-Path $IconPath).Path
 $templatesAbs = (Resolve-Path "templates").Path
 $assetsAbs = (Resolve-Path "assets").Path
+$staticAbs = (Resolve-Path "static").Path
 $versionAbs = (Resolve-Path "VERSION").Path
 $appAbs = (Resolve-Path "app.py").Path
 
@@ -41,6 +42,7 @@ $specPath = "build\spec_$stamp"
   --specpath $specPath `
   --add-data "$templatesAbs;templates" `
   --add-data "$assetsAbs;assets" `
+  --add-data "$staticAbs;static" `
   --add-data "$versionAbs;." `
   $appAbs
 

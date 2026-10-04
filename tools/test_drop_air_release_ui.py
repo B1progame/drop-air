@@ -39,6 +39,28 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("no-store", response.headers.get("Cache-Control", ""))
         self.assertIn("delete-file", body)
 
+    def test_responsive_connect_screen_uses_branded_link_and_qr_transfer_view(self):
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn('class="qr-connect-screen"', body)
+        self.assertIn('data-copy-public', body)
+        self.assertIn('data-transfer-view-link', body)
+        self.assertIn('el.href = publicUrl', body)
+        self.assertIn('view=transfers', body)
+        self.assertIn("qrConnectQuery", body)
+        logo = self.client.get("/static/brand/drop-air-logo.png")
+        self.assertEqual(logo.status_code, 200)
+        self.assertTrue(logo.mimetype.startswith("image/"))
+        logo.close()
+        key = app.session_snapshot()["key"]
+        qr = self.client.get(f"/qr.png?url=http://192.168.1.4:8000/?k={key}&view=transfers")
+        self.assertEqual(qr.status_code, 200)
+        self.assertEqual(qr.mimetype, "image/png")
+        self.assertTrue(qr.data.startswith(b"\x89PNG\r\n\x1a\n"))
+        qr.close()
+        self.assertEqual(app.app_icon_path().name, "drop_air_brand.ico")
+
     def test_template_contains_text_viewer_and_animation_hooks(self):
         source = self.template_source
         self.assertIn("text-viewer", source)
@@ -73,7 +95,6 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("deleteTextItem", source)
         self.assertIn("Delete shared text", source)
         self.assertIn("upload-state", source)
-        self.assertIn("startViewTransition", source)
         self.assertIn("heartbeatConnection", source)
         self.assertIn("pasteClipboard", source)
         self.assertIn("scheduleFilePoll", source)
@@ -98,6 +119,8 @@ class DropAirReleaseUiTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(len(payload["key"]), 32)
         self.assertIn("qr_url", payload)
+        self.assertIn(".png?", payload["qr_url"])
+        self.assertIn("qr_svg_url", payload)
         self.assertIn("seconds_remaining", payload)
 
     def test_session_endpoint_syncs_old_key_after_rotation(self):
@@ -113,6 +136,7 @@ class DropAirReleaseUiTests(unittest.TestCase):
             payload = response.get_json()
             self.assertNotEqual(payload["key"], old_key)
             self.assertIn(f"k={payload['key']}", payload["public_url"])
+            self.assertIn("view=transfers", payload["public_url"])
         finally:
             app.SESSION_EXPIRES_AT = max(previous_expires, time.time() + app.SESSION_TTL_SECONDS)
 
@@ -164,6 +188,45 @@ class DropAirReleaseUiTests(unittest.TestCase):
         delete_response = self.client.delete(f"/api/files/delete-me.txt?k={key}", environ_overrides=env)
         self.assertEqual(delete_response.status_code, 200)
         self.assertFalse(target.exists())
+
+    def test_authenticated_download_returns_the_original_file(self):
+        key = app.session_snapshot()["key"]
+        env = {"REMOTE_ADDR": "192.168.1.64", "HTTP_HOST": "192.168.1.2:8000"}
+        app.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        target = app.UPLOAD_DIR / "download-smoke.txt"
+        target.write_bytes(b"authenticated download smoke test")
+        try:
+            response = self.client.get(f"/files/download-smoke.txt?k={key}", environ_overrides=env)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.data, b"authenticated download smoke test")
+            self.assertIn("attachment", response.headers.get("Content-Disposition", ""))
+            response.close()
+        finally:
+            target.unlink(missing_ok=True)
+
+    def test_missing_authenticated_download_returns_404(self):
+        key = app.session_snapshot()["key"]
+        response = self.client.get(
+            f"/files/does-not-exist-iab-test.txt?k={key}",
+            environ_overrides={"REMOTE_ADDR": "192.168.1.65", "HTTP_HOST": "192.168.1.2:8000"},
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_template_includes_mobile_tasks_and_tracked_download_states(self):
+        source = self.template_source
+        for marker in (
+            "mobileTaskTabs", "aria-controls=\"sendFilesPanel\"", "aria-controls=\"receivePanel\"",
+            "MAX_TRACKED_DOWNLOAD_BYTES", "ready-to-save", "handed-to-browser", "Download cancelled.",
+            "xhr.responseType = \"blob\"", "text/html", "function saveTrackedDownload", "function dismissDownload",
+            "matchMedia();", "prefers-reduced-motion: reduce"
+        ):
+            self.assertIn(marker, source)
+
+    def test_local_gsap_bundle_is_served(self):
+        response = self.client.get("/static/vendor/gsap/gsap.min.js")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"GSAP 3.15.0", response.data[:200])
+        response.close()
 
     def test_same_name_uploads_publish_unique_completed_files(self):
         key = app.session_snapshot()["key"]

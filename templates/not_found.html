@@ -4,14 +4,15 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Drop Air - {{ title }}</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='brand/drop-air-logo.png') }}" />
   <style>
     :root {
       color-scheme: light dark;
-      --bg: #0b111b;
-      --surface: #121b28;
-      --ink: #edf6ff;
-      --muted: #9fb1c7;
-      --line: #26384b;
+      --bg: #171a1d;
+      --surface: #202428;
+      --ink: #edf2f4;
+      --muted: #aab5ba;
+      --line: #373f43;
       --accent: #22b8c8;
     }
 
@@ -34,7 +35,7 @@
       display: grid;
       place-items: center;
       padding: 18px;
-      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: var(--ink);
       background:
         linear-gradient(120deg, color-mix(in srgb, var(--accent) 16%, transparent), transparent 38%),
@@ -74,6 +75,7 @@
 </head>
 <body>
   <main class="card">
+    <img src="{{ url_for('static', filename='brand/drop-air-logo.png') }}" alt="Drop Air paper plane logo" width="52" height="52" style="border-radius:14px" />
     <div class="code">404</div>
     <h1>{{ title }}</h1>
     <p>{{ message }}</p>

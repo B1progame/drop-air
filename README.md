@@ -18,6 +18,9 @@ Fast local file sharing from your laptop to iPhone/iPad (and back) using a brows
 - Windows packaged builds run from the system tray with dashboard, log, folder, and quit actions
 - Clipboard paste button for sharing copied images/files or text
 - Optional one-time passcode (`DROP_AIR_CODE`)
+- Phones and tablets open on a QR-first connection screen, with a direct link to the full transfer workspace
+- Dark charcoal interface with cyan accents and the Drop Air paper-plane brand mark
+- Cached upload listings and reduced repeated filesystem scans for faster refreshes
 
 ## Requirements
 
@@ -82,14 +85,14 @@ $env:DROP_AIR_UPDATE_REPO="your-github-name/your-repo"
 python app.py
 ```
 
-Create GitHub releases with tags like `1.0.0`, `1.0.1`, etc. The admin panel compares the latest release tag with `VERSION`.
+Create GitHub releases with tags like `1.0.0`, `1.0.1`, etc. The admin panel compares the latest release tag with `VERSION`. Version 1.3.0 uses the QR-first screen for phone and tablet widths; select **Open transfers on this device** to use the full file and text workspace locally.
 For packaged builds, attach the setup installer release asset, for example `Drop-Air-Setup-1.1.0.exe`. The updater downloads that setup file, runs it silently, skips rebuilding Inno locally, and restarts Drop Air.
 
 Release flow:
 
 1. Update `VERSION` in the repo.
 2. Build the standalone EXE with `.\build_exe.ps1`.
-3. Push the commit and create a matching Git tag such as `1.0.1`.
+3. Push the commit and create a matching Git tag such as `1.3.0`.
 4. Create a GitHub Release from that tag and attach `dist\DropAir.exe`.
 5. On the host machine, the admin panel will show a red `!` and a rainbow update button when a newer release exists.
 
@@ -138,13 +141,13 @@ Output:
 You can customize metadata/version:
 
 ```powershell
-.\build_installer.ps1 -AppVersion "1.0.0" -Publisher "Drop Air"
+.\build_installer.ps1 -AppVersion "1.3.0" -Publisher "Drop Air" -IconPath "assets\icon\drop_air_brand.ico"
 ```
 
 Create a ready-to-publish GitHub draft release in the current repo:
 
 ```powershell
-.\build_installer.ps1 -CreateDraftRelease
+.\build_installer.ps1 -AppVersion "1.3.0" -IconPath "assets\icon\drop_air_brand.ico" -CreateDraftRelease
 ```
 
 ### Icon styles
