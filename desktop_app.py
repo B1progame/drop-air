@@ -24,7 +24,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QAction, QIcon, QKeySequence
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMenu, QMessageBox, QSystemTrayIcon
 from werkzeug.serving import make_server
 
 import app as backend
@@ -63,9 +63,24 @@ class DropAirWindow(QMainWindow):
         self._server = server
         self._server_thread = server_thread
         self._shutting_down = False
+        self._allow_close = False
         self.setWindowTitle(f"Drop Air {backend.APP_VERSION}")
         self.setWindowIcon(icon)
         self.resize(1092, 1255)
+
+        self.tray_icon = QSystemTrayIcon(icon, self)
+        self.tray_icon.setToolTip(f"Drop Air {backend.APP_VERSION}")
+        tray_menu = QMenu(self)
+        open_action = tray_menu.addAction("Open Drop Air")
+        open_action.triggered.connect(self._show_from_tray)
+        tray_menu.addSeparator()
+        quit_action = tray_menu.addAction("Quit Drop Air")
+        quit_action.triggered.connect(self._quit_from_tray)
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.activated.connect(self._tray_activated)
+        self._tray_available = QSystemTrayIcon.isSystemTrayAvailable()
+        if self._tray_available:
+            self.tray_icon.show()
 
         self.web = QWebEngineView(self)
         self.web.setPage(DropAirPage(self.web))
@@ -80,6 +95,19 @@ class DropAirWindow(QMainWindow):
         profile = QWebEngineProfile.defaultProfile()
         profile.downloadRequested.connect(self._save_download)
 
+    def _show_from_tray(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _tray_activated(self, reason) -> None:
+        if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
+            self._show_from_tray()
+
+    def _quit_from_tray(self) -> None:
+        self._allow_close = True
+        self.close()
+
     def _save_download(self, download) -> None:
         suggested_name = download.downloadFileName() or "download"
         path, _ = QFileDialog.getSaveFileName(self, "Save file", suggested_name)
@@ -92,13 +120,20 @@ class DropAirWindow(QMainWindow):
         download.accept()
 
     def closeEvent(self, event) -> None:
+        if self._tray_available and not self._allow_close:
+            self.hide()
+            event.ignore()
+            return
+
         if not self._shutting_down:
             self._shutting_down = True
+            self.tray_icon.hide()
             self._server.shutdown()
             self._server.server_close()
             backend.shutdown_drop_air()
             self._server_thread.join(timeout=2)
         event.accept()
+        QApplication.instance().quit()
 
 
 def start_backend():
@@ -136,6 +171,7 @@ def main() -> int:
 
     set_windows_app_id()
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("Drop Air")
     app.setOrganizationName("Drop Air")
     icon = icon_for_app()
