@@ -27,6 +27,12 @@ class DropAirReleaseUiTests(unittest.TestCase):
         cls.client = app.app.test_client()
         cls.template_source = (Path(__file__).resolve().parents[1] / "templates" / "index.html").read_text(encoding="utf-8")
         cls.update_template_source = (Path(__file__).resolve().parents[1] / "templates" / "update.html").read_text(encoding="utf-8")
+        cls.installer_source = (Path(__file__).resolve().parents[1] / "installer" / "DropAir.iss").read_text(encoding="utf-8")
+
+    def test_desktop_icon_uses_updated_asset_over_legacy_brand_icon(self):
+        with patch.dict(os.environ, {"DROP_AIR_ICON": ""}):
+            self.assertEqual(app.app_icon_path().name, "drop_air.ico")
+        self.assertIn('IconFilename: "{app}\\assets\\icon\\drop_air.ico"', self.installer_source)
 
     def test_index_contains_gui_hooks(self):
         response = self.client.get("/")
@@ -81,7 +87,7 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("no-store", svg.headers.get("Cache-Control", ""))
         self.assertIn('viewBox=', svg.get_data(as_text=True))
         svg.close()
-        self.assertEqual(app.app_icon_path().name, "drop_air_brand.ico")
+        self.assertEqual(app.app_icon_path().name, "drop_air.ico")
 
     def test_template_contains_text_viewer_and_animation_hooks(self):
         source = self.template_source
