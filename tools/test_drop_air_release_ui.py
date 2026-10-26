@@ -29,10 +29,63 @@ class DropAirReleaseUiTests(unittest.TestCase):
         cls.update_template_source = (Path(__file__).resolve().parents[1] / "templates" / "update.html").read_text(encoding="utf-8")
         cls.installer_source = (Path(__file__).resolve().parents[1] / "installer" / "DropAir.iss").read_text(encoding="utf-8")
 
-    def test_desktop_icon_uses_updated_asset_over_legacy_brand_icon(self):
+    def test_desktop_icon_uses_the_current_brand_icon(self):
         with patch.dict(os.environ, {"DROP_AIR_ICON": ""}):
-            self.assertEqual(app.app_icon_path().name, "drop_air.ico")
-        self.assertIn('IconFilename: "{app}\\assets\\icon\\drop_air.ico"', self.installer_source)
+            self.assertEqual(app.app_icon_path().name, "drop_air_brand.ico")
+        self.assertIn('IconFilename: "{app}\\assets\\icon\\drop_air_brand.ico"', self.installer_source)
+
+    def test_pyinstaller_build_uses_the_current_icon_and_desktop_entry(self):
+        root = Path(__file__).resolve().parents[1]
+        build_script = (root / "build_exe.ps1").read_text(encoding="utf-8")
+        self.assertIn('IconPath = "assets\\icon\\drop_air_brand.ico"', build_script)
+        self.assertIn("--icon $iconAbs", build_script)
+        self.assertIn('Resolve-Path "desktop_app.py"', build_script)
+        self.assertNotIn('Get-ChildItem -Path "dist" -File', build_script)
+        self.assertIn('IconPath = "assets\\icon\\drop_air_brand.ico"', (root / "build_installer.ps1").read_text(encoding="utf-8"))
+
+    def test_desktop_downloads_use_the_system_downloads_folder_without_a_dialog(self):
+        root = Path(__file__).resolve().parents[1]
+        desktop_source = (root / "desktop_app.py").read_text(encoding="utf-8")
+        self.assertIn("StandardLocation.DownloadLocation", desktop_source)
+        self.assertIn("download.setDownloadDirectory", desktop_source)
+        self.assertNotIn("QFileDialog.getSaveFileName", desktop_source)
+
+    def test_clicking_a_file_name_uses_the_browser_download_directly(self):
+        source = self.template_source
+        start = source.index("    function fileRow(")
+        end = source.index("    function canTrackDownload(", start)
+        row_builder = source[start:end]
+        self.assertNotIn("anchor.addEventListener(\"click\"", row_builder)
+        self.assertNotIn("event.preventDefault()", row_builder)
+
+    def test_startup_defers_upload_cleanup_until_after_the_window_is_shown(self):
+        root = Path(__file__).resolve().parents[1]
+        desktop_source = (root / "desktop_app.py").read_text(encoding="utf-8")
+        start = desktop_source.index("def start_backend():")
+        end = desktop_source.index("\ndef schedule_startup_maintenance()", start)
+        self.assertNotIn("cleanup_uploads(force=True)", desktop_source[start:end])
+        self.assertIn("QTimer.singleShot", desktop_source)
+        self.assertIn("schedule_startup_maintenance", desktop_source)
+        main_source = desktop_source[desktop_source.index("def main() -> int:"):]
+        self.assertLess(main_source.index("window.show()"), main_source.index("startup_thread.start()"))
+        self.assertIn('name="DropAirBackendStartup"', main_source)
+        self.assertIn("backend_ready.connect(window.set_backend)", main_source)
+
+    def test_desktop_shows_a_reduced_motion_safe_skeleton_before_loading_the_dashboard(self):
+        root = Path(__file__).resolve().parents[1]
+        desktop_source = (root / "desktop_app.py").read_text(encoding="utf-8")
+        self.assertIn("STARTUP_SKELETON_HTML", desktop_source)
+        self.assertIn("self.web.setHtml(STARTUP_SKELETON_HTML)", desktop_source)
+        self.assertIn("loadFinished.connect(self._skeleton_finished)", desktop_source)
+        self.assertIn("if self._skeleton_loaded and self._dashboard_url", desktop_source)
+        self.assertIn("@media (prefers-reduced-motion: reduce)", desktop_source)
+        self.assertIn('aria-busy="true"', desktop_source)
+
+    def test_primary_and_danger_button_text_use_contrasting_theme_tokens(self):
+        self.assertIn("--accent-ink:", self.template_source)
+        self.assertIn("--danger-ink:", self.template_source)
+        self.assertIn("color: var(--accent-ink)", self.template_source)
+        self.assertIn("color: var(--danger-ink)", self.template_source)
 
     def test_index_contains_gui_hooks(self):
         response = self.client.get("/")
@@ -87,7 +140,7 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("no-store", svg.headers.get("Cache-Control", ""))
         self.assertIn('viewBox=', svg.get_data(as_text=True))
         svg.close()
-        self.assertEqual(app.app_icon_path().name, "drop_air.ico")
+        self.assertEqual(app.app_icon_path().name, "drop_air_brand.ico")
 
     def test_template_contains_text_viewer_and_animation_hooks(self):
         source = self.template_source
@@ -273,7 +326,7 @@ class DropAirReleaseUiTests(unittest.TestCase):
 
             with ThreadPoolExecutor(max_workers=2) as pool:
                 results = list(pool.map(upload, (b"first", b"second")))
-            self.assertEqual([status for status, _ in results], [200, 200])
+            self.assertEqual([status for status, _ in results], [200, 200], results)
             self.assertEqual({body["filename"] for _, body in results}, names)
             self.assertEqual({(app.UPLOAD_DIR / name).read_bytes() for name in names}, {b"first", b"second"})
         finally:

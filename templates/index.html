@@ -22,7 +22,7 @@
       color-scheme: light dark;
       --bg: #f5f7fb;
       --wash-a: rgba(14, 165, 183, .13);
-      --wash-b: rgba(249, 115, 91, .1);
+      --wash-b: rgba(14, 165, 183, .045);
       --surface: #ffffff;
       --surface-soft: #f0f8fb;
       --ink: #172033;
@@ -30,6 +30,8 @@
       --line: #dce5ee;
       --accent: #0ea5b7;
       --accent-strong: #047b8f;
+      --accent-ink: #08252a;
+      --danger-ink: #080100;
       --mint: #12b981;
       --danger: #d43f5e;
       --warning: #f59e0b;
@@ -54,6 +56,8 @@
         --line: #373f43;
         --accent: #22b8c8;
         --accent-strong: #5ee5f0;
+        --accent-ink: #08252a;
+        --danger-ink: #080100;
         --mint: #22b8c8;
         --danger: #fb7185;
         --warning: #fbbf24;
@@ -69,7 +73,7 @@
     html[data-theme="light"] {
       --bg: #f5f7fb;
       --wash-a: rgba(14, 165, 183, .13);
-      --wash-b: rgba(249, 115, 91, .1);
+      --wash-b: rgba(14, 165, 183, .045);
       --surface: #ffffff;
       --surface-soft: #f0f8fb;
       --ink: #172033;
@@ -77,6 +81,8 @@
       --line: #dce5ee;
       --accent: #0ea5b7;
       --accent-strong: #047b8f;
+      --accent-ink: #08252a;
+      --danger-ink: #080100;
       --mint: #12b981;
       --danger: #d43f5e;
       --warning: #f59e0b;
@@ -99,6 +105,8 @@
       --line: #373f43;
       --accent: #22b8c8;
       --accent-strong: #5ee5f0;
+      --accent-ink: #08252a;
+      --danger-ink: #080100;
       --mint: #22b8c8;
       --danger: #fb7185;
       --warning: #fbbf24;
@@ -111,6 +119,13 @@
     }
 
     * { box-sizing: border-box; }
+
+    :focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--accent) 72%, white);
+      outline-offset: 3px;
+    }
+
+    button:active { transform: scale(.98); }
 
     html {
       background: var(--bg);
@@ -651,9 +666,9 @@
       padding: 0 16px;
       border-color: transparent;
       background: var(--accent);
-      color: white;
+      color: var(--accent-ink);
       font-weight: 800;
-      box-shadow: 0 12px 28px rgba(14, 165, 183, .22);
+      box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 16%, transparent);
     }
 
     .primary-btn:active,
@@ -664,7 +679,7 @@
     }
 
     .danger-btn {
-      color: white;
+      color: var(--danger-ink);
       background: var(--danger);
       border-color: transparent;
     }
@@ -717,7 +732,7 @@
       height: 28px;
       border-radius: 999px;
       place-items: center;
-      color: white;
+      color: var(--danger-ink);
       background: var(--danger);
       font-weight: 900;
       box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 20%, transparent);
@@ -1452,7 +1467,10 @@
 
     tbody tr {
       animation: rise-in .22s ease both;
+      transition: background-color .14s ease-out;
     }
+
+    tbody tr[data-file-name]:hover { background: color-mix(in srgb, var(--accent) 5%, var(--surface)); }
 
     tbody tr.new-row {
       animation: row-new .58s ease both;
@@ -3382,14 +3400,6 @@
       anchor.href = link;
       anchor.title = f.name;
       anchor.textContent = f.name;
-      anchor.addEventListener("click", event => {
-        if (Number(f.size) <= MAX_TRACKED_DOWNLOAD_BYTES && canTrackDownload(Number(f.size) || 0)) {
-          event.preventDefault();
-          startTrackedDownload(f, link);
-        } else {
-          showDownloadNotice(f.name, "Continue in your browser’s downloads");
-        }
-      });
       const meta = document.createElement("div");
       meta.className = "file-meta";
       const kind = document.createElement("span");

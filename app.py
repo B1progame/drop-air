@@ -156,6 +156,7 @@ TEXT_TTL_MINUTES = int(os.getenv("DROP_AIR_TEXT_TTL_MINUTES", "10") or "10")
 UPLOAD_SNAPSHOT_TTL_SECONDS = 1.0
 UPLOAD_SNAPSHOT_LOCK = Lock()
 UPLOAD_SNAPSHOT = {"expires_at": 0.0, "files": []}
+ACTIVE_UPLOAD_TARGETS = set()
 UPLOAD_CLEANUP_LOCK = Lock()
 UPLOAD_CLEANUP_INTERVAL_SECONDS = 30.0
 UPLOAD_CLEANUP_NEXT_AT = 0.0
@@ -173,10 +174,10 @@ def app_icon_path() -> Path | None:
     env_icon = (os.getenv("DROP_AIR_ICON") or "").strip()
     candidates = [
         Path(env_icon).expanduser() if env_icon else None,
-        APP_DIR / "assets" / "icon" / "drop_air.ico",
-        BUNDLE_DIR / "assets" / "icon" / "drop_air.ico",
         APP_DIR / "assets" / "icon" / "drop_air_brand.ico",
         BUNDLE_DIR / "assets" / "icon" / "drop_air_brand.ico",
+        APP_DIR / "assets" / "icon" / "drop_air.ico",
+        BUNDLE_DIR / "assets" / "icon" / "drop_air.ico",
     ]
     for candidate in candidates:
         if candidate and candidate.exists():
@@ -999,13 +1000,10 @@ def get_local_ip() -> str:
 
 def is_port_available(host: str, port: int) -> bool:
     try:
-        with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-            return False
-    except OSError:
-        pass
-
-    try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+            if exclusive is not None:
+                s.setsockopt(socket.SOL_SOCKET, exclusive, 1)
             s.bind((host, port))
         return True
     except OSError:
@@ -1176,13 +1174,16 @@ def upload_snapshot() -> list[dict]:
     now = time.monotonic()
     with UPLOAD_SNAPSHOT_LOCK:
         if UPLOAD_SNAPSHOT["expires_at"] > now:
-            return [dict(item) for item in UPLOAD_SNAPSHOT["files"]]
+            return [
+                dict(item) for item in UPLOAD_SNAPSHOT["files"]
+                if item["name"] not in ACTIVE_UPLOAD_TARGETS
+            ]
 
         files = []
         try:
             with os.scandir(UPLOAD_DIR) as entries:
                 for entry in entries:
-                    if entry.name.startswith(".dropair-staging-"):
+                    if entry.name.startswith(".dropair-staging-") or entry.name in ACTIVE_UPLOAD_TARGETS:
                         continue
                     try:
                         info = entry.stat(follow_symlinks=False)
@@ -1577,9 +1578,10 @@ def api_upload():
 
     stem, suffix = Path(safe_name).stem, Path(safe_name).suffix
     staging = None
+    reserved_target = None
     try:
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        # Stage outside the visible namespace, then atomically link into place.
+        # Stage content privately before reserving its visible download name.
         # The bounded buffer avoids Werkzeug's small default copy buffer.
         fd, staging_name = tempfile.mkstemp(prefix=".dropair-staging-", dir=UPLOAD_DIR)
         os.close(fd)
@@ -1590,18 +1592,36 @@ def api_upload():
             candidate_name = safe_name if index == 0 else f"{stem}_{index}{suffix}"
             target = UPLOAD_DIR / candidate_name
             try:
-                os.link(staging, target)
-                break
+                fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             except FileExistsError:
                 index += 1
-        staging.unlink(missing_ok=True)
-        staging = None
+                continue
+            reserved_target = target
+            with UPLOAD_SNAPSHOT_LOCK:
+                ACTIVE_UPLOAD_TARGETS.add(target.name)
+            os.close(fd)
+            with staging.open("rb") as source, target.open("wb") as destination:
+                shutil.copyfileobj(source, destination, 1024 * 1024)
+            staging.unlink(missing_ok=True)
+            staging = None
+            with UPLOAD_SNAPSHOT_LOCK:
+                UPLOAD_SNAPSHOT["expires_at"] = 0.0
+                ACTIVE_UPLOAD_TARGETS.discard(target.name)
+            reserved_target = None
+            break
     except Exception as exc:
         if staging:
             try:
                 staging.unlink(missing_ok=True)
             except OSError:
                 app.logger.exception("Could not remove incomplete upload staging file %s.", staging.name)
+        if reserved_target:
+            with UPLOAD_SNAPSHOT_LOCK:
+                ACTIVE_UPLOAD_TARGETS.discard(reserved_target.name)
+            try:
+                reserved_target.unlink(missing_ok=True)
+            except OSError:
+                app.logger.exception("Could not remove reserved upload target %s.", reserved_target.name)
         return jsonify({"error": f"Could not save upload: {getattr(exc, 'strerror', None) or str(exc)}"}), 500
     invalidate_upload_snapshot()
     cleanup_uploads(force=get_settings()["auto_cleanup_max_files"] > 0)

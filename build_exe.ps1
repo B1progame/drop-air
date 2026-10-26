@@ -1,6 +1,6 @@
 param(
   [string]$AppName = "DropAir",
-  [string]$IconPath = "assets\icon\drop_air.ico",
+  [string]$IconPath = "assets\icon\drop_air_brand.ico",
   [switch]$SkipCleanup
 )
 
@@ -85,14 +85,6 @@ if (-not $SkipCleanup) {
       Remove-Item -Force $_.FullName
       Write-Host "Removed: $($_.FullName)"
     }
-
-  if (Test-Path "dist") {
-    Get-ChildItem -Path "dist" -File | Where-Object { $_.Name -ne "$AppName.exe" } |
-      ForEach-Object {
-        Remove-Item -Force $_.FullName
-        Write-Host "Removed: $($_.FullName)"
-      }
-  }
 
   Write-Host "Cleanup finished. Kept executable: $exePath"
 }

@@ -18,17 +18,78 @@ if getattr(sys, "frozen", False) and hasattr(os, "add_dll_directory"):
         if directory.is_dir():
             _DLL_SEARCH_HANDLES.append(os.add_dll_directory(str(directory)))
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QObject, QStandardPaths, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QIcon, QKeySequence
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMenu, QMessageBox, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QMainWindow, QMenu, QMessageBox, QSystemTrayIcon
 from werkzeug.serving import make_server
 
 import app as backend
 
 
 APP_ID = "B1progame.DropAir.Desktop"
+
+STARTUP_SKELETON_HTML = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Loading Drop Air</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #171a1d; color: #edf2f4; font: 14px/1.45 "Segoe UI", sans-serif; }
+    .shell { width: min(1180px, 100%); margin: auto; padding: 30px 24px; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    .top { display: flex; align-items: center; gap: 12px; margin-bottom: 30px; }
+    .mark { width: 48px; height: 48px; border-radius: 12px; }
+    .title { width: 190px; height: 28px; border-radius: 6px; }
+    .status { width: 110px; height: 24px; border-radius: 999px; margin-left: auto; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+    .column { display: grid; gap: 16px; }
+    .panel { overflow: hidden; border: 1px solid #373f43; border-radius: 8px; background: #202428; }
+    .panel-head { display: flex; justify-content: space-between; align-items: center; min-height: 66px; padding: 14px 16px; border-bottom: 1px solid #373f43; }
+    .heading { width: 112px; height: 18px; border-radius: 5px; }
+    .detail { width: 184px; height: 12px; margin-top: 8px; border-radius: 4px; }
+    .count { width: 58px; height: 24px; border-radius: 999px; }
+    .drop { min-height: 250px; margin: 14px; border: 1px dashed #485257; border-radius: 8px; display: grid; align-content: center; justify-items: center; gap: 14px; }
+    .drop-mark { width: 44px; height: 44px; border-radius: 10px; }
+    .drop-copy { width: min(66%, 260px); height: 15px; border-radius: 5px; }
+    .drop-action { width: 120px; height: 42px; border-radius: 8px; }
+    .text-area { height: 124px; margin: 14px; border: 1px solid #373f43; border-radius: 8px; }
+    .row { display: grid; grid-template-columns: 38px minmax(0, 1fr) 64px; align-items: center; gap: 10px; min-height: 66px; padding: 10px 14px; border-bottom: 1px solid #30373b; }
+    .file-mark { width: 36px; height: 36px; border-radius: 8px; }
+    .filename { width: min(78%, 230px); height: 15px; border-radius: 5px; }
+    .metadata { width: 86px; height: 10px; margin-top: 7px; border-radius: 4px; }
+    .action { width: 64px; height: 38px; border-radius: 8px; }
+    .block { background: linear-gradient(105deg, #2b3034 30%, #3a4145 46%, #2b3034 62%); background-size: 240% 100%; animation: load-sheen 1.45s ease-in-out infinite; }
+    @keyframes load-sheen { to { background-position: -140% 0; } }
+    @media (max-width: 760px) { .shell { padding: 20px 16px; } .layout { grid-template-columns: minmax(0, 1fr); } .panel-head { min-height: 58px; } }
+    @media (prefers-color-scheme: light) {
+      body { background: #f5f7fb; color: #172033; }
+      .panel { background: #fff; border-color: #dce5ee; }
+      .panel-head, .row { border-color: #dce5ee; }
+      .text-area { border-color: #dce5ee; }
+      .drop { border-color: #c6d2da; }
+      .block { background: linear-gradient(105deg, #e2e8ec 30%, #f1f4f6 46%, #e2e8ec 62%); background-size: 240% 100%; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
+  </style>
+</head>
+<body>
+  <main class="shell" aria-busy="true" aria-label="Loading Drop Air">
+    <span class="sr-only" role="status">Loading Drop Air</span>
+    <header class="top"><div class="block mark"></div><div class="block title"></div><div class="block status"></div></header>
+    <div class="layout">
+      <div class="column">
+        <section class="panel"><header class="panel-head"><div><div class="block heading"></div><div class="block detail"></div></div><div class="block count"></div></header><div class="drop"><div class="block drop-mark"></div><div class="block drop-copy"></div><div class="block drop-action"></div></div></section>
+        <section class="panel"><header class="panel-head"><div class="block heading"></div><div class="block count"></div></header><div class="text-area"></div></section>
+      </div>
+      <section class="panel"><header class="panel-head"><div><div class="block heading"></div><div class="block detail"></div></div><div class="block count"></div></header><div class="row"><div class="block file-mark"></div><div><div class="block filename"></div><div class="block metadata"></div></div><div class="block action"></div></div><div class="row"><div class="block file-mark"></div><div><div class="block filename"></div><div class="block metadata"></div></div><div class="block action"></div></div><div class="row"><div class="block file-mark"></div><div><div class="block filename"></div><div class="block metadata"></div></div><div class="block action"></div></div></section>
+    </div>
+  </main>
+</body>
+</html>"""
 
 
 def set_windows_app_id() -> None:
@@ -55,13 +116,21 @@ class DropAirPage(QWebEnginePage):
         return super().acceptNavigationRequest(url, _navigation_type, is_main_frame)
 
 
+class StartupSignals(QObject):
+    backend_ready = Signal(object, object, str)
+    backend_failed = Signal(str)
+
+
 class DropAirWindow(QMainWindow):
-    def __init__(self, server, server_thread: threading.Thread, url: str, icon: QIcon):
+    def __init__(self, icon: QIcon):
         super().__init__()
-        self._server = server
-        self._server_thread = server_thread
+        self._server = None
+        self._server_thread = None
         self._shutting_down = False
         self._allow_close = False
+        self._skeleton_loaded = False
+        self._dashboard_url = ""
+        self._dashboard_loading = False
         self.setWindowTitle(f"Drop Air {backend.APP_VERSION}")
         self.setWindowIcon(icon)
         self.resize(1092, 1255)
@@ -83,7 +152,8 @@ class DropAirWindow(QMainWindow):
         self.web = QWebEngineView(self)
         self.web.setPage(DropAirPage(self.web))
         self.setCentralWidget(self.web)
-        self.web.setUrl(QUrl(url))
+        self.web.loadFinished.connect(self._skeleton_finished)
+        self.web.setHtml(STARTUP_SKELETON_HTML)
 
         reload_action = QAction("Reload", self)
         reload_action.setShortcut(QKeySequence.Refresh)
@@ -92,6 +162,25 @@ class DropAirWindow(QMainWindow):
 
         profile = QWebEngineProfile.defaultProfile()
         profile.downloadRequested.connect(self._save_download)
+
+    def _skeleton_finished(self, _success: bool) -> None:
+        self._skeleton_loaded = True
+        self._maybe_show_dashboard()
+
+    def set_backend(self, server, server_thread: threading.Thread, url: str) -> None:
+        self._server = server
+        self._server_thread = server_thread
+        self._dashboard_url = url
+        schedule_startup_maintenance()
+        self._maybe_show_dashboard()
+
+    def _maybe_show_dashboard(self) -> None:
+        if self._skeleton_loaded and self._dashboard_url and not self._dashboard_loading:
+            self._dashboard_loading = True
+            QTimer.singleShot(80, lambda: self.web.setUrl(QUrl(self._dashboard_url)))
+
+    def show_startup_error(self, message: str) -> None:
+        QMessageBox.critical(self, "Drop Air could not start", message)
 
     def _show_from_tray(self) -> None:
         self.showNormal()
@@ -108,13 +197,12 @@ class DropAirWindow(QMainWindow):
 
     def _save_download(self, download) -> None:
         suggested_name = download.downloadFileName() or "download"
-        path, _ = QFileDialog.getSaveFileName(self, "Save file", suggested_name)
-        if not path:
-            download.cancel()
-            return
-        destination = Path(path)
-        download.setDownloadDirectory(str(destination.parent))
-        download.setDownloadFileName(destination.name)
+        download_directory = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
+        if not download_directory:
+            download_directory = str(Path.home() / "Downloads")
+        Path(download_directory).mkdir(parents=True, exist_ok=True)
+        download.setDownloadDirectory(download_directory)
+        download.setDownloadFileName(suggested_name)
         download.accept()
 
     def closeEvent(self, event) -> None:
@@ -126,10 +214,12 @@ class DropAirWindow(QMainWindow):
         if not self._shutting_down:
             self._shutting_down = True
             self.tray_icon.hide()
-            self._server.shutdown()
-            self._server.server_close()
-            backend.shutdown_drop_air()
-            self._server_thread.join(timeout=2)
+            if self._server is not None:
+                self._server.shutdown()
+                self._server.server_close()
+                backend.shutdown_drop_air()
+                if self._server_thread is not None:
+                    self._server_thread.join(timeout=2)
         event.accept()
         QApplication.instance().quit()
 
@@ -142,7 +232,6 @@ def start_backend():
     backend.ACTIVE_PORT = port
     settings = backend.get_settings()
     backend.register_shutdown_cleanup()
-    backend.cleanup_uploads(force=True)
     backend.configure_request_logging()
 
     server = make_server(host, port, backend.app, threaded=True)
@@ -162,6 +251,14 @@ def start_backend():
     return server, thread, desktop_url
 
 
+def schedule_startup_maintenance() -> None:
+    threading.Thread(
+        target=lambda: backend.cleanup_uploads(force=True),
+        name="DropAirStartupCleanup",
+        daemon=True,
+    ).start()
+
+
 def main() -> int:
     if "--version" in sys.argv[1:]:
         print(f"Drop Air {backend.APP_VERSION}")
@@ -175,15 +272,39 @@ def main() -> int:
     icon = icon_for_app()
     app.setWindowIcon(icon)
 
-    try:
-        server, thread, url = start_backend()
-    except Exception as exc:
-        QMessageBox.critical(None, "Drop Air could not start", str(exc))
-        return 1
-
-    window = DropAirWindow(server, thread, url, icon)
+    window = DropAirWindow(icon)
+    startup_signals = StartupSignals()
+    startup_results = []
+    startup_signals.backend_ready.connect(window.set_backend)
+    startup_signals.backend_failed.connect(window.show_startup_error)
     window.show()
-    return app.exec()
+
+    def initialize_backend() -> None:
+        try:
+            result = start_backend()
+            startup_results.append(result)
+            startup_signals.backend_ready.emit(*result)
+        except Exception as exc:
+            startup_signals.backend_failed.emit(str(exc))
+
+    startup_thread = threading.Thread(
+        target=initialize_backend,
+        name="DropAirBackendStartup",
+        daemon=True,
+    )
+    startup_thread.start()
+    exit_code = app.exec()
+    startup_thread.join()
+
+    # If the user quit while the skeleton was still showing, clean up a backend
+    # that finished after the Qt event loop had stopped dispatching signals.
+    if startup_results and window._server is None:
+        server, server_thread, _url = startup_results[0]
+        server.shutdown()
+        server.server_close()
+        backend.shutdown_drop_air()
+        server_thread.join(timeout=2)
+    return exit_code
 
 
 if __name__ == "__main__":
