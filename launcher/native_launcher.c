@@ -4,11 +4,23 @@
 
 static const wchar_t WINDOW_CLASS[] = L"DropAirNativeStartup";
 static const wchar_t CORE_EXE[] = L"DropAirCore.exe";
+static const wchar_t INSTANCE_MUTEX[] = L"Local\\B1progame.DropAir.Desktop.Instance";
+static const UINT ACTIVATE_DROP_AIR = WM_APP + 41;
 static HWND startup_window;
 static HANDLE core_process;
 static DWORD core_pid;
 static ULONGLONG process_exit_time;
 static wchar_t app_dir[32768];
+static HANDLE instance_mutex;
+static BOOL owns_instance_mutex;
+
+static void release_instance_mutex(void) {
+    if (!instance_mutex) return;
+    if (owns_instance_mutex) ReleaseMutex(instance_mutex);
+    CloseHandle(instance_mutex);
+    instance_mutex = NULL;
+    owns_instance_mutex = FALSE;
+}
 
 static void rounded(HDC dc, int x, int y, int w, int h, COLORREF color, int radius) {
     HBRUSH brush = CreateSolidBrush(color);
@@ -53,6 +65,80 @@ static BOOL has_core_window(void) {
 }
 
 typedef struct { HWND window; } DropAirWindowSearch;
+typedef struct { HWND window; DWORD process_id; } ExistingAppSearch;
+
+static BOOL is_dropair_process(DWORD process_id) {
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id);
+    if (!process) return FALSE;
+    wchar_t path[32768];
+    DWORD length = (DWORD)(sizeof(path) / sizeof(path[0]));
+    BOOL matches = FALSE;
+    if (QueryFullProcessImageNameW(process, 0, path, &length)) {
+        const wchar_t *name = wcsrchr(path, L'\\');
+        name = name ? name + 1 : path;
+        matches = _wcsicmp(name, L"DropAir.exe") == 0 || _wcsicmp(name, CORE_EXE) == 0;
+    }
+    CloseHandle(process);
+    return matches;
+}
+
+static BOOL CALLBACK find_existing_dropair_window(HWND window, LPARAM parameter) {
+    ExistingAppSearch *search = (ExistingAppSearch *)parameter;
+    if (GetWindow(window, GW_OWNER) != NULL) return TRUE;
+    wchar_t title[128] = {0};
+    GetWindowTextW(window, title, 127);
+    if (wcsncmp(title, L"Drop Air", 8) != 0) return TRUE;
+    DWORD process_id = 0;
+    GetWindowThreadProcessId(window, &process_id);
+    if (process_id && is_dropair_process(process_id)) {
+        search->window = window;
+        search->process_id = process_id;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static ExistingAppSearch find_existing_dropair(void) {
+    ExistingAppSearch search = { NULL, 0 };
+    EnumWindows(find_existing_dropair_window, (LPARAM)&search);
+    return search;
+}
+
+static void focus_dropair_window(HWND window, DWORD process_id) {
+    if (!window || !IsWindow(window)) return;
+    AllowSetForegroundWindow(process_id);
+    if (IsIconic(window)) ShowWindow(window, SW_RESTORE);
+    else ShowWindow(window, SW_SHOW);
+    BringWindowToTop(window);
+    SetForegroundWindow(window);
+}
+
+static BOOL activate_existing_dropair(void) {
+    ExistingAppSearch search = find_existing_dropair();
+    if (!search.window) return FALSE;
+    focus_dropair_window(search.window, search.process_id);
+    return TRUE;
+}
+
+static BOOL acquire_instance_mutex(void) {
+    instance_mutex = CreateMutexW(NULL, TRUE, INSTANCE_MUTEX);
+    if (!instance_mutex) return FALSE;
+    DWORD error = GetLastError();
+    owns_instance_mutex = error != ERROR_ALREADY_EXISTS;
+    if (!owns_instance_mutex) {
+        DWORD wait = WaitForSingleObject(instance_mutex, 5000);
+        if (wait == WAIT_OBJECT_0 || wait == WAIT_ABANDONED) owns_instance_mutex = TRUE;
+        else {
+            // The first launch still owns the short startup lock. Its skeleton is
+            // already visible or will appear momentarily, so never start a twin.
+            activate_existing_dropair();
+            release_instance_mutex();
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
 static BOOL CALLBACK find_dropair_window(HWND window, LPARAM parameter) {
     DropAirWindowSearch *search = (DropAirWindowSearch *)parameter;
     if (window != startup_window && IsWindowVisible(window) && GetWindow(window, GW_OWNER) == NULL) {
@@ -229,7 +315,36 @@ static void app_directory(void) {
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, int show_command) {
     (void)previous;
     app_directory();
+    if (command_line && (wcscmp(command_line, L"--version") == 0 || wcscmp(command_line, L"-V") == 0)) {
+        if (!launch_core(command_line, TRUE)) return 1;
+        return 0;
+    }
+
+    if (!acquire_instance_mutex()) return 0;
+    ExistingAppSearch existing = find_existing_dropair();
+    if (existing.window) {
+        BOOL resume = command_line && wcsstr(command_line, L"--resume") != NULL;
+        if (!resume) {
+            focus_dropair_window(existing.window, existing.process_id);
+            release_instance_mutex();
+            return 0;
+        }
+        HANDLE previous_process = OpenProcess(SYNCHRONIZE, FALSE, existing.process_id);
+        if (!previous_process) {
+            focus_dropair_window(existing.window, existing.process_id);
+            release_instance_mutex();
+            return 0;
+        }
+        DWORD previous_exit = WaitForSingleObject(previous_process, 10000);
+        CloseHandle(previous_process);
+        if (previous_exit != WAIT_OBJECT_0) {
+            focus_dropair_window(existing.window, existing.process_id);
+            release_instance_mutex();
+            return 0;
+        }
+    }
     if (command_line && *command_line) {
+        release_instance_mutex();
         if (!launch_core(command_line, TRUE)) return 1;
         return 0;
     }
@@ -254,7 +369,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     startup_window = CreateWindowExW(WS_EX_APPWINDOW, WINDOW_CLASS, L"Drop Air loading",
                                      WS_OVERLAPPEDWINDOW, x, y, outer_width, outer_height,
                                      NULL, NULL, instance, NULL);
-    if (!startup_window) return 1;
+    if (!startup_window) {
+        release_instance_mutex();
+        return 1;
+    }
 
     wchar_t icon_path[32768];
     swprintf(icon_path, 32768, L"%ls\\assets\\icon\\drop_air_brand.ico", app_dir);
@@ -266,6 +384,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
 
     ShowWindow(startup_window, show_command);
     UpdateWindow(startup_window);
+    release_instance_mutex();
     SetTimer(startup_window, 1, 50, NULL);
     if (!launch_core(L"", FALSE)) {
         MessageBoxW(startup_window, L"The Drop Air application files are missing or could not be opened.", L"Drop Air", MB_OK | MB_ICONERROR);

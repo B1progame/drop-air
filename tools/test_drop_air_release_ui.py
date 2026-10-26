@@ -181,6 +181,20 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("has_core_window()", launcher)
         self.assertIn("if self._tray_available and not self._allow_close:", (root / "desktop_app.py").read_text(encoding="utf-8"))
 
+    def test_native_launcher_reuses_and_restores_the_existing_instance(self):
+        root = Path(__file__).resolve().parents[1]
+        launcher = (root / "launcher" / "native_launcher.c").read_text(encoding="utf-8")
+        self.assertIn('L"Local\\\\B1progame.DropAir.Desktop.Instance"', launcher)
+        self.assertIn("CreateMutexW", launcher)
+        self.assertIn("WaitForSingleObject(instance_mutex, 5000)", launcher)
+        self.assertIn("EnumWindows(find_existing_dropair_window", launcher)
+        self.assertIn('wcsncmp(title, L"Drop Air", 8)', launcher)
+        self.assertIn('name, L"DropAir.exe"', launcher)
+        self.assertIn('name, CORE_EXE', launcher)
+        self.assertIn("focus_dropair_window(existing.window, existing.process_id)", launcher)
+        self.assertIn("ShowWindow(window, SW_SHOW)", launcher)
+        self.assertNotIn("IsWindowVisible(window)", launcher[launcher.index("static BOOL CALLBACK find_existing_dropair_window"):launcher.index("static BOOL CALLBACK find_dropair_window")])
+
     def test_startup_failure_has_a_previous_version_fallback(self):
         root = Path(__file__).resolve().parents[1]
         installer = (root / "installer" / "DropAir.iss").read_text(encoding="utf-8")
