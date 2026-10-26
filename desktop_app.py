@@ -213,7 +213,7 @@ class DropAirWindow(QMainWindow):
 
         # This slot runs only after the first skeleton paint and backend startup.
         # Importing WebEngine here keeps Chromium's initialization off the first frame.
-        from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
+        from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
         from PySide6.QtWebEngineWidgets import QWebEngineView
 
         class DropAirPage(QWebEnginePage):
@@ -226,6 +226,12 @@ class DropAirWindow(QMainWindow):
 
         self.web = QWebEngineView(self)
         self.web.setPage(DropAirPage(self.web))
+        # The dashboard runs on a local HTTP origin. Clipboard API is unavailable
+        # there, and Chromium also disables execCommand clipboard writes by default.
+        self.web.settings().setAttribute(
+            QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard,
+            True,
+        )
         self.web.loadFinished.connect(self._page_load_finished)
         self.setCentralWidget(self.web)
         profile = QWebEngineProfile.defaultProfile()

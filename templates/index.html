@@ -2538,6 +2538,7 @@
     let publicUrl = {{ public_url|tojson }};
     const localUrl = {{ local_url|tojson }};
     let sessionSecondsRemaining = {{ session_seconds_remaining|default(300)|tojson }};
+    let sessionSyncFailures = 0;
     const picker = document.getElementById("picker");
     const pickBtn = document.getElementById("pickBtn");
     const pasteBtn = document.getElementById("pasteBtn");
@@ -2963,38 +2964,48 @@
       setTimeout(() => button.classList.remove("copied"), 460);
     }
 
-    async function copyText(value, trigger = null) {
-      const text = String(value || "");
-      if (!text) return;
+    function legacyCopyText(text) {
+      const previousFocus = document.activeElement;
+      const temp = document.createElement("textarea");
+      temp.value = text;
+      temp.setAttribute("readonly", "");
+      temp.setAttribute("aria-hidden", "true");
+      temp.style.position = "fixed";
+      temp.style.left = "0";
+      temp.style.top = "0";
+      temp.style.width = "1px";
+      temp.style.height = "1px";
+      temp.style.padding = "0";
+      temp.style.opacity = "0";
+      document.body.appendChild(temp);
       let copied = false;
-      if (navigator.clipboard && window.isSecureContext) {
-        try {
-          await navigator.clipboard.writeText(text);
-          copied = true;
-        } catch (_) {}
-      }
-      if (!copied) {
-        const previousFocus = document.activeElement;
-        const temp = document.createElement("textarea");
-        temp.value = text;
-        temp.setAttribute("readonly", "");
-        temp.setAttribute("aria-hidden", "true");
-        temp.style.position = "fixed";
-        temp.style.left = "-10000px";
-        temp.style.top = "0";
-        temp.style.opacity = "0";
-        document.body.appendChild(temp);
+      try {
         temp.focus();
         temp.select();
-        try {
-          copied = document.execCommand("copy");
-        } catch (_) {
-          copied = false;
-        }
+        temp.setSelectionRange(0, temp.value.length);
+        copied = document.execCommand("copy");
+      } catch (_) {
+        copied = false;
+      } finally {
         temp.remove();
         if (previousFocus && typeof previousFocus.focus === "function") {
           try { previousFocus.focus({ preventScroll: true }); } catch (_) { previousFocus.focus(); }
         }
+      }
+      return copied;
+    }
+
+    async function copyText(value, trigger = null) {
+      const text = String(value || "");
+      if (!text) return;
+      // Try the synchronous path first while the click still has user activation.
+      // Qt WebEngine and LAN HTTP pages commonly block navigator.clipboard.
+      let copied = legacyCopyText(text);
+      if (!copied && navigator.clipboard && window.isSecureContext) {
+        try {
+          await navigator.clipboard.writeText(text);
+          copied = true;
+        } catch (_) {}
       }
       if (copied) {
         showToast("Copied to clipboard");
@@ -3073,19 +3084,22 @@
         const r = await fetch(`/api/session${codeQuery()}`, {
           headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {}
         });
-        if (!r.ok) {
-          if (r.status === 404 && isAdmin) window.location.reload();
-          return;
-        }
+        if (!r.ok) throw new Error(`Session refresh failed (HTTP ${r.status})`);
         const data = await r.json();
         updateSessionUi(data, Boolean(data.key && data.key !== before));
+        sessionSyncFailures = 0;
         scheduleSessionSync();
-      } catch (_) {}
+        return true;
+      } catch (_) {
+        sessionSyncFailures = Math.min(sessionSyncFailures + 1, 5);
+        scheduleSessionSync(Math.min(30000, 2000 * (2 ** (sessionSyncFailures - 1))));
+        return false;
+      }
     }
 
-    function scheduleSessionSync() {
+    function scheduleSessionSync(delay = null) {
       clearTimeout(sessionSyncTimer);
-      const ms = Math.max(1000, (sessionSecondsRemaining + 1) * 1000);
+      const ms = delay === null ? Math.max(1000, (sessionSecondsRemaining + 1) * 1000) : delay;
       sessionSyncTimer = setTimeout(syncSession, ms);
     }
 
@@ -3525,11 +3539,21 @@
     });
     syncMobileTaskView();
 
-    async function refreshFiles(options = {}) {
+    async function refreshFiles(options = {}, retryAfterSessionSync = true) {
       const completedNames = options.completedNames || new Set();
       const revision = ++fileRequestRevision;
       const r = await fetch(`/api/files${codeQuery()}`, { headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {} });
-      if (!r.ok) throw new Error(`File refresh failed (HTTP ${r.status})`);
+      if (!r.ok) {
+        const failure = await r.clone().json().catch(() => ({}));
+        if (r.status === 404 && failure.error === "invalid session link" && retryAfterSessionSync) {
+          if (await syncSession()) return refreshFiles(options, false);
+          throw new Error("This transfer link expired. Scan the current QR code or copy a fresh link from Drop Air.");
+        }
+        if (r.status === 404 && failure.error === "code not found") {
+          throw new Error("The Drop Air access code changed. Ask the host for an updated link.");
+        }
+        throw new Error(`File refresh failed (HTTP ${r.status})`);
+      }
       const data = await r.json();
       if (revision !== fileRequestRevision) return;
       const files = data.files || [];
@@ -3746,8 +3770,10 @@
 
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) {
-        scheduleFilePoll(0);
-        scheduleTextPoll(0);
+        syncSession().finally(() => {
+          scheduleFilePoll(0);
+          scheduleTextPoll(0);
+        });
       }
     });
 
@@ -3841,7 +3867,7 @@
       }
     }
 
-    async function uploadFile(file, ctx) {
+    async function uploadFile(file, ctx, retryAfterSessionSync = true) {
       return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open("POST", `/api/upload${codeQuery()}`);
@@ -3874,7 +3900,21 @@
           let msg = `Upload failed for ${file.name} (HTTP ${xhr.status})`;
           try {
             const data = JSON.parse(xhr.responseText || "{}");
-            if (data?.error) msg = data.error;
+            if (data?.error === "invalid session link" && retryAfterSessionSync) {
+              syncSession().then(synced => {
+                if (!synced) {
+                  reject(new Error("This transfer link expired. Scan the current QR code or copy a fresh link from Drop Air."));
+                  return;
+                }
+                uploadFile(file, ctx, false).then(resolve, reject);
+              });
+              return;
+            }
+            if (data?.error === "invalid session link") {
+              msg = "This transfer link expired. Scan the current QR code or copy a fresh link from Drop Air.";
+            } else if (data?.error) {
+              msg = data.error;
+            }
           } catch (_) {}
           reject(new Error(msg));
         };
@@ -3923,10 +3963,10 @@
               progress.confirmedBytes += files[i].size || 0;
               progress.sentBytes[i] = 0;
               setStatus(`Uploaded ${completedNames.size}/${files.length}`);
-            } catch (_) {
+            } catch (error) {
               failedNames.push(files[i].name);
               progress.sentBytes[i] = 0;
-              updateUploadQueueItem(i, 100, "Failed", "failed");
+              updateUploadQueueItem(i, 100, error?.message || "Failed", "failed");
             }
           }
         };

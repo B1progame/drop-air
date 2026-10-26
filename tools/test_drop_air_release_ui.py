@@ -62,6 +62,11 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("download.cancel()", desktop_source)
         self.assertNotIn("QFileDialog.getSaveFileName", desktop_source)
 
+    def test_desktop_webengine_allows_user_initiated_clipboard_copy(self):
+        desktop_source = (Path(__file__).resolve().parents[1] / "desktop_app.py").read_text(encoding="utf-8")
+        self.assertIn("QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard", desktop_source)
+        self.assertIn("self.web.settings().setAttribute(", desktop_source)
+
     def test_desktop_download_is_accepted_to_downloads_and_slot_errors_do_not_escape(self):
         class Download:
             def __init__(self):
@@ -119,7 +124,7 @@ class DropAirReleaseUiTests(unittest.TestCase):
 
     def test_copy_file_link_uses_secure_and_fallback_clipboard_paths(self):
         source = self.template_source
-        start = source.index("    async function copyText(")
+        start = source.index("    function legacyCopyText(")
         end = source.index("\n    function commitTheme", start)
         copy_function = source[start:end]
         self.assertIn("navigator.clipboard.writeText(text)", copy_function)
@@ -128,6 +133,23 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn('showToast("Could not copy. Select and copy the link manually.")', copy_function)
         self.assertIn('copyText(new URL(copyButton.dataset.url, window.location.href).toString(), copyButton)', source)
         self.assertIn("copy.dataset.url = absolute", source)
+        self.assertIn("function legacyCopyText(text)", copy_function)
+        self.assertLess(copy_function.index('document.execCommand("copy")'), copy_function.index("await navigator.clipboard.writeText(text)"))
+        self.assertIn("temp.setSelectionRange(0, temp.value.length)", copy_function)
+
+    def test_expired_file_session_attempts_renewal_and_shows_reconnect_help(self):
+        source = self.template_source
+        sync_start = source.index("    async function syncSession()")
+        sync_end = source.index("\n    function scheduleSessionSync", sync_start)
+        sync_function = source[sync_start:sync_end]
+        self.assertIn("scheduleSessionSync(Math.min(30000", sync_function)
+        self.assertIn("return true", sync_function)
+        self.assertIn("return false", sync_function)
+        self.assertIn("async function refreshFiles(options = {}, retryAfterSessionSync = true)", source)
+        self.assertIn("if (await syncSession()) return refreshFiles(options, false)", source)
+        self.assertIn("This transfer link expired. Scan the current QR code or copy a fresh link from Drop Air.", source)
+        self.assertIn("syncSession().finally(() =>", source)
+        self.assertIn("uploadFile(file, ctx, false).then(resolve, reject)", source)
 
     def test_startup_defers_upload_cleanup_until_after_the_window_is_shown(self):
         root = Path(__file__).resolve().parents[1]
@@ -331,7 +353,8 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("Clipboard blocked. Use Choose Files", source)
         self.assertIn("max_upload_gb", source)
         self.assertIn("postTextItem", source)
-        self.assertIn("window.location.reload", source)
+        self.assertIn("sessionSyncFailures", source)
+        self.assertIn("scheduleSessionSync(Math.min(30000", source)
         self.assertIn("sessionSecondsRemaining + 1", source)
         self.assertNotIn("sessionSecondsRemaining - 20", source)
 
@@ -366,6 +389,24 @@ class DropAirReleaseUiTests(unittest.TestCase):
         finally:
             app.SESSION_EXPIRES_AT = max(previous_expires, time.time() + app.SESSION_TTL_SECONDS)
 
+    def test_session_key_state_persists_current_expiry_and_grace_keys(self):
+        with tempfile.TemporaryDirectory(prefix=".drop-air-session-state-test-", dir=Path(__file__).resolve().parents[1]) as folder:
+            state_path = Path(folder) / "session-state.json"
+            key = "a" * 32
+            previous = {"b" * 32: time.time() + 30}
+            expires_at = time.time() + 90
+            with (
+                patch.object(app, "SESSION_STATE_FILE", state_path),
+                patch.object(app, "SESSION_KEY", key),
+                patch.object(app, "SESSION_EXPIRES_AT", expires_at),
+                patch.object(app, "SESSION_PREVIOUS_KEYS", previous),
+            ):
+                app.persist_session_state()
+                restored = app.read_session_state()
+            self.assertEqual(restored["key"], key)
+            self.assertEqual(restored["expires_at"], expires_at)
+            self.assertEqual(restored["previous"], previous)
+
     def test_file_api_accepts_previous_session_key_during_grace_period(self):
         old_key = app.session_snapshot()["key"]
         previous_expires = app.SESSION_EXPIRES_AT
@@ -377,6 +418,15 @@ class DropAirReleaseUiTests(unittest.TestCase):
             self.assertNotEqual(app.session_snapshot()["key"], old_key)
         finally:
             app.SESSION_EXPIRES_AT = max(previous_expires, time.time() + app.SESSION_TTL_SECONDS)
+
+    def test_file_api_reports_an_expired_session_as_json(self):
+        key = "0" * 32
+        response = self.client.get(
+            f"/api/files?k={key}",
+            environ_overrides={"REMOTE_ADDR": "192.168.1.62", "HTTP_HOST": "192.168.1.2:8000"},
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.get_json(), {"error": "invalid session link"})
 
     def test_text_api_round_trip(self):
         key = app.session_snapshot()["key"]

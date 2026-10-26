@@ -65,13 +65,68 @@ DEFAULT_MAX_UPLOAD_GB = 10.0
 MAX_CONTENT_LENGTH = int(DEFAULT_MAX_UPLOAD_GB * 1024 * 1024 * 1024)
 ALLOWED_ORIGINS = "*"
 _ENV_SESSION_KEY = os.getenv("DROP_AIR_SESSION_KEY", "").strip()
-SESSION_KEY = _ENV_SESSION_KEY if len(_ENV_SESSION_KEY) == 32 else secrets.token_hex(16)
 SESSION_PARAM = "k"
 SESSION_TTL_SECONDS = int(os.getenv("DROP_AIR_SESSION_TTL_SECONDS", "300") or "300")
 SESSION_GRACE_SECONDS = int(os.getenv("DROP_AIR_SESSION_GRACE_SECONDS", "120") or "120")
 SESSION_EXPIRES_AT = time.time() + SESSION_TTL_SECONDS
-SESSION_PREVIOUS_KEYS = {}
+SESSION_STATE_FILE = DATA_DIR / "session-state.json"
 SESSION_LOCK = Lock()
+
+
+def read_session_state(path: Path | None = None) -> dict:
+    try:
+        state = json.loads((path or SESSION_STATE_FILE).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    key = state.get("key") if isinstance(state, dict) else None
+    if not isinstance(key, str) or len(key) != 32:
+        return {}
+    previous = state.get("previous", {})
+    if not isinstance(previous, dict):
+        previous = {}
+    try:
+        expires_at = float(state.get("expires_at", 0) or 0)
+    except (TypeError, ValueError):
+        return {}
+    previous_keys = {}
+    for item_key, expires in previous.items():
+        if not isinstance(item_key, str) or len(item_key) != 32:
+            continue
+        try:
+            previous_keys[item_key] = float(expires)
+        except (TypeError, ValueError):
+            continue
+    return {
+        "key": key,
+        "expires_at": expires_at,
+        "previous": previous_keys,
+    }
+
+
+def persist_session_state() -> None:
+    state = {
+        "key": SESSION_KEY,
+        "expires_at": SESSION_EXPIRES_AT,
+        "previous": SESSION_PREVIOUS_KEYS,
+    }
+    temporary = SESSION_STATE_FILE.with_suffix(".tmp")
+    try:
+        temporary.write_text(json.dumps(state, separators=(",", ":")), encoding="utf-8")
+        temporary.replace(SESSION_STATE_FILE)
+    except OSError:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+_SAVED_SESSION_STATE = read_session_state()
+SESSION_KEY = _ENV_SESSION_KEY if len(_ENV_SESSION_KEY) == 32 else _SAVED_SESSION_STATE.get("key", secrets.token_hex(16))
+if not _ENV_SESSION_KEY and _SAVED_SESSION_STATE.get("key"):
+    SESSION_EXPIRES_AT = _SAVED_SESSION_STATE["expires_at"] or SESSION_EXPIRES_AT
+SESSION_PREVIOUS_KEYS = _SAVED_SESSION_STATE.get("previous", {}) if not _ENV_SESSION_KEY else {}
+if not _ENV_SESSION_KEY:
+    persist_session_state()
 DEFAULT_PORT = int(os.getenv("PORT", "8000") or "8000")
 ACTIVE_PORT = DEFAULT_PORT
 VERSION_FILE = APP_DIR / "VERSION"
@@ -1038,6 +1093,7 @@ def session_snapshot(force_rotate: bool = False) -> dict:
             SESSION_PREVIOUS_KEYS[SESSION_KEY] = now + SESSION_GRACE_SECONDS
             SESSION_KEY = secrets.token_hex(16)
             SESSION_EXPIRES_AT = now + SESSION_TTL_SECONDS
+            persist_session_state()
         return {
             "key": SESSION_KEY,
             "expires_at": int(SESSION_EXPIRES_AT),
