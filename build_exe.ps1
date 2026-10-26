@@ -35,7 +35,7 @@ $specPath = "build\spec_$stamp"
   --noconfirm `
   --clean `
   --name $AppName `
-  --onefile `
+  --onedir `
   --windowed `
   --icon $iconAbs `
   --workpath $workPath `
@@ -50,7 +50,7 @@ if ($LASTEXITCODE -ne 0) {
   throw "PyInstaller failed with exit code $LASTEXITCODE"
 }
 
-$exePath = "dist\$AppName.exe"
+$exePath = "dist\$AppName\$AppName.exe"
 if (-not (Test-Path $exePath)) {
   throw "Build finished without output exe at $exePath"
 }

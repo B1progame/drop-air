@@ -75,7 +75,7 @@ function Get-GitHubRepo {
 function New-ReleaseBundle {
   param(
     [string]$Version,
-    [string]$PortableExePath,
+    [string]$PortableFolderPath,
     [string]$InstallerExePath,
     [string]$TargetDir,
     [string]$Repo
@@ -86,7 +86,7 @@ function New-ReleaseBundle {
   }
   New-Item -ItemType Directory -Path $TargetDir | Out-Null
 
-  $portableName = "$AppName-$Version.exe"
+  $portableName = "$AppName-$Version-portable"
   $installerName = "$AppName-Setup-$Version.exe"
   $zipName = "$AppName-$Version-portable.zip"
 
@@ -97,11 +97,11 @@ function New-ReleaseBundle {
   $notesPath = Join-Path $TargetDir "RELEASE-STEPS.txt"
   $publishScriptPath = Join-Path $TargetDir "publish-github-release.ps1"
 
-  Copy-Item -LiteralPath $PortableExePath -Destination $portableTarget -Force
+  Copy-Item -LiteralPath $PortableFolderPath -Destination $portableTarget -Recurse -Force
   Copy-Item -LiteralPath $InstallerExePath -Destination $installerTarget -Force
   Compress-Archive -LiteralPath $portableTarget -DestinationPath $zipTarget -CompressionLevel Optimal -Force
 
-  $assets = @($portableTarget, $installerTarget, $zipTarget)
+  $assets = @($installerTarget, $zipTarget)
   $checksumLines = foreach ($asset in $assets) {
     $hash = Get-FileHash -LiteralPath $asset -Algorithm SHA256
     "$($hash.Hash.ToLower()) *$([System.IO.Path]::GetFileName($asset))"
@@ -113,9 +113,8 @@ function New-ReleaseBundle {
     "Drop Air release bundle for $Version",
     "",
     "Local files prepared:",
-    "- $portableName",
+    "- $zipName (portable folder)",
     "- $installerName",
-    "- $zipName",
     "- SHA256SUMS.txt",
     "",
     "Publish steps:",
@@ -165,7 +164,7 @@ if (-not $SkipExeBuild) {
   }
 }
 
-$exePath = Join-Path "dist" ("$AppName.exe")
+$exePath = Join-Path "dist\$AppName" ("$AppName.exe")
 if (-not (Test-Path $exePath)) {
   throw "Expected executable not found: $exePath"
 }
@@ -206,7 +205,7 @@ $bundle = $null
 if (-not $SkipReleaseBundle) {
   $bundle = New-ReleaseBundle `
     -Version $AppVersion `
-    -PortableExePath $exePath `
+    -PortableFolderPath (Split-Path -Parent $exePath) `
     -InstallerExePath $installerPath `
     -TargetDir $ReleaseDir `
     -Repo $repo
@@ -221,7 +220,6 @@ if ($CreateDraftRelease) {
   }
 
   gh release create $AppVersion `
-    $bundle.Portable `
     $bundle.Installer `
     $bundle.PortableZip `
     $bundle.Checksums `
@@ -233,7 +231,7 @@ if ($CreateDraftRelease) {
 
 Write-Host ""
 Write-Host "Installer created: $installerPath"
-Write-Host "Portable EXE: $exePath"
+  Write-Host "Portable folder executable: $exePath"
 
 if ($bundle) {
   Write-Host "Release bundle: $ReleaseDir"

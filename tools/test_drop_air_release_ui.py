@@ -4,6 +4,7 @@ import re
 import socket
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -19,6 +20,7 @@ os.environ.setdefault("DROP_AIR_DATA_DIR", tempfile.mkdtemp(prefix="drop-air-tes
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import app  # noqa: E402
+import desktop_app  # noqa: E402
 
 
 class DropAirReleaseUiTests(unittest.TestCase):
@@ -39,6 +41,8 @@ class DropAirReleaseUiTests(unittest.TestCase):
         build_script = (root / "build_exe.ps1").read_text(encoding="utf-8")
         self.assertIn('IconPath = "assets\\icon\\drop_air_brand.ico"', build_script)
         self.assertIn("--icon $iconAbs", build_script)
+        self.assertIn("--onedir", build_script)
+        self.assertNotIn("--onefile", build_script)
         self.assertIn('Resolve-Path "desktop_app.py"', build_script)
         self.assertNotIn('Get-ChildItem -Path "dist" -File', build_script)
         self.assertIn('IconPath = "assets\\icon\\drop_air_brand.ico"', (root / "build_installer.ps1").read_text(encoding="utf-8"))
@@ -70,16 +74,64 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertLess(main_source.index("window.show()"), main_source.index("startup_thread.start()"))
         self.assertIn('name="DropAirBackendStartup"', main_source)
         self.assertIn("backend_ready.connect(window.set_backend)", main_source)
+        self.assertLess(main_source.index("backend.register_shutdown_cleanup()"), main_source.index("startup_thread.start()"))
+        start = desktop_source.index("def start_backend():")
+        end = desktop_source.index("\ndef schedule_startup_maintenance()", start)
+        self.assertNotIn("register_shutdown_cleanup", desktop_source[start:end])
+
+    def test_shutdown_signal_handlers_are_only_registered_on_main_thread(self):
+        worker = threading.Thread()
+        with (
+            patch.object(app.threading, "current_thread", return_value=worker),
+            patch.object(app.threading, "main_thread", return_value=threading.main_thread()),
+            patch.object(app, "install_windows_console_close_handler"),
+            patch.object(app.atexit, "register"),
+            patch.object(app.signal, "signal") as signal_handler,
+        ):
+            app.register_shutdown_cleanup()
+        signal_handler.assert_not_called()
 
     def test_desktop_shows_a_reduced_motion_safe_skeleton_before_loading_the_dashboard(self):
         root = Path(__file__).resolve().parents[1]
         desktop_source = (root / "desktop_app.py").read_text(encoding="utf-8")
         self.assertIn("STARTUP_SKELETON_HTML", desktop_source)
         self.assertIn("self.web.setHtml(STARTUP_SKELETON_HTML)", desktop_source)
-        self.assertIn("loadFinished.connect(self._skeleton_finished)", desktop_source)
+        self.assertIn("loadFinished.connect(self._page_load_finished)", desktop_source)
         self.assertIn("if self._skeleton_loaded and self._dashboard_url", desktop_source)
+        self.assertIn("mark_startup_healthy()", desktop_source)
         self.assertIn("@media (prefers-reduced-motion: reduce)", desktop_source)
         self.assertIn('aria-busy="true"', desktop_source)
+
+    def test_startup_failure_has_a_previous_version_fallback(self):
+        root = Path(__file__).resolve().parents[1]
+        installer = (root / "installer" / "DropAir.iss").read_text(encoding="utf-8")
+        self.assertIn('DestDir: "{localappdata}\\DropAir\\rollback"', installer)
+        self.assertIn("ShouldSaveRollbackBackup", installer)
+        self.assertIn("startup-failed.txt", installer)
+        self.assertIn("DROP_AIR_ROLLBACK_ACTIVE", (root / "desktop_app.py").read_text(encoding="utf-8"))
+        self.assertIn("should_rollback_after_interrupted_startup", (root / "desktop_app.py").read_text(encoding="utf-8"))
+
+    def test_startup_failure_launches_the_previous_version_once(self):
+        with tempfile.TemporaryDirectory(prefix="drop-air-rollback-test-") as temp:
+            data_dir = Path(temp)
+            rollback_exe, pending, failed = (
+                data_dir / "rollback" / "DropAir.exe",
+                data_dir / "rollback" / "startup-pending.txt",
+                data_dir / "rollback" / "startup-failed.txt",
+            )
+            rollback_exe.parent.mkdir(parents=True)
+            rollback_exe.write_bytes(b"previous release")
+            pending.write_text(desktop_app.backend.APP_VERSION, encoding="utf-8")
+            with patch.object(desktop_app.backend, "DATA_DIR", data_dir), patch.dict(
+                os.environ, {desktop_app.ROLLBACK_ACTIVE_ENV: ""}
+            ), patch("desktop_app.subprocess.Popen") as spawn:
+                self.assertTrue(desktop_app.launch_previous_version("simulated startup failure"))
+                self.assertEqual(failed.read_text(encoding="utf-8").splitlines()[0], desktop_app.backend.APP_VERSION)
+                self.assertFalse(pending.exists())
+                child_env = spawn.call_args.kwargs["env"]
+                self.assertEqual(child_env[desktop_app.ROLLBACK_ACTIVE_ENV], "1")
+                self.assertEqual(child_env[desktop_app.PYINSTALLER_RESET_ENV], "1")
+                self.assertTrue(desktop_app.should_rollback_after_interrupted_startup())
 
     def test_primary_and_danger_button_text_use_contrasting_theme_tokens(self):
         self.assertIn("--accent-ink:", self.template_source)

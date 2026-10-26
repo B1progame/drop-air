@@ -39,6 +39,7 @@ WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 UninstallDisplayIcon={app}\{#MyAppExeName}
+CloseApplications=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -50,7 +51,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "{app}\uploads"
 
 [Files]
-Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{app}\*"; DestDir: "{localappdata}\DropAir\rollback"; Flags: external ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist uninsneveruninstall; Check: ShouldSaveRollbackBackup
+Source: "..\dist\{#MyAppName}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\templates\*"; DestDir: "{app}\templates"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\settings.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
@@ -61,3 +63,9 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilen
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function ShouldSaveRollbackBackup: Boolean;
+begin
+  Result := not FileExists(ExpandConstant('{localappdata}\DropAir\rollback\startup-failed.txt'));
+end;

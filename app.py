@@ -1378,10 +1378,11 @@ def install_windows_console_close_handler() -> None:
 def register_shutdown_cleanup() -> None:
     atexit.register(shutdown_drop_air)
     install_windows_console_close_handler()
-    if hasattr(signal, "SIGINT"):
-        signal.signal(signal.SIGINT, _handle_shutdown_signal)
-    if hasattr(signal, "SIGTERM"):
-        signal.signal(signal.SIGTERM, _handle_shutdown_signal)
+    if threading.current_thread() is threading.main_thread():
+        if hasattr(signal, "SIGINT"):
+            signal.signal(signal.SIGINT, _handle_shutdown_signal)
+        if hasattr(signal, "SIGTERM"):
+            signal.signal(signal.SIGTERM, _handle_shutdown_signal)
 
 
 @app.after_request

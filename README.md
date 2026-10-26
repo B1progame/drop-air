@@ -76,15 +76,15 @@ $env:DROP_AIR_UPDATE_REPO="your-github-name/your-repo"
 python desktop_app.py
 ```
 
-Create GitHub releases with tags like `1.0.0`, `1.0.1`, etc. The admin panel compares the latest release tag with `VERSION`. Version 1.4 adds a native PySide desktop container and a balanced desktop workspace. Version 1.4.1 fixes Qt DLL lookup in packaged desktop builds. Version 1.4.2 fixes the desktop navigation callback that could leave the embedded page blank. Version 1.4.3 opens the desktop window at 1092×1255 without maximizing. Version 1.4.4 restores the Windows tray icon with Open and Quit actions. Version 1.5 adds a compact scannable QR code at the top of the desktop workspace, refreshes progress animation on the updater page, and updates the desktop app icon. Version 1.5.1 ensures the desktop app and Windows shortcuts use the updated icon instead of the legacy paper-plane icon. Version 1.6.0 selects the new icon in the packaged executable and shortcuts, shows a gray dashboard skeleton while the backend starts, sends file-name clicks straight to Downloads, saves desktop downloads in the Windows Downloads folder, hardens concurrent upload publication and port selection on Windows, and moves retention cleanup off the startup path.
+Create GitHub releases with tags like `1.0.0`, `1.0.1`, etc. The admin panel compares the latest release tag with `VERSION`. Version 1.4 adds a native PySide desktop container and a balanced desktop workspace. Version 1.4.1 fixes Qt DLL lookup in packaged desktop builds. Version 1.4.2 fixes the desktop navigation callback that could leave the embedded page blank. Version 1.4.3 opens the desktop window at 1092×1255 without maximizing. Version 1.4.4 restores the Windows tray icon with Open and Quit actions. Version 1.5 adds a compact scannable QR code at the top of the desktop workspace, refreshes progress animation on the updater page, and updates the desktop app icon. Version 1.5.1 ensures the desktop app and Windows shortcuts use the updated icon instead of the legacy paper-plane icon. Version 1.6.0 selects the new icon in the packaged executable and shortcuts, shows a gray dashboard skeleton while the backend starts, sends file-name clicks straight to Downloads, saves desktop downloads in the Windows Downloads folder, hardens concurrent upload publication and port selection on Windows, and moves retention cleanup off the startup path. Version 1.6.1 fixes startup signal registration, automatically falls back to the previous working app after a failed or interrupted startup, and switches to a one-folder package to avoid PyInstaller's slow per-launch extraction.
 For packaged builds, attach the setup installer release asset, for example `Drop-Air-Setup-1.1.0.exe`. The updater downloads that setup file, runs it silently, skips rebuilding Inno locally, and restarts Drop Air.
 
 Release flow:
 
 1. Update `VERSION` in the repo.
-2. Build the standalone EXE with `.\build_exe.ps1`.
+2. Build the desktop app and installer bundle with `.\build_installer.ps1`.
 3. Push the commit and create a matching Git tag such as `1.3.1`.
-4. Create a GitHub Release from that tag and attach `dist\DropAir.exe`.
+4. Create a GitHub Release from that tag and attach the versioned setup installer, portable ZIP, and `SHA256SUMS.txt` from `dist\release\<version>`.
 5. On the host machine, the admin panel will show a red `!` and a rainbow update button when a newer release exists.
 
 What the update button does:
