@@ -587,6 +587,18 @@
       font-weight: 600;
     }
 
+    .discovery-section { display: grid; gap: 12px; padding: 16px; border-bottom: 1px solid var(--line); }
+    .discovery-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .discovery-list { display: grid; gap: 8px; }
+    .discovery-empty { margin: 0; padding: 14px; border: 1px dashed var(--line); border-radius: 10px; color: var(--muted); font-size: .86rem; text-align: center; }
+    .discovery-peer { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-soft); }
+    .discovery-peer-copy { min-width: 0; }
+    .discovery-peer-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 800; }
+    .discovery-peer-meta { margin-top: 2px; color: var(--muted); font-size: .78rem; }
+    .discovery-peer .primary-btn { flex: 0 0 auto; min-height: 38px; padding: 7px 12px; }
+    .discovery-toggle { grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 10px; text-transform: none; }
+    .discovery-toggle input { width: 18px; min-height: 18px; margin: 0; padding: 0; accent-color: var(--accent); }
+
     .layout {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -2301,6 +2313,18 @@
             </div>
             <span class="counter">Host only</span>
           </div>
+        <div class="discovery-section" aria-labelledby="nearbyDevicesTitle">
+          <div class="discovery-heading">
+            <div>
+              <h3 class="panel-title" id="nearbyDevicesTitle">Nearby Drop Air</h3>
+              <p id="discoveryStatus" class="panel-subtitle">Enable “Let others see me” in Settings to appear here.</p>
+            </div>
+            <span id="discoveryCount" class="counter">Searching</span>
+          </div>
+          <div id="nearbyDevices" class="discovery-list" aria-live="polite">
+            <p class="discovery-empty">Drop Air devices on your local Wi-Fi appear here.</p>
+          </div>
+        </div>
           <div class="admin-card">
             <div class="qr-box">
               <div class="qr-stage" data-qr-stage>
@@ -2459,6 +2483,14 @@
       <form id="settingsForm" class="panel admin-card" style="--drawer-order: 1">
         <h3 class="panel-title">Runtime Settings</h3>
         <div class="settings-grid">
+          <label class="settings-field full">Device Name
+            <input id="setDeviceName" type="text" maxlength="32" autocomplete="nickname" placeholder="Drop Air device" />
+          </label>
+          <label class="settings-field full discovery-toggle">
+            <input id="setDiscoverable" type="checkbox" />
+            <span>Let others see me on local Wi-Fi</span>
+          </label>
+          <p class="admin-note settings-field full">Your name and a short device ID are announced only while visibility is on. Each connection asks before sharing a link. Bluetooth helps nearby devices find each other; file transfers use Wi-Fi.</p>
           <label class="settings-field full">Access Code
             <input id="setAccessCode" type="text" placeholder="Empty = no code" />
           </label>
@@ -2531,6 +2563,7 @@
     let accessCode = "{{ access_code }}";
     let sessionKey = {{ session_key|tojson }};
     const isAdmin = {{ is_admin|tojson }};
+    const localDeviceId = {{ device_id|tojson }};
     const initialSettings = {{ settings|tojson }};
     const initialStats = {{ stats|tojson }};
     const initialConnectionCount = {{ connected_count|default(0)|tojson }};
@@ -2605,6 +2638,11 @@
       form: document.getElementById("settingsForm"),
       save: document.getElementById("settingsSave"),
       accessCode: document.getElementById("setAccessCode"),
+      deviceName: document.getElementById("setDeviceName"),
+      discoverable: document.getElementById("setDiscoverable"),
+      nearbyDevices: document.getElementById("nearbyDevices"),
+      discoveryStatus: document.getElementById("discoveryStatus"),
+      discoveryCount: document.getElementById("discoveryCount"),
       cleanupMinutes: document.getElementById("setCleanupMinutes"),
       cleanupDays: document.getElementById("setCleanupDays"),
       cleanupMaxFiles: document.getElementById("setCleanupMaxFiles"),
@@ -3117,6 +3155,8 @@
     function fillSettingsForm(data) {
       if (!isAdmin || !adminEls.form) return;
       adminEls.accessCode.value = data.access_code || "";
+      adminEls.deviceName.value = data.device_name || "Drop Air device";
+      adminEls.discoverable.checked = Boolean(data.discoverable);
       adminEls.cleanupMinutes.value = String(data.auto_cleanup_minutes ?? 10);
       adminEls.cleanupDays.value = String(data.auto_cleanup_days ?? 0);
       adminEls.cleanupMaxFiles.value = String(data.auto_cleanup_max_files ?? 0);
@@ -3150,6 +3190,124 @@
         }, false);
       }
       showToast("Admin status refreshed");
+    }
+
+    const handledPairRequests = new Set();
+    let discoveryBusy = false;
+
+    async function decidePairRequest(requestId, decision) {
+      const response = await fetch(`/api/admin/discovery/requests/${encodeURIComponent(requestId)}${codeQuery()}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(accessCode ? { "X-Drop-Air-Code": accessCode } : {}) },
+        body: JSON.stringify({ decision })
+      });
+      if (!response.ok) throw new Error("This request expired or could not be updated.");
+    }
+
+    async function refreshDiscovery() {
+      if (!isAdmin || discoveryBusy || !adminEls.nearbyDevices) return;
+      discoveryBusy = true;
+      try {
+        const response = await fetch(`/api/admin/discovery${codeQuery()}`, {
+          headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {}
+        });
+        if (!response.ok) return;
+        const data = await response.json();
+        const peers = data.peers || [];
+        adminEls.discoveryCount.textContent = `${peers.length} nearby`;
+        adminEls.discoveryStatus.textContent = data.discoverable
+          ? (data.bluetooth_advertising
+            ? "Visible over local Wi-Fi and Bluetooth LE. Sharing still needs your approval."
+            : "Visible over local Wi-Fi. Bluetooth advertising is unavailable on this device.")
+          : "You can browse nearby devices. Enable visibility in Settings to appear to them.";
+        const fragment = document.createDocumentFragment();
+        if (!peers.length) {
+          const empty = document.createElement("p");
+          empty.className = "discovery-empty";
+          empty.textContent = data.status || "No Drop Air devices found on this Wi-Fi yet.";
+          fragment.appendChild(empty);
+        }
+        peers.forEach(peer => {
+          const row = document.createElement("div");
+          row.className = "discovery-peer";
+          const copy = document.createElement("div");
+          copy.className = "discovery-peer-copy";
+          const name = document.createElement("div");
+          name.className = "discovery-peer-name";
+          name.textContent = peer.device_name || "Drop Air device";
+          const meta = document.createElement("div");
+          meta.className = "discovery-peer-meta";
+          meta.textContent = `${peer.address} · ${(peer.transports || ["Wi-Fi"]).join(" + ")}`;
+          copy.append(name, meta);
+          const connect = document.createElement("button");
+          connect.type = "button";
+          connect.className = "primary-btn";
+          connect.textContent = "Connect";
+          connect.addEventListener("click", () => connectToPeer(peer, connect));
+          row.append(copy, connect);
+          fragment.appendChild(row);
+        });
+        adminEls.nearbyDevices.replaceChildren(fragment);
+
+        for (const incoming of data.requests || []) {
+          if (handledPairRequests.has(incoming.id)) continue;
+          handledPairRequests.add(incoming.id);
+          const accepted = confirm(`Allow ${incoming.device_name} (${incoming.address}) to connect and see files shared by this Drop Air? The transfer link is only sent after you approve.`);
+          try {
+            await decidePairRequest(incoming.id, accepted ? "accept" : "decline");
+            showToast(accepted ? `${incoming.device_name} connected` : "Connection declined");
+          } catch (error) {
+            showToast(error.message);
+          }
+        }
+      } catch (_) {
+        // Device discovery is a background convenience; keep transfers usable
+        // when multicast is blocked by the current Wi-Fi network.
+      } finally {
+        discoveryBusy = false;
+      }
+    }
+
+    async function connectToPeer(peer, button) {
+      const peerUrl = `http://${peer.address}:${Number(peer.port)}`;
+      const displayName = peer.device_name || "Drop Air device";
+      if (!confirm(`Connect to ${displayName} at ${peer.address}? Its owner will be asked before the transfer link is shared.`)) return;
+      button.disabled = true;
+      const previousLabel = button.textContent;
+      button.textContent = "Waiting…";
+      try {
+        const requestResponse = await fetch(`${peerUrl}/api/pair/requests`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ device_id: localDeviceId, device_name: adminEls.deviceName.value || "Drop Air device" })
+        });
+        const requestData = await requestResponse.json().catch(() => ({}));
+        if (!requestResponse.ok) throw new Error(requestData.error || "Could not request a connection.");
+        const requestId = requestData.request.id;
+        const deadline = Date.now() + 120000;
+        while (Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          const statusResponse = await fetch(`${peerUrl}/api/pair/requests/${encodeURIComponent(requestId)}`);
+          const statusData = await statusResponse.json().catch(() => ({}));
+          if (!statusResponse.ok || statusData.decision === "declined") {
+            throw new Error("The other device declined or the request expired.");
+          }
+          if (statusData.decision === "accepted") {
+            const approved = new URL(statusData.share_url);
+            if (approved.origin !== peerUrl || !approved.searchParams.has("k")) {
+              throw new Error("The approved transfer link could not be verified.");
+            }
+            window.location.assign(approved.href);
+            return;
+          }
+        }
+        throw new Error("No response yet. Try connecting again when both devices are ready.");
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        button.disabled = false;
+        button.textContent = previousLabel;
+      }
     }
 
     function parseIntField(el, fallback) {
@@ -3235,6 +3393,8 @@
       try {
         const nextSettings = {
           access_code: String(adminEls.accessCode.value || "").trim(),
+        device_name: String(adminEls.deviceName.value || "").trim(),
+        discoverable: adminEls.discoverable.checked,
           auto_cleanup_minutes: parseIntField(adminEls.cleanupMinutes, 10),
           auto_cleanup_days: parseIntField(adminEls.cleanupDays, 0),
           auto_cleanup_max_files: parseIntField(adminEls.cleanupMaxFiles, 0),
@@ -3255,6 +3415,7 @@
         const data = await r.json();
         fillSettingsForm(data.settings);
         Object.assign(initialSettings, data.settings);
+        refreshDiscovery();
         showToast("Admin settings saved");
         if ((data.settings.access_code || "") !== accessCode) {
           accessCode = data.settings.access_code || "";
@@ -4040,6 +4201,8 @@
       adminEls.closeBtn.addEventListener("click", closeAdmin);
       adminEls.backdrop.addEventListener("click", closeAdmin);
       adminEls.form.addEventListener("submit", saveSettings);
+      refreshDiscovery();
+      setInterval(() => refreshDiscovery(), 2500);
       adminEls.generateCode.addEventListener("click", generateAccessCode);
       adminEls.clearCode.addEventListener("click", () => {
         adminEls.accessCode.value = "";

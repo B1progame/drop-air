@@ -10,7 +10,6 @@ if (-not (Test-Path ".venv\Scripts\python.exe")) {
   throw "Virtual environment not found. Create it first: python -m venv .venv"
 }
 
-& .\.venv\Scripts\python.exe -m pip install --upgrade pip
 & .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 & .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
 
@@ -40,6 +39,7 @@ $specPath = "build\spec_$stamp"
   --onedir `
   --windowed `
   --hidden-import app `
+  --hidden-import winrt.windows.devices.bluetooth.advertisement `
   --hidden-import werkzeug.serving `
   --icon $iconAbs `
   --workpath $workPath `
@@ -74,6 +74,10 @@ Get-ChildItem -LiteralPath $coreDir -Force | ForEach-Object {
   Copy-Item -LiteralPath $_.FullName -Destination $exeDir -Recurse -Force
 }
 Copy-Item -LiteralPath $assetsAbs -Destination (Join-Path $exeDir "assets") -Recurse -Force
+$zeroconfLicense = Get-ChildItem ".venv\Lib\site-packages\zeroconf-*.dist-info\licenses\COPYING" -ErrorAction Stop | Select-Object -First 1
+$licenseDir = Join-Path $exeDir "licenses"
+New-Item -ItemType Directory -Path $licenseDir -Force | Out-Null
+Copy-Item -LiteralPath $zeroconfLicense.FullName -Destination (Join-Path $licenseDir "zeroconf-COPYING") -Force
 
 $exePath = Join-Path $exeDir "$AppName.exe"
 & $launcherCompiler.Source `

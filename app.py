@@ -26,6 +26,7 @@ import qrcode
 from flask import Flask, Response, jsonify, redirect, render_template, request, send_from_directory, url_for
 from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.utils import secure_filename
+from discovery import PairingRequests, PeerDiscovery, clean_device_name
 
 if getattr(sys, "frozen", False):
     APP_DIR = Path(sys.executable).resolve().parent
@@ -195,6 +196,8 @@ DEFAULT_SETTINGS = {
     "max_upload_gb": ENV_MAX_UPLOAD_GB,
     "launch_browser_on_start": os.getenv("DROP_AIR_OPEN_BROWSER", "1").strip().lower()
     not in {"0", "false", "no", "off"},
+    "device_name": "Drop Air device",
+    "discoverable": False,
 }
 SETTINGS_LOCK = Lock()
 SETTINGS = {}
@@ -840,6 +843,8 @@ def _normalize_settings(raw: dict) -> dict:
             raw.get("launch_browser_on_start", DEFAULT_SETTINGS["launch_browser_on_start"]),
             DEFAULT_SETTINGS["launch_browser_on_start"],
         ),
+        "device_name": clean_device_name(raw.get("device_name", DEFAULT_SETTINGS["device_name"])),
+        "discoverable": _coerce_bool(raw.get("discoverable", DEFAULT_SETTINGS["discoverable"]), False),
     }
 
 
@@ -877,6 +882,38 @@ def set_settings(new_values: dict) -> dict:
 
 
 SETTINGS = load_settings()
+
+
+def load_device_id() -> str:
+    device_id_file = DATA_DIR / "device-id"
+    try:
+        value = device_id_file.read_text(encoding="ascii").strip().lower()
+        if re.fullmatch(r"[0-9a-f]{32}", value):
+            return value
+    except OSError:
+        pass
+    value = secrets.token_hex(16)
+    try:
+        device_id_file.parent.mkdir(parents=True, exist_ok=True)
+        temporary = device_id_file.with_suffix(".tmp")
+        temporary.write_text(value, encoding="ascii")
+        temporary.replace(device_id_file)
+    except OSError:
+        pass
+    return value
+
+
+DEVICE_ID = load_device_id()
+PEER_DISCOVERY = PeerDiscovery(DEVICE_ID, get_settings)
+PAIRING_REQUESTS = PairingRequests()
+
+
+def start_peer_discovery(port: int) -> None:
+    PEER_DISCOVERY.start(port)
+
+
+def stop_peer_discovery() -> None:
+    PEER_DISCOVERY.stop()
 
 
 def upload_limit_bytes(settings: dict | None = None) -> int:
@@ -1034,8 +1071,9 @@ def register_connection(client_id: str = "") -> int:
 
 def is_admin_request() -> bool:
     remote = (request.remote_addr or "").strip()
-    host = (request.host.split(":", 1)[0] or "").lower()
-    return remote in {"127.0.0.1", "::1", "localhost"} or host in {"127.0.0.1", "localhost"}
+    # The HTTP Host header is caller-controlled. Only the actual loopback
+    # socket peer may use local host administration or approve pair requests.
+    return remote in {"127.0.0.1", "::1"}
 
 
 def require_admin():
@@ -1402,6 +1440,7 @@ def shutdown_drop_air() -> None:
     if _SHUTDOWN_DONE:
         return
     _SHUTDOWN_DONE = True
+    stop_peer_discovery()
     icon = TRAY_ICON
     TRAY_ICON = None
     if icon:
@@ -1487,6 +1526,7 @@ def index():
         upload_limit_label=upload_limit_label(settings),
         upload_limit_bytes=upload_limit_bytes(settings),
         is_admin=is_admin_request(),
+        device_id=DEVICE_ID,
         public_url=public_url,
         local_url=build_local_url(settings["access_code"]),
         qr_url=url_for("qr_png", url=public_url),
@@ -1562,6 +1602,33 @@ def api_session():
             "qr_svg_url": url_for("qr_code", url=public_url),
         }
     )
+
+
+@app.route("/api/pair/requests", methods=["POST", "OPTIONS"])
+def api_pair_request():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not get_settings().get("discoverable"):
+        return jsonify({"error": "this Drop Air device is not discoverable"}), 404
+    payload = request.get_json(silent=True)
+    item, error = PAIRING_REQUESTS.create(request.remote_addr or "", payload)
+    if error:
+        return jsonify({"error": error}), 400 if error.startswith("invalid") else 429
+    return jsonify({"request": item}), 202
+
+
+@app.route("/api/pair/requests/<request_id>", methods=["GET", "OPTIONS"])
+def api_pair_request_status(request_id: str):
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not re.fullmatch(r"[0-9a-f]{48}", request_id):
+        return jsonify({"error": "request expired or not found"}), 404
+    result = PAIRING_REQUESTS.status(request.remote_addr or "", request_id)
+    if result is None:
+        return jsonify({"error": "request expired or not found"}), 404
+    if result["decision"] == "accepted":
+        result["share_url"] = build_public_url(get_settings().get("access_code", ""))
+    return jsonify(result)
 
 
 @app.route("/api/connections", methods=["GET", "POST", "OPTIONS"])
@@ -1776,6 +1843,15 @@ def api_settings():
             DEFAULT_SETTINGS["launch_browser_on_start"],
         )
 
+    if "device_name" in payload:
+        raw_name = payload.get("device_name")
+        if not isinstance(raw_name, str) or not raw_name.strip() or len(raw_name.strip()) > 32:
+            return jsonify({"error": "device_name must contain 1 to 32 characters"}), 400
+        updates["device_name"] = clean_device_name(raw_name)
+
+    if "discoverable" in payload:
+        updates["discoverable"] = _coerce_bool(payload.get("discoverable"), current["discoverable"])
+
     merged = dict(current)
     merged.update(updates)
     saved = set_settings(_normalize_settings(merged))
@@ -1812,6 +1888,38 @@ def api_admin():
             "text_ttl_minutes": TEXT_TTL_MINUTES,
         }
     )
+
+
+@app.route("/api/admin/discovery", methods=["GET", "OPTIONS"])
+def api_admin_discovery():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_error = require_admin()
+    if admin_error:
+        return admin_error
+    if not check_code():
+        return jsonify({"error": "unauthorized"}), 401
+    return jsonify({**PEER_DISCOVERY.snapshot(), "requests": PAIRING_REQUESTS.pending()})
+
+
+@app.route("/api/admin/discovery/requests/<request_id>", methods=["POST", "OPTIONS"])
+def api_admin_pair_decision(request_id: str):
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_error = require_admin()
+    if admin_error:
+        return admin_error
+    if not check_code():
+        return jsonify({"error": "unauthorized"}), 401
+    payload = request.get_json(silent=True) or {}
+    decision = str(payload.get("decision", "")).lower()
+    if decision not in {"accept", "decline"}:
+        return jsonify({"error": "decision must be accept or decline"}), 400
+    settings = get_settings()
+    approved_url = build_public_url(settings["access_code"]) if decision == "accept" else ""
+    if not PAIRING_REQUESTS.decide(request_id, decision == "accept", approved_url):
+        return jsonify({"error": "This request expired or was already handled."}), 404
+    return jsonify({"ok": True, "decision": "accepted" if decision == "accept" else "declined"})
 
 
 @app.route("/api/admin/cleanup", methods=["POST", "OPTIONS"])

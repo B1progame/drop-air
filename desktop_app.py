@@ -48,7 +48,7 @@ if "--version" in sys.argv[1:]:
     raise SystemExit(0)
 
 from PySide6.QtCore import QObject, QStandardPaths, QTimer, QUrl, Qt, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPen
+from PySide6.QtGui import QAction, QColor, QFont, QIcon, QKeySequence, QPainter, QPen
 from PySide6.QtWidgets import QApplication, QMainWindow, QMenu, QMessageBox, QStackedWidget, QSystemTrayIcon, QWidget
 
 
@@ -75,11 +75,12 @@ def icon_for_app() -> QIcon:
 class StartupSkeleton(QWidget):
     """Paint the branded loading frame with Qt widgets, before Chromium is imported."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, icon: QIcon | None = None):
         super().__init__(parent)
         self.setAccessibleName("Loading Drop Air")
         self.setMinimumSize(560, 520)
         self.setAutoFillBackground(True)
+        self._brand_icon = icon.pixmap(42, 42) if icon and not icon.isNull() else None
         self._loading_phase = 0
         self._loading_timer = QTimer(self)
         self._loading_timer.setInterval(50)
@@ -118,17 +119,45 @@ class StartupSkeleton(QWidget):
             painter.drawRoundedRect(int(x), int(y), int(w), int(h), 8, 8)
 
         rounded(margin, 24, 42, 42, bone_light, 10)
-        rounded(margin + 56, 30, 190, 28, bone, 6)
+        if self._brand_icon is not None:
+            painter.drawPixmap(margin, 24, self._brand_icon)
+        painter.setPen(QColor("#edf2f4"))
+        title_font = QFont(painter.font())
+        title_font.setPointSize(17)
+        title_font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(title_font)
+        painter.drawText(margin + 56, 44, "Drop Air")
+        subtitle_font = QFont(painter.font())
+        subtitle_font.setPointSize(9)
+        subtitle_font.setWeight(QFont.Weight.Normal)
+        painter.setFont(subtitle_font)
+        painter.setPen(QColor("#9ba8ad"))
+        painter.drawText(margin + 56, 62, "Getting things ready...")
         rounded(max(margin, width - margin - 110), 34, 110, 24, bone, 12)
         # A single moving accent makes the whole skeleton feel active without
         # adding motion to every placeholder or delaying the first paint.
-        track_x, track_y, track_width = margin + 56, 64, min(190, max(80, width - margin * 2 - 220))
+        track_x, track_y, track_width = margin + 56, 72, min(190, max(80, width - margin * 2 - 220))
         rounded(track_x, track_y, track_width, 2, QColor("#293135"), 1)
         segment_width = max(28, track_width // 4)
         segment_x = track_x + int((track_width + segment_width) * self._loading_phase / 36) - segment_width
         rounded(segment_x, track_y, segment_width, 2, accent, 1)
-        panel_y = 92
-        upload_height = max(240, int(self.height() * .33))
+        # Mirror the dashboard: the connection strip spans both columns, then
+        # Send / Incoming sit side-by-side with Text Relay beneath Send.
+        connect_y = 96
+        connect_height = 100
+        panel_box(margin, connect_y, usable, connect_height)
+        qr_x, qr_y, qr_size = margin + 16, connect_y + 16, 68
+        rounded(qr_x, qr_y, qr_size, qr_size, QColor("#dce3e5"), 6)
+        for finder_x, finder_y in ((qr_x + 7, qr_y + 7), (qr_x + 43, qr_y + 7), (qr_x + 7, qr_y + 43)):
+            rounded(finder_x, finder_y, 18, 18, QColor("#30383c"), 2)
+            rounded(finder_x + 4, finder_y + 4, 10, 10, QColor("#dce3e5"), 1)
+        rounded(margin + 100, connect_y + 24, min(212, usable - 260), 18, bone, 5)
+        rounded(margin + 100, connect_y + 52, min(310, usable - 260), 12, bone, 4)
+        rounded(margin + 100, connect_y + 74, min(235, usable - 260), 10, bone, 4)
+        rounded(margin + usable - 136, connect_y + 32, 112, 36, QColor("#23464a"), 9)
+
+        panel_y = connect_y + connect_height + 14
+        upload_height = max(300, int(self.height() * .29))
         panel_box(margin, panel_y, left_width, upload_height)
         rounded(margin + 16, panel_y + 16, 112, 18, bone, 5)
         rounded(margin + 16, panel_y + 42, min(184, left_width - 32), 12, bone, 4)
@@ -152,17 +181,18 @@ class StartupSkeleton(QWidget):
         rounded(center_x - 60, drop_y + drop_h * .28 + 86, 120, 42, bone, 8)
 
         text_y = panel_y + upload_height + gap
-        panel_box(margin, text_y, left_width, 180)
+        panel_box(margin, text_y, left_width, 244)
         rounded(margin + 16, text_y + 18, 112, 18, bone, 5)
         rounded(margin + left_width - 74, text_y + 15, 58, 24, bone, 12)
         painter.setPen(QPen(edge, 1))
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRoundedRect(int(margin + 8), int(text_y + 56), int(left_width - 16), 108, 8, 8)
-        rounded(margin + 20, text_y + 72, min(210, left_width - 56), 10, bone, 4)
-        rounded(margin + 20, text_y + 92, min(156, left_width - 56), 10, bone, 4)
-        rounded(margin + 20, text_y + 132, 86, 22, QColor("#23464a"), 7)
+        painter.drawRoundedRect(int(margin + 8), int(text_y + 56), int(left_width - 16), 112, 8, 8)
+        rounded(margin + 20, text_y + 72, min(280, left_width - 56), 10, bone, 4)
+        rounded(margin + 20, text_y + 92, min(190, left_width - 56), 10, bone, 4)
+        rounded(margin + 20, text_y + 126, min(240, left_width - 56), 10, bone, 4)
+        rounded(margin + 20, text_y + 190, 104, 34, QColor("#23464a"), 8)
 
-        list_height = upload_height + 10
+        list_height = 278
         panel_box(right_x, panel_y, right_width, list_height)
         rounded(right_x + 16, panel_y + 16, 112, 18, bone, 5)
         rounded(right_x + 16, panel_y + 42, min(184, right_width - 32), 12, bone, 4)
@@ -212,7 +242,7 @@ class DropAirWindow(QMainWindow):
             self.tray_icon.show()
 
         self.web = None
-        self._startup_skeleton = StartupSkeleton(self)
+        self._startup_skeleton = StartupSkeleton(self, icon)
         self._startup_stack = QStackedWidget(self)
         self._startup_stack.addWidget(self._startup_skeleton)
         self.setCentralWidget(self._startup_stack)
@@ -369,6 +399,7 @@ def start_backend():
         daemon=True,
     )
     thread.start()
+    backend.start_peer_discovery(port)
 
     local_url = backend.build_local_url(settings["access_code"])
     separator = "&" if "?" in local_url else "?"

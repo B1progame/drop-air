@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import app  # noqa: E402
 import desktop_app  # noqa: E402
+from discovery import PairingRequests, PeerDiscovery  # noqa: E402
 
 
 class DropAirReleaseUiTests(unittest.TestCase):
@@ -44,6 +45,7 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("--onedir", build_script)
         self.assertNotIn("--onefile", build_script)
         self.assertIn("--hidden-import app", build_script)
+        self.assertIn("--hidden-import winrt.windows.devices.bluetooth.advertisement", build_script)
         self.assertIn("--hidden-import werkzeug.serving", build_script)
         self.assertIn('"${AppName}Core"', build_script)
         self.assertIn("$launcherCompiler.Source", build_script)
@@ -185,7 +187,7 @@ class DropAirReleaseUiTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         desktop_source = (root / "desktop_app.py").read_text(encoding="utf-8")
         self.assertIn("class StartupSkeleton(QWidget)", desktop_source)
-        self.assertIn("self._startup_skeleton = StartupSkeleton(self)", desktop_source)
+        self.assertIn("self._startup_skeleton = StartupSkeleton(self, icon)", desktop_source)
         self.assertIn("self._startup_stack = QStackedWidget(self)", desktop_source)
         self.assertIn("self._startup_stack.setCurrentWidget(self.web)", desktop_source)
         self.assertLess(desktop_source.index("self._startup_stack.addWidget(self._startup_skeleton)"), desktop_source.index("from PySide6.QtWebEngineCore"))
@@ -197,6 +199,10 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("loadFinished.connect(self._page_load_finished)", desktop_source)
         self.assertIn("mark_startup_healthy()", desktop_source)
         self.assertIn('self.setAccessibleName("Loading Drop Air")', desktop_source)
+        self.assertIn('painter.drawText(margin + 56, 44, "Drop Air")', desktop_source)
+        self.assertIn('painter.drawText(margin + 56, 62, "Getting things ready...")', desktop_source)
+        self.assertIn("connect_height = 100", desktop_source)
+        self.assertIn("Text Relay", self.template_source)
 
     def test_native_launcher_paints_before_spawning_the_full_desktop_app(self):
         root = Path(__file__).resolve().parents[1]
@@ -205,6 +211,9 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertLess(launcher.index("UpdateWindow(startup_window)"), launcher.index('launch_core(L"", FALSE)'))
         self.assertIn("draw_skeleton", launcher.lower())
         self.assertIn("loading_track", launcher)
+        self.assertIn('L"Getting things ready..."', launcher)
+        self.assertIn("DrawIconEx(dc, margin, 24, startup_icon, 42, 42", launcher)
+        self.assertIn("int connect_height = 100", launcher)
         self.assertIn("InvalidateRect(window, NULL, FALSE)", launcher)
         self.assertIn("has_core_window()", launcher)
         self.assertIn("if self._tray_available and not self._allow_close:", (root / "desktop_app.py").read_text(encoding="utf-8"))
@@ -681,6 +690,110 @@ class DropAirReleaseUiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["settings"]["max_upload_gb"], 1.5)
+
+    def test_device_name_and_discoverability_are_saved_and_validated(self):
+        previous = app.get_settings()
+        try:
+            response = self.client.post(
+                "/api/settings",
+                json={"device_name": "Benji's Desk", "discoverable": True},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "localhost:8000"},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.get_json()["settings"]["device_name"], "Benji's Desk")
+            self.assertTrue(response.get_json()["settings"]["discoverable"])
+            invalid = self.client.post(
+                "/api/settings",
+                json={"device_name": "x" * 33},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "localhost:8000"},
+            )
+            self.assertEqual(invalid.status_code, 400)
+        finally:
+            app.set_settings(previous)
+
+    def test_spoofed_localhost_host_header_cannot_access_admin(self):
+        response = self.client.get(
+            "/api/admin",
+            environ_overrides={"REMOTE_ADDR": "192.168.1.44", "HTTP_HOST": "localhost:8000"},
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_wifi_mdns_discovery_contains_no_transfer_credentials_and_updates_peer(self):
+        settings = {"device_name": "Office PC", "discoverable": True}
+        discovery = PeerDiscovery("a" * 32, lambda: dict(settings))
+
+        class AdvertisedDevice:
+            properties = {b"protocol": b"1", b"id": b"b" * 32, b"name": b"Living Room"}
+            addresses = [b"\xc0\xa8\x01\x15"]
+            port = 8000
+
+        announced_values = b" ".join(AdvertisedDevice.properties.values())
+        self.assertNotIn(b"session", announced_values.lower())
+        self.assertNotIn(b'"k"', announced_values.lower())
+        self.assertNotIn(b"access_code", announced_values.lower())
+        self.assertTrue(discovery._accept_service(AdvertisedDevice()))
+        peer = discovery.snapshot()["peers"][0]
+        self.assertEqual(peer["device_name"], "Living Room")
+        self.assertEqual(peer["transports"], ["Wi-Fi"])
+        discovery._mark_bluetooth_peer("b" * 8)
+        self.assertEqual(discovery.snapshot()["peers"][0]["transports"], ["Wi-Fi", "Bluetooth"])
+        self.assertFalse(discovery._accept_service(type("OtherProtocol", (AdvertisedDevice,), {
+            "properties": {**AdvertisedDevice.properties, b"protocol": b"other"}
+        })()))
+
+    def test_pair_request_only_reveals_link_after_host_approval(self):
+        now = [1000.0]
+        requests = PairingRequests(clock=lambda: now[0])
+        item, error = requests.create(
+            "192.168.1.21",
+            {"device_id": "b" * 32, "device_name": "Phone"},
+        )
+        self.assertIsNone(error)
+        self.assertEqual(requests.status("192.168.1.21", item["id"]), {"decision": "pending"})
+        self.assertIsNone(requests.status("192.168.1.22", item["id"]))
+        self.assertTrue(requests.decide(item["id"], True, "http://192.168.1.2:8000/?k=approved"))
+        self.assertEqual(requests.status("192.168.1.21", item["id"])["decision"], "accepted")
+        self.assertGreater(item["expires_at"], now[0])
+        now[0] = item["expires_at"] + 1
+        self.assertIsNone(requests.status("192.168.1.21", item["id"]))
+
+    def test_pairing_http_flow_requires_visibility_and_host_approval(self):
+        previous = app.get_settings()
+        try:
+            app.set_settings({**previous, "discoverable": True})
+            guest = {"REMOTE_ADDR": "192.168.1.21", "HTTP_HOST": "192.168.1.2:8000"}
+            requested = self.client.post(
+                "/api/pair/requests",
+                json={"device_id": "c" * 32, "device_name": "Guest Laptop"},
+                environ_overrides=guest,
+            )
+            self.assertEqual(requested.status_code, 202)
+            request_id = requested.get_json()["request"]["id"]
+            pending = self.client.get(
+                f"/api/pair/requests/{request_id}", environ_overrides=guest
+            )
+            self.assertEqual(pending.get_json(), {"decision": "pending"})
+            approved = self.client.post(
+                f"/api/admin/discovery/requests/{request_id}",
+                json={"decision": "accept"},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "localhost:8000"},
+            )
+            self.assertEqual(approved.status_code, 200)
+            connected = self.client.get(
+                f"/api/pair/requests/{request_id}", environ_overrides=guest
+            )
+            self.assertEqual(connected.get_json()["decision"], "accepted")
+            self.assertIn("k=", connected.get_json()["share_url"])
+        finally:
+            app.set_settings(previous)
+
+    def test_nearby_device_controls_require_both_sides_to_approve(self):
+        source = self.template_source
+        self.assertIn('id="setDeviceName"', source)
+        self.assertIn('id="setDiscoverable"', source)
+        self.assertIn('id="nearbyDevices"', source)
+        self.assertIn("confirm(`Connect to ${displayName}", source)
+        self.assertIn("Allow ${incoming.device_name}", source)
 
     def test_runtime_upload_limit_is_enforced_before_saving(self):
         previous = app.get_settings()

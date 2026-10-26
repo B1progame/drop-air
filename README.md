@@ -26,6 +26,8 @@ Fast local file sharing from a native desktop window to iPhone/iPad (and back) o
 - Python 3.10+
 - Same local network (laptop + iPhone/iPad)
 
+Drop Air 1.6.6 discovers other Drop Air hosts on local Wi-Fi using mDNS and uses Bluetooth LE as a nearby-device hint. Give each host a device name and enable **Let others see me on local Wi-Fi** in Settings. Discovery announces only the display name, random device ID, and web port over Wi-Fi; Bluetooth announces only a short device ID and Drop Air marker. Pairing still requires the initiating user to choose Connect and the host user to approve. File transfers use Wi-Fi.
+
 ## Run
 
 ```powershell
@@ -159,3 +161,7 @@ Available styles:
 - Files are stored in `uploads/`.
 - This is LAN-only by default.
 - If Windows Firewall asks, allow for Private networks.
+
+## Drop Air 1.6.6
+
+Set a device name and opt into **Let others see me on local Wi-Fi** in Settings to discover nearby Drop Air hosts. Wi-Fi discovery shares the name, random device ID, and web port; Bluetooth LE adds a short device ID hint for nearby devices. No session key or access code is announced. Connecting prompts the initiating user, and the receiving host must approve before a transfer link is returned. File transfers use Wi-Fi.
