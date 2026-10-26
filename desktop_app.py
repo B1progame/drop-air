@@ -49,7 +49,7 @@ if "--version" in sys.argv[1:]:
 
 from PySide6.QtCore import QObject, QStandardPaths, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPen
-from PySide6.QtWidgets import QApplication, QMainWindow, QMenu, QMessageBox, QSystemTrayIcon, QWidget
+from PySide6.QtWidgets import QApplication, QMainWindow, QMenu, QMessageBox, QStackedWidget, QSystemTrayIcon, QWidget
 
 
 APP_ID = "B1progame.DropAir.Desktop"
@@ -80,6 +80,15 @@ class StartupSkeleton(QWidget):
         self.setAccessibleName("Loading Drop Air")
         self.setMinimumSize(560, 520)
         self.setAutoFillBackground(True)
+        self._loading_phase = 0
+        self._loading_timer = QTimer(self)
+        self._loading_timer.setInterval(50)
+        self._loading_timer.timeout.connect(self._advance_loading)
+        self._loading_timer.start()
+
+    def _advance_loading(self) -> None:
+        self._loading_phase = (self._loading_phase + 1) % 36
+        self.update()
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
@@ -96,6 +105,7 @@ class StartupSkeleton(QWidget):
         bone_light = QColor("#3b4246")
         panel = QColor("#202428")
         edge = QColor("#373f43")
+        accent = QColor("#21bac8")
 
         def rounded(x, y, w, h, color, radius=6):
             painter.setPen(Qt.PenStyle.NoPen)
@@ -110,6 +120,13 @@ class StartupSkeleton(QWidget):
         rounded(margin, 24, 42, 42, bone_light, 10)
         rounded(margin + 56, 30, 190, 28, bone, 6)
         rounded(max(margin, width - margin - 110), 34, 110, 24, bone, 12)
+        # A single moving accent makes the whole skeleton feel active without
+        # adding motion to every placeholder or delaying the first paint.
+        track_x, track_y, track_width = margin + 56, 64, min(190, max(80, width - margin * 2 - 220))
+        rounded(track_x, track_y, track_width, 2, QColor("#293135"), 1)
+        segment_width = max(28, track_width // 4)
+        segment_x = track_x + int((track_width + segment_width) * self._loading_phase / 36) - segment_width
+        rounded(segment_x, track_y, segment_width, 2, accent, 1)
         panel_y = 92
         upload_height = max(240, int(self.height() * .33))
         panel_box(margin, panel_y, left_width, upload_height)
@@ -118,11 +135,19 @@ class StartupSkeleton(QWidget):
         rounded(margin + left_width - 74, panel_y + 22, 58, 24, bone, 12)
         drop_y = panel_y + 82
         drop_h = max(120, upload_height - 96)
-        painter.setPen(QPen(QColor("#485257"), 1, Qt.PenStyle.DashLine))
+        painter.setPen(QPen(QColor("#28565b"), 1, Qt.PenStyle.DashLine))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRoundedRect(int(margin + 8), int(drop_y), int(left_width - 16), int(drop_h), 8, 8)
         center_x = margin + left_width / 2
         rounded(center_x - 22, drop_y + drop_h * .28, 44, 44, bone_light, 10)
+        # Upload-arrow silhouette, matching the actual dropzone action.
+        painter.setPen(QPen(accent, 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        arrow_x, arrow_y = int(center_x), int(drop_y + drop_h * .28)
+        painter.drawLine(arrow_x, arrow_y + 30, arrow_x, arrow_y + 14)
+        painter.drawLine(arrow_x, arrow_y + 14, arrow_x - 6, arrow_y + 20)
+        painter.drawLine(arrow_x, arrow_y + 14, arrow_x + 6, arrow_y + 20)
+        painter.drawLine(arrow_x - 9, arrow_y + 29, arrow_x - 9, arrow_y + 34)
+        painter.drawLine(arrow_x - 9, arrow_y + 34, arrow_x + 9, arrow_y + 34)
         rounded(center_x - min(130, left_width * .33), drop_y + drop_h * .28 + 58, min(260, left_width * .66), 15, bone, 5)
         rounded(center_x - 60, drop_y + drop_h * .28 + 86, 120, 42, bone, 8)
 
@@ -133,6 +158,9 @@ class StartupSkeleton(QWidget):
         painter.setPen(QPen(edge, 1))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRoundedRect(int(margin + 8), int(text_y + 56), int(left_width - 16), 108, 8, 8)
+        rounded(margin + 20, text_y + 72, min(210, left_width - 56), 10, bone, 4)
+        rounded(margin + 20, text_y + 92, min(156, left_width - 56), 10, bone, 4)
+        rounded(margin + 20, text_y + 132, 86, 22, QColor("#23464a"), 7)
 
         list_height = upload_height + 10
         panel_box(right_x, panel_y, right_width, list_height)
@@ -184,7 +212,10 @@ class DropAirWindow(QMainWindow):
             self.tray_icon.show()
 
         self.web = None
-        self.setCentralWidget(StartupSkeleton(self))
+        self._startup_skeleton = StartupSkeleton(self)
+        self._startup_stack = QStackedWidget(self)
+        self._startup_stack.addWidget(self._startup_skeleton)
+        self.setCentralWidget(self._startup_stack)
 
         reload_action = QAction("Reload", self)
         reload_action.setShortcut(QKeySequence.Refresh)
@@ -198,6 +229,9 @@ class DropAirWindow(QMainWindow):
     def _page_load_finished(self, success: bool) -> None:
         if success:
             self._dashboard_healthy = True
+            if self.web is not None:
+                self._startup_stack.setCurrentWidget(self.web)
+                self._startup_skeleton._loading_timer.stop()
             mark_startup_healthy()
         elif launch_previous_version("The dashboard failed to load after startup."):
             self._allow_close = True
@@ -233,7 +267,7 @@ class DropAirWindow(QMainWindow):
             True,
         )
         self.web.loadFinished.connect(self._page_load_finished)
-        self.setCentralWidget(self.web)
+        self._startup_stack.addWidget(self.web)
         profile = QWebEngineProfile.defaultProfile()
         try:
             Path(self._download_directory()).mkdir(parents=True, exist_ok=True)

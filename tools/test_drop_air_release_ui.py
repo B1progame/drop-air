@@ -185,8 +185,12 @@ class DropAirReleaseUiTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         desktop_source = (root / "desktop_app.py").read_text(encoding="utf-8")
         self.assertIn("class StartupSkeleton(QWidget)", desktop_source)
-        self.assertIn("self.setCentralWidget(StartupSkeleton(self))", desktop_source)
-        self.assertLess(desktop_source.index("self.setCentralWidget(StartupSkeleton(self))"), desktop_source.index("from PySide6.QtWebEngineCore"))
+        self.assertIn("self._startup_skeleton = StartupSkeleton(self)", desktop_source)
+        self.assertIn("self._startup_stack = QStackedWidget(self)", desktop_source)
+        self.assertIn("self._startup_stack.setCurrentWidget(self.web)", desktop_source)
+        self.assertLess(desktop_source.index("self._startup_stack.addWidget(self._startup_skeleton)"), desktop_source.index("from PySide6.QtWebEngineCore"))
+        self.assertIn("self._loading_timer.setInterval(50)", desktop_source)
+        self.assertIn('QColor("#21bac8")', desktop_source)
         self.assertLess(desktop_source.index("window.show()"), desktop_source.index("QTimer.singleShot(80, start_backend_thread)"))
         self.assertNotIn("import app as backend", desktop_source)
         self.assertNotIn("from werkzeug.serving import make_server", desktop_source.split("def start_backend():", 1)[0])
@@ -200,6 +204,8 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn('CORE_EXE[] = L"DropAirCore.exe"', launcher)
         self.assertLess(launcher.index("UpdateWindow(startup_window)"), launcher.index('launch_core(L"", FALSE)'))
         self.assertIn("draw_skeleton", launcher.lower())
+        self.assertIn("loading_track", launcher)
+        self.assertIn("InvalidateRect(window, NULL, FALSE)", launcher)
         self.assertIn("has_core_window()", launcher)
         self.assertIn("if self._tray_available and not self._allow_close:", (root / "desktop_app.py").read_text(encoding="utf-8"))
 

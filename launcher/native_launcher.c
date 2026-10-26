@@ -34,6 +34,14 @@ static void rounded(HDC dc, int x, int y, int w, int h, COLORREF color, int radi
     DeleteObject(brush);
 }
 
+static void loading_track(HDC dc, int x, int y, int width) {
+    rounded(dc, x, y, width, 2, RGB(41, 49, 53), 1);
+    int segment = width / 4;
+    if (segment < 28) segment = 28;
+    int travel = (int)(GetTickCount64() % 1800) * (width + segment) / 1800 - segment;
+    rounded(dc, x + travel, y, segment, 2, RGB(33, 186, 200), 1);
+}
+
 static void panel(HDC dc, int x, int y, int w, int h) {
     HBRUSH brush = CreateSolidBrush(RGB(32, 36, 40));
     HPEN pen = CreatePen(PS_SOLID, 1, RGB(55, 63, 67));
@@ -177,6 +185,10 @@ static void draw_skeleton(HDC dc, RECT bounds) {
     rounded(dc, margin, 24, 42, 42, bone_light, 10);
     rounded(dc, margin + 56, 30, 190, 28, bone, 6);
     rounded(dc, width - margin - 110, 34, 110, 24, bone, 12);
+    int track_width = width - margin * 2 - 220;
+    if (track_width > 190) track_width = 190;
+    if (track_width < 80) track_width = 80;
+    loading_track(dc, margin + 56, 64, track_width);
 
     panel(dc, margin, panel_y, left_width, upload_height);
     rounded(dc, margin + 16, panel_y + 16, 112, 18, bone, 5);
@@ -185,7 +197,7 @@ static void draw_skeleton(HDC dc, RECT bounds) {
 
     int drop_y = panel_y + 82;
     int drop_h = upload_height - 96;
-    HPEN dash = CreatePen(PS_DASH, 1, edge);
+    HPEN dash = CreatePen(PS_DASH, 1, RGB(40, 86, 91));
     HGDIOBJ old_pen = SelectObject(dc, dash);
     HGDIOBJ old_brush = SelectObject(dc, GetStockObject(HOLLOW_BRUSH));
     RoundRect(dc, margin + 8, drop_y, margin + left_width - 8, drop_y + drop_h, 8, 8);
@@ -195,6 +207,16 @@ static void draw_skeleton(HDC dc, RECT bounds) {
 
     int center = margin + left_width / 2;
     rounded(dc, center - 22, drop_y + drop_h * 28 / 100, 44, 44, bone_light, 10);
+    HPEN icon_pen = CreatePen(PS_SOLID, 2, RGB(33, 186, 200));
+    old_pen = SelectObject(dc, icon_pen);
+    int icon_x = center, icon_y = drop_y + drop_h * 28 / 100;
+    MoveToEx(dc, icon_x, icon_y + 14, NULL); LineTo(dc, icon_x, icon_y + 30);
+    MoveToEx(dc, icon_x, icon_y + 14, NULL); LineTo(dc, icon_x - 6, icon_y + 20);
+    MoveToEx(dc, icon_x, icon_y + 14, NULL); LineTo(dc, icon_x + 6, icon_y + 20);
+    MoveToEx(dc, icon_x - 9, icon_y + 29, NULL); LineTo(dc, icon_x - 9, icon_y + 34);
+    LineTo(dc, icon_x + 9, icon_y + 34);
+    SelectObject(dc, old_pen);
+    DeleteObject(icon_pen);
     rounded(dc, center - 130, drop_y + drop_h * 28 / 100 + 58, 260, 15, bone, 5);
     rounded(dc, center - 60, drop_y + drop_h * 28 / 100 + 86, 120, 42, bone, 8);
 
@@ -209,6 +231,9 @@ static void draw_skeleton(HDC dc, RECT bounds) {
     SelectObject(dc, old_brush);
     SelectObject(dc, old_pen);
     DeleteObject(outline);
+    rounded(dc, margin + 20, text_y + 72, left_width - 56 < 210 ? left_width - 56 : 210, 10, bone, 4);
+    rounded(dc, margin + 20, text_y + 92, left_width - 56 < 156 ? left_width - 56 : 156, 10, bone, 4);
+    rounded(dc, margin + 20, text_y + 132, 86, 22, RGB(35, 70, 74), 7);
 
     int list_height = upload_height + 10;
     panel(dc, right_x, panel_y, right_width, list_height);
@@ -254,6 +279,7 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
         return 0;
     }
     case WM_TIMER:
+        InvalidateRect(window, NULL, FALSE);
         if (has_core_window() || (process_exit_time && has_dropair_window())) {
             KillTimer(window, 1);
             ShowWindow(window, SW_HIDE);
