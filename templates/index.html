@@ -2581,11 +2581,6 @@
     let filePollErrors = 0;
     let textPollErrors = 0;
     let uploadBatchActive = false;
-    const MAX_TRACKED_DOWNLOAD_BYTES = 16 * 1024 * 1024;
-    const MAX_READY_DOWNLOAD_BYTES = 24 * 1024 * 1024;
-    const MAX_ACTIVE_TRACKED_DOWNLOADS = 2;
-    const downloadTasks = new Map();
-    let readyDownloadBytes = 0;
     let transferMotionEnabled = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const transferTweens = new Set();
     const progressTweens = new WeakMap();
@@ -2971,23 +2966,41 @@
     async function copyText(value, trigger = null) {
       const text = String(value || "");
       if (!text) return;
-      try {
-        if (navigator.clipboard && window.isSecureContext) {
+      let copied = false;
+      if (navigator.clipboard && window.isSecureContext) {
+        try {
           await navigator.clipboard.writeText(text);
-        } else {
-          const temp = document.createElement("textarea");
-          temp.value = text;
-          temp.style.position = "fixed";
-          temp.style.opacity = "0";
-          document.body.appendChild(temp);
-          temp.select();
-          document.execCommand("copy");
-          temp.remove();
+          copied = true;
+        } catch (_) {}
+      }
+      if (!copied) {
+        const previousFocus = document.activeElement;
+        const temp = document.createElement("textarea");
+        temp.value = text;
+        temp.setAttribute("readonly", "");
+        temp.setAttribute("aria-hidden", "true");
+        temp.style.position = "fixed";
+        temp.style.left = "-10000px";
+        temp.style.top = "0";
+        temp.style.opacity = "0";
+        document.body.appendChild(temp);
+        temp.focus();
+        temp.select();
+        try {
+          copied = document.execCommand("copy");
+        } catch (_) {
+          copied = false;
         }
+        temp.remove();
+        if (previousFocus && typeof previousFocus.focus === "function") {
+          try { previousFocus.focus({ preventScroll: true }); } catch (_) { previousFocus.focus(); }
+        }
+      }
+      if (copied) {
         showToast("Copied to clipboard");
         markCopied(trigger);
-      } catch (_) {
-        showToast("Copy blocked by browser");
+      } else {
+        showToast("Could not copy. Select and copy the link manually.");
       }
     }
 
@@ -3443,27 +3456,26 @@
       return row;
     }
 
-    function canTrackDownload(incomingBytes = 0, exceptTask = null) {
-      const activeTasks = [...downloadTasks.values()].filter(task => task !== exceptTask && ["connecting", "receiving"].includes(task.state));
-      const activeBytes = activeTasks.reduce((sum, task) => sum + (Number(task.size) || 0), 0);
-      return typeof XMLHttpRequest !== "undefined" && activeTasks.length < MAX_ACTIVE_TRACKED_DOWNLOADS && readyDownloadBytes + activeBytes + incomingBytes <= MAX_READY_DOWNLOAD_BYTES;
-    }
-
     function showDownloadNotice(name, message) {
-      const key = `notice:${name}`;
-      let task = downloadTasks.get(key);
-      if (!task) {
-        task = { key, state: "handed-to-browser", name, bytes: 0, size: 0 };
-        downloadTasks.set(key, task);
-      }
-      renderDownloadTask(task, message);
+      const root = document.getElementById("downloadActivity");
+      const card = document.createElement("section");
+      card.className = "download-task is-ready";
+      const copy = document.createElement("div");
+      copy.className = "download-task-copy";
+      const label = document.createElement("div");
+      label.className = "download-task-name";
+      label.textContent = name;
+      const state = document.createElement("div");
+      state.className = "download-task-state";
+      state.setAttribute("aria-live", "polite");
+      state.textContent = message;
+      copy.append(label, state);
+      card.append(copy);
+      root.prepend(card);
+      setTimeout(() => card.remove(), 5000);
     }
 
     function requestDownload(file, href) {
-      if (Number(file.size) <= MAX_TRACKED_DOWNLOAD_BYTES && canTrackDownload(Number(file.size) || 0)) {
-        startTrackedDownload(file, href);
-        return;
-      }
       const link = document.createElement("a");
       link.href = href;
       link.download = file.name;
@@ -3471,195 +3483,7 @@
       document.body.appendChild(link);
       link.click();
       link.remove();
-      const reason = Number(file.size) > MAX_TRACKED_DOWNLOAD_BYTES || readyDownloadBytes + Number(file.size || 0) > MAX_READY_DOWNLOAD_BYTES
-        ? "Continue in your browser’s downloads"
-        : "Opened in your browser’s downloads";
-      showDownloadNotice(file.name, reason);
-    }
-
-    function renderDownloadTask(task, message) {
-      const root = document.getElementById("downloadActivity");
-      let card = root.querySelector(`[data-download-id="${CSS.escape(task.key)}"]`);
-      if (!card) {
-        card = document.createElement("section");
-        card.className = "download-task";
-        card.dataset.downloadId = task.key;
-        const copy = document.createElement("div");
-        copy.className = "download-task-copy";
-        const name = document.createElement("div");
-        name.className = "download-task-name";
-        name.textContent = task.name;
-        const state = document.createElement("div");
-        state.className = "download-task-state";
-        state.setAttribute("aria-live", "polite");
-        const actions = document.createElement("div");
-        actions.className = "download-task-actions";
-        const progress = document.createElement("div");
-        progress.className = "download-progress";
-        const fill = document.createElement("div");
-        fill.className = "download-progress-fill";
-        progress.appendChild(fill);
-        copy.append(name, state);
-        card.append(copy, actions, progress);
-        root.prepend(card);
-        task.card = card;
-        if (transferMotionEnabled && window.gsap) {
-          const tween = window.gsap.fromTo(card, { opacity: 0, y: 5 }, { opacity: 1, y: 0, duration: 0.18, ease: "power2.out", onComplete: () => transferTweens.delete(tween) });
-          transferTweens.add(tween);
-        }
-      }
-      const state = card.querySelector(".download-task-state");
-      const fill = card.querySelector(".download-progress-fill");
-      const actions = card.querySelector(".download-task-actions");
-      state.textContent = message || (task.lengthKnown ? `${human(task.bytes)} of ${human(task.size)} received` : `${human(task.bytes)} received`);
-      if (task.lengthKnown && task.size > 0) {
-        const progress = card.querySelector(".download-progress");
-        progress.setAttribute("role", "progressbar");
-        progress.setAttribute("aria-label", `Downloading ${task.name}`);
-        progress.setAttribute("aria-valuemin", "0");
-        progress.setAttribute("aria-valuemax", String(task.size));
-        progress.setAttribute("aria-valuenow", String(Math.min(task.bytes, task.size)));
-        const scale = Math.min(task.bytes / task.size, 1);
-        if (transferMotionEnabled && window.gsap) {
-          const previousTween = progressTweens.get(fill);
-          if (previousTween) { previousTween.kill(); transferTweens.delete(previousTween); }
-          const tween = window.gsap.to(fill, { scaleX: scale, duration: 0.12, ease: "power2.out", overwrite: "auto", onComplete: () => { transferTweens.delete(tween); progressTweens.delete(fill); } });
-          transferTweens.add(tween);
-          progressTweens.set(fill, tween);
-        } else fill.style.transform = `scaleX(${scale})`;
-      } else {
-        card.querySelector(".download-progress").removeAttribute("role");
-        card.querySelector(".download-progress").removeAttribute("aria-valuenow");
-        fill.style.removeProperty("transform");
-        card.classList.toggle("is-indeterminate", task.state === "connecting" || task.state === "receiving");
-      }
-      card.classList.toggle("is-ready", task.state === "ready-to-save" || task.state === "handed-to-browser");
-      card.classList.toggle("is-failed", task.state === "failed");
-      actions.replaceChildren();
-      const addAction = (label, handler, className = "secondary-btn") => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = className;
-        button.textContent = label;
-        button.addEventListener("click", handler);
-        actions.appendChild(button);
-      };
-      if (task.state === "connecting" || task.state === "receiving") addAction("Cancel", () => cancelDownload(task), "secondary-btn");
-      if (task.state === "ready-to-save") addAction("Save File", () => saveTrackedDownload(task), "primary-btn");
-      if (["failed", "cancelled"].includes(task.state)) addAction("Retry", () => startTrackedDownload(task.file, task.href, task), "primary-btn");
-      addAction("Dismiss", () => dismissDownload(task), "secondary-btn");
-    }
-
-    function startTrackedDownload(file, href, existingTask) {
-      if (!file || Number(file.size || 0) > MAX_TRACKED_DOWNLOAD_BYTES || !canTrackDownload(Number(file.size) || 0, existingTask)) {
-        if (file && href) requestDownload({ ...file, size: MAX_TRACKED_DOWNLOAD_BYTES + 1 }, href);
-        return;
-      }
-      const key = existingTask?.key || `download:${Date.now()}:${Math.random().toString(16).slice(2)}`;
-      if (existingTask?.blob) {
-        readyDownloadBytes = Math.max(0, readyDownloadBytes - existingTask.blob.size);
-        URL.revokeObjectURL(existingTask.url);
-      }
-      const task = existingTask || { key, name: file.name };
-      Object.assign(task, { file, href, key, name: file.name, state: "connecting", bytes: 0, size: Number(file.size) || 0, lengthKnown: false, startedAt: performance.now() });
-      const reservedBytes = readyDownloadBytes + [...downloadTasks.values()].filter(item => item !== task && ["connecting", "receiving"].includes(item.state)).reduce((sum, item) => sum + (Number(item.size) || 0), 0);
-      task.reservedBytes = Math.max(0, MAX_READY_DOWNLOAD_BYTES - reservedBytes);
-      downloadTasks.set(key, task);
-      renderDownloadTask(task, "Connecting…");
-      const xhr = new XMLHttpRequest();
-      task.xhr = xhr;
-      xhr.open("GET", href);
-      xhr.responseType = "blob";
-      if (accessCode) xhr.setRequestHeader("X-Drop-Air-Code", accessCode);
-      xhr.onprogress = event => {
-        if (event.loaded > task.reservedBytes || (event.lengthComputable && event.total > task.reservedBytes)) {
-          task.fallbackForBudget = true;
-          xhr.abort();
-          return;
-        }
-        task.state = "receiving";
-        const now = performance.now();
-        const deltaBytes = Math.max(0, (event.loaded || 0) - (task.lastLoaded || 0));
-        const deltaSeconds = Math.max((now - (task.lastProgressAt || task.startedAt)) / 1000, 0.001);
-        const sampleSpeed = deltaBytes / deltaSeconds;
-        if (sampleSpeed > 0) task.speed = task.speed ? task.speed * 0.7 + sampleSpeed * 0.3 : sampleSpeed;
-        task.lastLoaded = event.loaded || 0;
-        task.lastProgressAt = now;
-        task.bytes = Math.max(task.bytes, event.loaded || 0);
-        task.lengthKnown = Boolean(event.lengthComputable && event.total > 0);
-        if (task.lengthKnown) task.size = event.total;
-        const remaining = task.lengthKnown ? Math.max(0, task.size - task.bytes) : 0;
-        const estimate = task.lengthKnown && task.speed > 0 ? ` · ${human(task.speed)}/s · about ${formatEta(remaining / task.speed)}` : "";
-        renderDownloadTask(task, `${task.lengthKnown ? `${human(task.bytes)} of ${human(task.size)}` : `${human(task.bytes)}`} received${estimate}`);
-      };
-      xhr.onload = () => {
-        const type = (xhr.getResponseHeader("Content-Type") || "").toLowerCase();
-        if (xhr.status < 200 || xhr.status >= 300 || type.includes("text/html") || !xhr.response || !xhr.response.size) {
-          task.state = "failed";
-          task.error = xhr.status === 404 ? "This file is no longer available." : "Download failed. Check the link and try again.";
-          renderDownloadTask(task, task.error);
-          return;
-        }
-        if (readyDownloadBytes + xhr.response.size > MAX_READY_DOWNLOAD_BYTES) {
-          task.state = "failed";
-          task.error = "The ready-to-save memory limit was reached. Use the file link to continue in your browser.";
-          renderDownloadTask(task, task.error);
-          return;
-        }
-        task.blob = xhr.response;
-        task.url = URL.createObjectURL(task.blob);
-        readyDownloadBytes += task.blob.size;
-        task.bytes = task.blob.size;
-        task.size = task.blob.size;
-        task.lengthKnown = true;
-        task.state = "ready-to-save";
-        renderDownloadTask(task, `Ready to save · ${human(task.blob.size)}`);
-      };
-      xhr.onerror = () => { task.state = "failed"; task.error = "Connection interrupted. Try again."; renderDownloadTask(task, task.error); };
-      xhr.onabort = () => {
-        if (task.fallbackForBudget) {
-          task.state = "failed";
-          task.error = "This file exceeds the tracked-save memory budget. Use its file link to continue in your browser.";
-          renderDownloadTask(task, task.error);
-        } else {
-          task.state = "cancelled";
-          renderDownloadTask(task, "Download cancelled.");
-        }
-      };
-      xhr.send();
-    }
-
-    function cancelDownload(task) {
-      if (task.xhr && ["connecting", "receiving"].includes(task.state)) task.xhr.abort();
-    }
-
-    function saveTrackedDownload(task) {
-      if (!task.url || task.state !== "ready-to-save") return;
-      const anchor = document.createElement("a");
-      anchor.href = task.url;
-      anchor.download = task.name;
-      anchor.hidden = true;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      task.state = "handed-to-browser";
-      renderDownloadTask(task, "Opened in your browser’s downloads");
-      task.releaseTimer = setTimeout(() => releaseDownload(task), 60000);
-    }
-
-    function releaseDownload(task) {
-      if (task.url) URL.revokeObjectURL(task.url);
-      if (task.blob) readyDownloadBytes = Math.max(0, readyDownloadBytes - task.blob.size);
-      task.url = "";
-      task.blob = null;
-    }
-
-    function dismissDownload(task) {
-      clearTimeout(task.releaseTimer);
-      if (task.xhr && ["connecting", "receiving"].includes(task.state)) task.xhr.abort();
-      releaseDownload(task);
-      task.card?.remove();
-      downloadTasks.delete(task.key);
+      showDownloadNotice(file.name, "Downloading to your Downloads folder");
     }
 
     const mobileTaskQuery = window.matchMedia("(max-width: 700px)");

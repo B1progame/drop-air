@@ -43,6 +43,11 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("--icon $iconAbs", build_script)
         self.assertIn("--onedir", build_script)
         self.assertNotIn("--onefile", build_script)
+        self.assertIn("--hidden-import app", build_script)
+        self.assertIn("--hidden-import werkzeug.serving", build_script)
+        self.assertIn('"${AppName}Core"', build_script)
+        self.assertIn("$launcherCompiler.Source", build_script)
+        self.assertIn('launcher\\native_launcher.c', build_script)
         self.assertIn('Resolve-Path "desktop_app.py"', build_script)
         self.assertNotIn('Get-ChildItem -Path "dist" -File', build_script)
         self.assertIn('IconPath = "assets\\icon\\drop_air_brand.ico"', (root / "build_installer.ps1").read_text(encoding="utf-8"))
@@ -52,15 +57,77 @@ class DropAirReleaseUiTests(unittest.TestCase):
         desktop_source = (root / "desktop_app.py").read_text(encoding="utf-8")
         self.assertIn("StandardLocation.DownloadLocation", desktop_source)
         self.assertIn("download.setDownloadDirectory", desktop_source)
+        self.assertIn("profile.setDownloadPath", desktop_source)
+        self.assertIn("download.accept()", desktop_source)
+        self.assertIn("download.cancel()", desktop_source)
         self.assertNotIn("QFileDialog.getSaveFileName", desktop_source)
+
+    def test_desktop_download_is_accepted_to_downloads_and_slot_errors_do_not_escape(self):
+        class Download:
+            def __init__(self):
+                self.calls = []
+
+            def downloadFileName(self):
+                return "folder\\report.txt"
+
+            def setDownloadDirectory(self, path):
+                self.calls.append(("directory", path))
+
+            def setDownloadFileName(self, name):
+                self.calls.append(("name", name))
+
+            def accept(self):
+                self.calls.append(("accept",))
+
+            def cancel(self):
+                self.calls.append(("cancel",))
+
+        with tempfile.TemporaryDirectory() as folder:
+            download = Download()
+            window = type("Window", (), {"_download_directory": lambda _self: folder})()
+            desktop_app.DropAirWindow._save_download(window, download)
+            self.assertEqual([call[0] for call in download.calls], ["directory", "name", "accept"])
+            self.assertEqual(download.calls[1][1], "report.txt")
+
+            class BrokenDownload(Download):
+                def accept(self):
+                    raise RuntimeError("simulated browser error")
+
+            broken = BrokenDownload()
+            desktop_app.DropAirWindow._save_download(window, broken)
+            self.assertEqual(broken.calls[-1], ("cancel",))
+
+    def test_reload_action_is_safe_before_web_view_exists(self):
+        called = []
+        desktop_app.DropAirWindow._reload_page(type("Window", (), {"web": None})())
+        fake_web = type("Web", (), {"reload": lambda self: called.append(True)})()
+        desktop_app.DropAirWindow._reload_page(type("Window", (), {"web": fake_web})())
+        self.assertEqual(called, [True])
 
     def test_clicking_a_file_name_uses_the_browser_download_directly(self):
         source = self.template_source
         start = source.index("    function fileRow(")
-        end = source.index("    function canTrackDownload(", start)
+        end = source.index("    const mobileTaskQuery", start)
         row_builder = source[start:end]
         self.assertNotIn("anchor.addEventListener(\"click\"", row_builder)
         self.assertNotIn("event.preventDefault()", row_builder)
+        self.assertIn('link.download = file.name', row_builder)
+        self.assertIn('link.click()', row_builder)
+        self.assertIn('Downloading to your Downloads folder', row_builder)
+        self.assertNotIn("XMLHttpRequest", row_builder)
+        self.assertNotIn("Save File", row_builder)
+
+    def test_copy_file_link_uses_secure_and_fallback_clipboard_paths(self):
+        source = self.template_source
+        start = source.index("    async function copyText(")
+        end = source.index("\n    function commitTheme", start)
+        copy_function = source[start:end]
+        self.assertIn("navigator.clipboard.writeText(text)", copy_function)
+        self.assertIn('document.execCommand("copy")', copy_function)
+        self.assertIn('showToast("Copied to clipboard")', copy_function)
+        self.assertIn('showToast("Could not copy. Select and copy the link manually.")', copy_function)
+        self.assertIn('copyText(new URL(copyButton.dataset.url, window.location.href).toString(), copyButton)', source)
+        self.assertIn("copy.dataset.url = absolute", source)
 
     def test_startup_defers_upload_cleanup_until_after_the_window_is_shown(self):
         root = Path(__file__).resolve().parents[1]
@@ -74,10 +141,11 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertLess(main_source.index("window.show()"), main_source.index("startup_thread.start()"))
         self.assertIn('name="DropAirBackendStartup"', main_source)
         self.assertIn("backend_ready.connect(window.set_backend)", main_source)
-        self.assertLess(main_source.index("backend.register_shutdown_cleanup()"), main_source.index("startup_thread.start()"))
         start = desktop_source.index("def start_backend():")
         end = desktop_source.index("\ndef schedule_startup_maintenance()", start)
-        self.assertNotIn("register_shutdown_cleanup", desktop_source[start:end])
+        self.assertIn('importlib.import_module("app")', desktop_source[start:end])
+        self.assertIn("backend.register_shutdown_cleanup()", desktop_source[start:end])
+        self.assertLess(desktop_source.index('if "--version" in sys.argv[1:]:', 0), desktop_source.index("from PySide6.QtCore"))
 
     def test_shutdown_signal_handlers_are_only_registered_on_main_thread(self):
         worker = threading.Thread()
@@ -91,16 +159,27 @@ class DropAirReleaseUiTests(unittest.TestCase):
             app.register_shutdown_cleanup()
         signal_handler.assert_not_called()
 
-    def test_desktop_shows_a_reduced_motion_safe_skeleton_before_loading_the_dashboard(self):
+    def test_desktop_paints_a_native_skeleton_before_importing_webengine(self):
         root = Path(__file__).resolve().parents[1]
         desktop_source = (root / "desktop_app.py").read_text(encoding="utf-8")
-        self.assertIn("STARTUP_SKELETON_HTML", desktop_source)
-        self.assertIn("self.web.setHtml(STARTUP_SKELETON_HTML)", desktop_source)
+        self.assertIn("class StartupSkeleton(QWidget)", desktop_source)
+        self.assertIn("self.setCentralWidget(StartupSkeleton(self))", desktop_source)
+        self.assertLess(desktop_source.index("self.setCentralWidget(StartupSkeleton(self))"), desktop_source.index("from PySide6.QtWebEngineCore"))
+        self.assertLess(desktop_source.index("window.show()"), desktop_source.index("QTimer.singleShot(80, start_backend_thread)"))
+        self.assertNotIn("import app as backend", desktop_source)
+        self.assertNotIn("from werkzeug.serving import make_server", desktop_source.split("def start_backend():", 1)[0])
         self.assertIn("loadFinished.connect(self._page_load_finished)", desktop_source)
-        self.assertIn("if self._skeleton_loaded and self._dashboard_url", desktop_source)
         self.assertIn("mark_startup_healthy()", desktop_source)
-        self.assertIn("@media (prefers-reduced-motion: reduce)", desktop_source)
-        self.assertIn('aria-busy="true"', desktop_source)
+        self.assertIn('self.setAccessibleName("Loading Drop Air")', desktop_source)
+
+    def test_native_launcher_paints_before_spawning_the_full_desktop_app(self):
+        root = Path(__file__).resolve().parents[1]
+        launcher = (root / "launcher" / "native_launcher.c").read_text(encoding="utf-8")
+        self.assertIn('CORE_EXE[] = L"DropAirCore.exe"', launcher)
+        self.assertLess(launcher.index("UpdateWindow(startup_window)"), launcher.index('launch_core(L"", FALSE)'))
+        self.assertIn("draw_skeleton", launcher.lower())
+        self.assertIn("has_core_window()", launcher)
+        self.assertIn("if self._tray_available and not self._allow_close:", (root / "desktop_app.py").read_text(encoding="utf-8"))
 
     def test_startup_failure_has_a_previous_version_fallback(self):
         root = Path(__file__).resolve().parents[1]
@@ -121,12 +200,12 @@ class DropAirReleaseUiTests(unittest.TestCase):
             )
             rollback_exe.parent.mkdir(parents=True)
             rollback_exe.write_bytes(b"previous release")
-            pending.write_text(desktop_app.backend.APP_VERSION, encoding="utf-8")
-            with patch.object(desktop_app.backend, "DATA_DIR", data_dir), patch.dict(
+            pending.write_text(desktop_app.APP_VERSION, encoding="utf-8")
+            with patch.object(desktop_app, "backend", app), patch.object(app, "DATA_DIR", data_dir), patch.dict(
                 os.environ, {desktop_app.ROLLBACK_ACTIVE_ENV: ""}
             ), patch("desktop_app.subprocess.Popen") as spawn:
                 self.assertTrue(desktop_app.launch_previous_version("simulated startup failure"))
-                self.assertEqual(failed.read_text(encoding="utf-8").splitlines()[0], desktop_app.backend.APP_VERSION)
+                self.assertEqual(failed.read_text(encoding="utf-8").splitlines()[0], desktop_app.APP_VERSION)
                 self.assertFalse(pending.exists())
                 child_env = spawn.call_args.kwargs["env"]
                 self.assertEqual(child_env[desktop_app.ROLLBACK_ACTIVE_ENV], "1")
@@ -345,15 +424,16 @@ class DropAirReleaseUiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 404)
 
-    def test_template_includes_mobile_tasks_and_tracked_download_states(self):
+    def test_template_includes_mobile_tasks_and_automatic_downloads(self):
         source = self.template_source
         for marker in (
             "mobileTaskTabs", "aria-controls=\"sendFilesPanel\"", "aria-controls=\"receivePanel\"",
-            "MAX_TRACKED_DOWNLOAD_BYTES", "ready-to-save", "handed-to-browser", "Download cancelled.",
-            "xhr.responseType = \"blob\"", "text/html", "function saveTrackedDownload", "function dismissDownload",
-            "matchMedia();", "prefers-reduced-motion: reduce"
+            "function requestDownload", 'link.download = file.name', 'link.click()',
+            'Downloading to your Downloads folder', "matchMedia();", "prefers-reduced-motion: reduce"
         ):
             self.assertIn(marker, source)
+        for removed in ("MAX_TRACKED_DOWNLOAD_BYTES", "ready-to-save", "function saveTrackedDownload", "xhr.responseType = \"blob\""):
+            self.assertNotIn(removed, source)
 
     def test_local_gsap_bundle_is_served(self):
         response = self.client.get("/static/vendor/gsap/gsap.min.js")
@@ -566,6 +646,24 @@ class DropAirReleaseUiTests(unittest.TestCase):
         source = Path(app.__file__).read_text(encoding="utf-8")
         self.assertIn('env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"', source)
         self.assertIn("$env:PYINSTALLER_RESET_ENVIRONMENT = '1'", source)
+
+    def test_packaged_update_restart_uses_the_native_startup_launcher(self):
+        with tempfile.TemporaryDirectory(prefix="drop-air-restart-test-") as temp:
+            app_dir = Path(temp)
+            launcher = app_dir / "DropAir.exe"
+            launcher.write_bytes(b"launcher")
+            with (
+                patch.object(app, "APP_DIR", app_dir),
+                patch.object(app.sys, "frozen", True, create=True),
+                patch.object(app.sys, "executable", str(app_dir / "DropAirCore.exe")),
+                patch.object(app.sys, "argv", [str(app_dir / "DropAirCore.exe"), "--resume"]),
+                patch.object(app.subprocess, "Popen") as spawn,
+                patch.object(app.os, "_exit") as exit_process,
+            ):
+                app.restart_current_app()
+            self.assertEqual(spawn.call_args.args[0], [str(launcher), "--resume"])
+            self.assertEqual(spawn.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"], "1")
+            exit_process.assert_called_once_with(0)
 
     def test_admin_update_post_starts_install(self):
         expected = {"ok": True, "message": "Update started.", "status_url": "/update"}

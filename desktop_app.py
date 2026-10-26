@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import importlib
 import os
 import subprocess
 import sys
@@ -19,81 +20,41 @@ if getattr(sys, "frozen", False) and hasattr(os, "add_dll_directory"):
         if directory.is_dir():
             _DLL_SEARCH_HANDLES.append(os.add_dll_directory(str(directory)))
 
-from PySide6.QtCore import QObject, QStandardPaths, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QIcon, QKeySequence
-from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
-from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QApplication, QMainWindow, QMenu, QMessageBox, QSystemTrayIcon
-from werkzeug.serving import make_server
+APP_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
 
-import app as backend
+
+def read_app_version() -> str:
+    override = os.environ.get("DROP_AIR_VERSION", "").strip()
+    if override:
+        return override.lstrip("v")
+    for candidate in (BUNDLE_DIR / "VERSION", APP_DIR / "VERSION", Path(__file__).resolve().parent / "VERSION"):
+        try:
+            version = candidate.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if version:
+            return version.lstrip("v")
+    return "1.0.0"
+
+
+APP_VERSION = read_app_version()
+backend = None
+
+# Keep the version check ahead of every Qt/backend import. PyInstaller's
+# bootstrap still starts, but diagnostics no longer load Chromium, Flask, or PIL.
+if "--version" in sys.argv[1:]:
+    print(f"Drop Air {APP_VERSION}")
+    raise SystemExit(0)
+
+from PySide6.QtCore import QObject, QStandardPaths, QTimer, QUrl, Qt, Signal
+from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPen
+from PySide6.QtWidgets import QApplication, QMainWindow, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
 
 APP_ID = "B1progame.DropAir.Desktop"
 ROLLBACK_ACTIVE_ENV = "DROP_AIR_ROLLBACK_ACTIVE"
 PYINSTALLER_RESET_ENV = "PYINSTALLER_RESET_ENVIRONMENT"
-
-STARTUP_SKELETON_HTML = """<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Loading Drop Air</title>
-  <style>
-    * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; background: #171a1d; color: #edf2f4; font: 14px/1.45 "Segoe UI", sans-serif; }
-    .shell { width: min(1180px, 100%); margin: auto; padding: 30px 24px; }
-    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-    .top { display: flex; align-items: center; gap: 12px; margin-bottom: 30px; }
-    .mark { width: 48px; height: 48px; border-radius: 12px; }
-    .title { width: 190px; height: 28px; border-radius: 6px; }
-    .status { width: 110px; height: 24px; border-radius: 999px; margin-left: auto; }
-    .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-    .column { display: grid; gap: 16px; }
-    .panel { overflow: hidden; border: 1px solid #373f43; border-radius: 8px; background: #202428; }
-    .panel-head { display: flex; justify-content: space-between; align-items: center; min-height: 66px; padding: 14px 16px; border-bottom: 1px solid #373f43; }
-    .heading { width: 112px; height: 18px; border-radius: 5px; }
-    .detail { width: 184px; height: 12px; margin-top: 8px; border-radius: 4px; }
-    .count { width: 58px; height: 24px; border-radius: 999px; }
-    .drop { min-height: 250px; margin: 14px; border: 1px dashed #485257; border-radius: 8px; display: grid; align-content: center; justify-items: center; gap: 14px; }
-    .drop-mark { width: 44px; height: 44px; border-radius: 10px; }
-    .drop-copy { width: min(66%, 260px); height: 15px; border-radius: 5px; }
-    .drop-action { width: 120px; height: 42px; border-radius: 8px; }
-    .text-area { height: 124px; margin: 14px; border: 1px solid #373f43; border-radius: 8px; }
-    .row { display: grid; grid-template-columns: 38px minmax(0, 1fr) 64px; align-items: center; gap: 10px; min-height: 66px; padding: 10px 14px; border-bottom: 1px solid #30373b; }
-    .file-mark { width: 36px; height: 36px; border-radius: 8px; }
-    .filename { width: min(78%, 230px); height: 15px; border-radius: 5px; }
-    .metadata { width: 86px; height: 10px; margin-top: 7px; border-radius: 4px; }
-    .action { width: 64px; height: 38px; border-radius: 8px; }
-    .block { background: linear-gradient(105deg, #2b3034 30%, #3a4145 46%, #2b3034 62%); background-size: 240% 100%; animation: load-sheen 1.45s ease-in-out infinite; }
-    @keyframes load-sheen { to { background-position: -140% 0; } }
-    @media (max-width: 760px) { .shell { padding: 20px 16px; } .layout { grid-template-columns: minmax(0, 1fr); } .panel-head { min-height: 58px; } }
-    @media (prefers-color-scheme: light) {
-      body { background: #f5f7fb; color: #172033; }
-      .panel { background: #fff; border-color: #dce5ee; }
-      .panel-head, .row { border-color: #dce5ee; }
-      .text-area { border-color: #dce5ee; }
-      .drop { border-color: #c6d2da; }
-      .block { background: linear-gradient(105deg, #e2e8ec 30%, #f1f4f6 46%, #e2e8ec 62%); background-size: 240% 100%; }
-    }
-    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
-  </style>
-</head>
-<body>
-  <main class="shell" aria-busy="true" aria-label="Loading Drop Air">
-    <span class="sr-only" role="status">Loading Drop Air</span>
-    <header class="top"><div class="block mark"></div><div class="block title"></div><div class="block status"></div></header>
-    <div class="layout">
-      <div class="column">
-        <section class="panel"><header class="panel-head"><div><div class="block heading"></div><div class="block detail"></div></div><div class="block count"></div></header><div class="drop"><div class="block drop-mark"></div><div class="block drop-copy"></div><div class="block drop-action"></div></div></section>
-        <section class="panel"><header class="panel-head"><div class="block heading"></div><div class="block count"></div></header><div class="text-area"></div></section>
-      </div>
-      <section class="panel"><header class="panel-head"><div><div class="block heading"></div><div class="block detail"></div></div><div class="block count"></div></header><div class="row"><div class="block file-mark"></div><div><div class="block filename"></div><div class="block metadata"></div></div><div class="block action"></div></div><div class="row"><div class="block file-mark"></div><div><div class="block filename"></div><div class="block metadata"></div></div><div class="block action"></div></div><div class="row"><div class="block file-mark"></div><div><div class="block filename"></div><div class="block metadata"></div></div><div class="block action"></div></div></section>
-    </div>
-  </main>
-</body>
-</html>"""
-
 
 def set_windows_app_id() -> None:
     if sys.platform == "win32":
@@ -104,19 +65,90 @@ def set_windows_app_id() -> None:
 
 
 def icon_for_app() -> QIcon:
-    path = backend.app_icon_path()
-    return QIcon(str(path)) if path else QIcon()
+    for root in (BUNDLE_DIR, APP_DIR):
+        path = root / "assets" / "icon" / "drop_air_brand.ico"
+        if path.is_file():
+            return QIcon(str(path))
+    return QIcon()
 
 
-class DropAirPage(QWebEnginePage):
-    """Keep Drop Air routes in the app and open unrelated links in a browser."""
+class StartupSkeleton(QWidget):
+    """Paint the branded loading frame with Qt widgets, before Chromium is imported."""
 
-    def acceptNavigationRequest(self, url: QUrl, _navigation_type, is_main_frame: bool) -> bool:
-        host = (url.host() or "").lower()
-        if url.scheme() in {"http", "https"} and host not in {"127.0.0.1", "localhost", "::1"}:
-            webbrowser.open(url.toString())
-            return False
-        return super().acceptNavigationRequest(url, _navigation_type, is_main_frame)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAccessibleName("Loading Drop Air")
+        self.setMinimumSize(560, 520)
+        self.setAutoFillBackground(True)
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), QColor("#171a1d"))
+        width = self.width()
+        margin = 24 if width > 760 else 16
+        gap = 16
+        usable = max(1, width - margin * 2)
+        left_width = max(240, (usable - gap) // 2)
+        right_x = margin + left_width + gap
+        right_width = max(160, usable - left_width - gap)
+        bone = QColor("#30363a")
+        bone_light = QColor("#3b4246")
+        panel = QColor("#202428")
+        edge = QColor("#373f43")
+
+        def rounded(x, y, w, h, color, radius=6):
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawRoundedRect(int(x), int(y), int(w), int(h), radius, radius)
+
+        def panel_box(x, y, w, h):
+            painter.setPen(QPen(edge, 1))
+            painter.setBrush(panel)
+            painter.drawRoundedRect(int(x), int(y), int(w), int(h), 8, 8)
+
+        rounded(margin, 24, 42, 42, bone_light, 10)
+        rounded(margin + 56, 30, 190, 28, bone, 6)
+        rounded(max(margin, width - margin - 110), 34, 110, 24, bone, 12)
+        panel_y = 92
+        upload_height = max(240, int(self.height() * .33))
+        panel_box(margin, panel_y, left_width, upload_height)
+        rounded(margin + 16, panel_y + 16, 112, 18, bone, 5)
+        rounded(margin + 16, panel_y + 42, min(184, left_width - 32), 12, bone, 4)
+        rounded(margin + left_width - 74, panel_y + 22, 58, 24, bone, 12)
+        drop_y = panel_y + 82
+        drop_h = max(120, upload_height - 96)
+        painter.setPen(QPen(QColor("#485257"), 1, Qt.PenStyle.DashLine))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(int(margin + 8), int(drop_y), int(left_width - 16), int(drop_h), 8, 8)
+        center_x = margin + left_width / 2
+        rounded(center_x - 22, drop_y + drop_h * .28, 44, 44, bone_light, 10)
+        rounded(center_x - min(130, left_width * .33), drop_y + drop_h * .28 + 58, min(260, left_width * .66), 15, bone, 5)
+        rounded(center_x - 60, drop_y + drop_h * .28 + 86, 120, 42, bone, 8)
+
+        text_y = panel_y + upload_height + gap
+        panel_box(margin, text_y, left_width, 180)
+        rounded(margin + 16, text_y + 18, 112, 18, bone, 5)
+        rounded(margin + left_width - 74, text_y + 15, 58, 24, bone, 12)
+        painter.setPen(QPen(edge, 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(int(margin + 8), int(text_y + 56), int(left_width - 16), 108, 8, 8)
+
+        list_height = upload_height + 10
+        panel_box(right_x, panel_y, right_width, list_height)
+        rounded(right_x + 16, panel_y + 16, 112, 18, bone, 5)
+        rounded(right_x + 16, panel_y + 42, min(184, right_width - 32), 12, bone, 4)
+        for index in range(3):
+            row_y = panel_y + 68 + index * 66
+            if row_y + 64 > panel_y + list_height:
+                break
+            if index:
+                painter.setPen(QPen(edge, 1))
+                painter.drawLine(int(right_x + 1), int(row_y), int(right_x + right_width - 1), int(row_y))
+            rounded(right_x + 14, row_y + 12, 36, 36, bone_light, 8)
+            rounded(right_x + 62, row_y + 14, min(230, right_width - 120), 15, bone, 5)
+            rounded(right_x + 62, row_y + 36, min(86, right_width - 120), 10, bone, 4)
+        painter.end()
 
 
 class StartupSignals(QObject):
@@ -131,16 +163,14 @@ class DropAirWindow(QMainWindow):
         self._server_thread = None
         self._shutting_down = False
         self._allow_close = False
-        self._skeleton_loaded = False
         self._dashboard_url = ""
-        self._dashboard_loading = False
         self._dashboard_healthy = False
-        self.setWindowTitle(f"Drop Air {backend.APP_VERSION}")
+        self.setWindowTitle(f"Drop Air {APP_VERSION}")
         self.setWindowIcon(icon)
         self.resize(1092, 1255)
 
         self.tray_icon = QSystemTrayIcon(icon, self)
-        self.tray_icon.setToolTip(f"Drop Air {backend.APP_VERSION}")
+        self.tray_icon.setToolTip(f"Drop Air {APP_VERSION}")
         tray_menu = QMenu(self)
         open_action = tray_menu.addAction("Open Drop Air")
         open_action.triggered.connect(self._show_from_tray)
@@ -153,26 +183,19 @@ class DropAirWindow(QMainWindow):
         if self._tray_available:
             self.tray_icon.show()
 
-        self.web = QWebEngineView(self)
-        self.web.setPage(DropAirPage(self.web))
-        self.setCentralWidget(self.web)
-        self.web.loadFinished.connect(self._page_load_finished)
-        self.web.setHtml(STARTUP_SKELETON_HTML)
+        self.web = None
+        self.setCentralWidget(StartupSkeleton(self))
 
         reload_action = QAction("Reload", self)
         reload_action.setShortcut(QKeySequence.Refresh)
-        reload_action.triggered.connect(self.web.reload)
+        reload_action.triggered.connect(self._reload_page)
         self.addAction(reload_action)
 
-        profile = QWebEngineProfile.defaultProfile()
-        profile.downloadRequested.connect(self._save_download)
+    def _reload_page(self) -> None:
+        if self.web is not None:
+            self.web.reload()
 
     def _page_load_finished(self, success: bool) -> None:
-        if not self._dashboard_loading:
-            self._skeleton_loaded = True
-            self._maybe_show_dashboard()
-            return
-
         if success:
             self._dashboard_healthy = True
             mark_startup_healthy()
@@ -187,12 +210,32 @@ class DropAirWindow(QMainWindow):
         self._server_thread = server_thread
         self._dashboard_url = url
         schedule_startup_maintenance()
-        self._maybe_show_dashboard()
 
-    def _maybe_show_dashboard(self) -> None:
-        if self._skeleton_loaded and self._dashboard_url and not self._dashboard_loading:
-            self._dashboard_loading = True
-            QTimer.singleShot(80, lambda: self.web.setUrl(QUrl(self._dashboard_url)))
+        # This slot runs only after the first skeleton paint and backend startup.
+        # Importing WebEngine here keeps Chromium's initialization off the first frame.
+        from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
+        from PySide6.QtWebEngineWidgets import QWebEngineView
+
+        class DropAirPage(QWebEnginePage):
+            def acceptNavigationRequest(self, target_url: QUrl, navigation_type, is_main_frame: bool) -> bool:
+                host = (target_url.host() or "").lower()
+                if target_url.scheme() in {"http", "https"} and host not in {"127.0.0.1", "localhost", "::1"}:
+                    webbrowser.open(target_url.toString())
+                    return False
+                return super().acceptNavigationRequest(target_url, navigation_type, is_main_frame)
+
+        self.web = QWebEngineView(self)
+        self.web.setPage(DropAirPage(self.web))
+        self.web.loadFinished.connect(self._page_load_finished)
+        self.setCentralWidget(self.web)
+        profile = QWebEngineProfile.defaultProfile()
+        try:
+            Path(self._download_directory()).mkdir(parents=True, exist_ok=True)
+            profile.setDownloadPath(self._download_directory())
+        except (OSError, AttributeError):
+            pass
+        profile.downloadRequested.connect(self._save_download)
+        self.web.setUrl(QUrl(self._dashboard_url))
 
     def show_startup_error(self, message: str) -> None:
         if launch_previous_version(message):
@@ -220,15 +263,27 @@ class DropAirWindow(QMainWindow):
         self._allow_close = True
         self.close()
 
-    def _save_download(self, download) -> None:
-        suggested_name = download.downloadFileName() or "download"
+    @staticmethod
+    def _download_directory() -> str:
         download_directory = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
         if not download_directory:
             download_directory = str(Path.home() / "Downloads")
-        Path(download_directory).mkdir(parents=True, exist_ok=True)
-        download.setDownloadDirectory(download_directory)
-        download.setDownloadFileName(suggested_name)
-        download.accept()
+        return download_directory
+
+    def _save_download(self, download) -> None:
+        try:
+            download_directory = self._download_directory()
+            Path(download_directory).mkdir(parents=True, exist_ok=True)
+            suggested_name = (download.downloadFileName() or "download").replace("\\", "/").rsplit("/", 1)[-1] or "download"
+            download.setDownloadDirectory(download_directory)
+            download.setDownloadFileName(suggested_name)
+            download.accept()
+        except Exception:
+            # Exceptions escaping a Qt signal slot can terminate the desktop app.
+            try:
+                download.cancel()
+            except Exception:
+                pass
 
     def closeEvent(self, event) -> None:
         if self._tray_available and not self._allow_close:
@@ -244,7 +299,8 @@ class DropAirWindow(QMainWindow):
             if self._server is not None:
                 self._server.shutdown()
                 self._server.server_close()
-                backend.shutdown_drop_air()
+                if backend is not None:
+                    backend.shutdown_drop_air()
                 if self._server_thread is not None:
                     self._server_thread.join(timeout=2)
         event.accept()
@@ -252,8 +308,13 @@ class DropAirWindow(QMainWindow):
 
 
 def start_backend():
+    global backend
+    backend = importlib.import_module("app")
+    from werkzeug.serving import make_server
+
     backend.initialize_log_file()
     backend.redirect_stdio_to_log_if_windowless()
+    backend.register_shutdown_cleanup()
     host = "0.0.0.0"
     port = backend.select_server_port(backend.DEFAULT_PORT)
     backend.ACTIVE_PORT = port
@@ -278,6 +339,8 @@ def start_backend():
 
 
 def schedule_startup_maintenance() -> None:
+    if backend is None:
+        return
     threading.Thread(
         target=lambda: backend.cleanup_uploads(force=True),
         name="DropAirStartupCleanup",
@@ -286,7 +349,16 @@ def schedule_startup_maintenance() -> None:
 
 
 def rollback_paths() -> tuple[Path, Path, Path]:
-    rollback_dir = backend.DATA_DIR / "rollback"
+    data_dir_override = os.environ.get("DROP_AIR_DATA_DIR", "").strip()
+    if backend is not None:
+        data_dir = Path(backend.DATA_DIR)
+    elif data_dir_override:
+        data_dir = Path(data_dir_override).expanduser()
+    elif os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+        data_dir = Path(os.environ["LOCALAPPDATA"]) / "DropAir"
+    else:
+        data_dir = Path.home() / "AppData" / "Local" / "DropAir" if os.name == "nt" else Path.home() / ".local" / "share" / "drop-air"
+    rollback_dir = data_dir / "rollback"
     return (
         rollback_dir / "DropAir.exe",
         rollback_dir / "startup-pending.txt",
@@ -333,7 +405,7 @@ def mark_startup_pending() -> None:
         return
     try:
         pending_path.parent.mkdir(parents=True, exist_ok=True)
-        pending_path.write_text(backend.APP_VERSION, encoding="utf-8")
+        pending_path.write_text(APP_VERSION, encoding="utf-8")
     except OSError:
         pass
 
@@ -344,7 +416,7 @@ def mark_startup_healthy() -> None:
     _rollback_executable, pending_path, failed_path = rollback_paths()
     pending_path.unlink(missing_ok=True)
     failed_version = _read_marker(failed_path)
-    if failed_version and _version_parts(backend.APP_VERSION) > _version_parts(failed_version):
+    if failed_version and _version_parts(APP_VERSION) > _version_parts(failed_version):
         failed_path.unlink(missing_ok=True)
 
 
@@ -357,7 +429,7 @@ def launch_previous_version(reason: str) -> bool:
 
     try:
         failed_path.parent.mkdir(parents=True, exist_ok=True)
-        failed_path.write_text(f"{backend.APP_VERSION}\n{reason[:500]}", encoding="utf-8")
+        failed_path.write_text(f"{APP_VERSION}\n{reason[:500]}", encoding="utf-8")
         pending_path.unlink(missing_ok=True)
         environment = os.environ.copy()
         environment[ROLLBACK_ACTIVE_ENV] = "1"
@@ -382,14 +454,10 @@ def should_rollback_after_interrupted_startup() -> bool:
         return False
     failed_version = _read_marker(failed_path)
     pending_version = _read_marker(pending_path)
-    return backend.APP_VERSION in {failed_version, pending_version}
+    return APP_VERSION in {failed_version, pending_version}
 
 
 def main() -> int:
-    if "--version" in sys.argv[1:]:
-        print(f"Drop Air {backend.APP_VERSION}")
-        return 0
-
     if should_rollback_after_interrupted_startup():
         if launch_previous_version("The previous startup did not finish."):
             return 0
@@ -400,7 +468,6 @@ def main() -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("Drop Air")
     app.setOrganizationName("Drop Air")
-    backend.register_shutdown_cleanup()
     icon = icon_for_app()
     app.setWindowIcon(icon)
 
@@ -411,6 +478,7 @@ def main() -> int:
     startup_signals.backend_ready.connect(window.set_backend)
     startup_signals.backend_failed.connect(window.show_startup_error)
     window.show()
+    startup_threads = []
 
     def initialize_backend() -> None:
         try:
@@ -420,14 +488,21 @@ def main() -> int:
         except Exception as exc:
             startup_signals.backend_failed.emit(str(exc))
 
-    startup_thread = threading.Thread(
-        target=initialize_backend,
-        name="DropAirBackendStartup",
-        daemon=True,
-    )
-    startup_thread.start()
+    def start_backend_thread() -> None:
+        startup_thread = threading.Thread(
+            target=initialize_backend,
+            name="DropAirBackendStartup",
+            daemon=True,
+        )
+        startup_thread.start()
+        startup_threads.append(startup_thread)
+
+    # Let Qt paint the native skeleton once before importing Flask/Pillow and
+    # spinning up the local server in the background.
+    QTimer.singleShot(80, start_backend_thread)
     exit_code = app.exec()
-    startup_thread.join()
+    for startup_thread in startup_threads:
+        startup_thread.join()
 
     # If the user quit while the skeleton was still showing, clean up a backend
     # that finished after the Qt event loop had stopped dispatching signals.
@@ -435,7 +510,8 @@ def main() -> int:
         server, server_thread, _url = startup_results[0]
         server.shutdown()
         server.server_close()
-        backend.shutdown_drop_air()
+        if backend is not None:
+            backend.shutdown_drop_air()
         server_thread.join(timeout=2)
     return exit_code
 

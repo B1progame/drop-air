@@ -549,7 +549,9 @@ def powershell_literal(value: Path | str) -> str:
 
 
 def restart_current_app() -> None:
-    args = [sys.executable] + sys.argv
+    launcher = APP_DIR / "DropAir.exe"
+    executable = launcher if getattr(sys, "frozen", False) and launcher.is_file() else Path(sys.executable)
+    args = [str(executable)] + sys.argv[1:]
     env = os.environ.copy()
     env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     subprocess.Popen(args, cwd=str(APP_DIR), close_fds=True, env=env)
@@ -598,7 +600,7 @@ def install_update_from_release(info: dict) -> None:
                         "}",
                         "Start-Sleep -Milliseconds 700",
                         f"$setup = {powershell_literal(setup_exe)}",
-                        f"$app = {powershell_literal(Path(sys.executable))}",
+                        f"$app = {powershell_literal(APP_DIR / 'DropAir.exe' if getattr(sys, 'frozen', False) else Path(sys.executable))}",
                         "Write-Host ''",
                         "Write-Host 'Installing Drop Air update...'",
                         "$proc = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS' -PassThru",

@@ -26,6 +26,8 @@ $assetsAbs = (Resolve-Path "assets").Path
 $staticAbs = (Resolve-Path "static").Path
 $versionAbs = (Resolve-Path "VERSION").Path
 $appAbs = (Resolve-Path "desktop_app.py").Path
+$launcherAbs = (Resolve-Path "launcher\native_launcher.c").Path
+$coreName = "${AppName}Core"
 
 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $workPath = "build\work_$stamp"
@@ -34,9 +36,11 @@ $specPath = "build\spec_$stamp"
 & .\.venv\Scripts\python.exe -m PyInstaller `
   --noconfirm `
   --clean `
-  --name $AppName `
+  --name $coreName `
   --onedir `
   --windowed `
+  --hidden-import app `
+  --hidden-import werkzeug.serving `
   --icon $iconAbs `
   --workpath $workPath `
   --specpath $specPath `
@@ -50,9 +54,43 @@ if ($LASTEXITCODE -ne 0) {
   throw "PyInstaller failed with exit code $LASTEXITCODE"
 }
 
-$exePath = "dist\$AppName\$AppName.exe"
-if (-not (Test-Path $exePath)) {
-  throw "Build finished without output exe at $exePath"
+$coreDir = "dist\$coreName"
+$coreExePath = Join-Path $coreDir "$coreName.exe"
+if (-not (Test-Path $coreExePath)) {
+  throw "Build finished without output exe at $coreExePath"
+}
+
+$launcherCompiler = Get-Command gcc -ErrorAction SilentlyContinue
+if (-not $launcherCompiler) {
+  throw "A MinGW-w64 gcc compiler is required to build the native startup launcher. Install GCC and retry."
+}
+
+$exeDir = "dist\$AppName"
+if (Test-Path $exeDir) {
+  Remove-Item -LiteralPath $exeDir -Recurse -Force
+}
+New-Item -ItemType Directory -Path $exeDir | Out-Null
+Get-ChildItem -LiteralPath $coreDir -Force | ForEach-Object {
+  Copy-Item -LiteralPath $_.FullName -Destination $exeDir -Recurse -Force
+}
+Copy-Item -LiteralPath $assetsAbs -Destination (Join-Path $exeDir "assets") -Recurse -Force
+
+$exePath = Join-Path $exeDir "$AppName.exe"
+& $launcherCompiler.Source `
+  -municode `
+  -mwindows `
+  -O2 `
+  -s `
+  -static `
+  -static-libgcc `
+  "-Wl,--subsystem,windows" `
+  "-o" $exePath `
+  $launcherAbs `
+  -luser32 `
+  -lgdi32
+
+if ($LASTEXITCODE -ne 0) {
+  throw "Native startup launcher compilation failed with exit code $LASTEXITCODE"
 }
 
 Write-Host ""
