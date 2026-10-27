@@ -18,7 +18,7 @@ import webbrowser
 import zipfile
 from pathlib import Path
 from threading import Lock, Timer
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -861,11 +861,21 @@ def load_settings() -> dict:
 
 
 def save_settings(settings: dict) -> None:
+    temporary = SETTINGS_FILE.with_name(f".{SETTINGS_FILE.name}.{secrets.token_hex(6)}.tmp")
     try:
         SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        SETTINGS_FILE.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+        with temporary.open("w", encoding="utf-8", newline="\n") as stream:
+            json.dump(settings, stream, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(SETTINGS_FILE)
     except OSError as exc:
-        print(f"Could not save settings: {exc}")
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise OSError(f"Could not save settings to {SETTINGS_FILE}: {exc}") from exc
 
 
 def get_settings() -> dict:
@@ -875,10 +885,12 @@ def get_settings() -> dict:
 
 def set_settings(new_values: dict) -> dict:
     with SETTINGS_LOCK:
-        SETTINGS.update(new_values)
-        current = dict(SETTINGS)
-    save_settings(current)
-    return current
+        updated = dict(SETTINGS)
+        updated.update(new_values)
+        save_settings(updated)
+        SETTINGS.clear()
+        SETTINGS.update(updated)
+        return dict(SETTINGS)
 
 
 SETTINGS = load_settings()
@@ -1854,11 +1866,116 @@ def api_settings():
 
     merged = dict(current)
     merged.update(updates)
-    saved = set_settings(_normalize_settings(merged))
+    try:
+        saved = set_settings(_normalize_settings(merged))
+    except OSError:
+        app.logger.exception("Settings could not be persisted.")
+        return jsonify({"error": "Settings could not be saved to disk. Check that the Drop Air data folder is writable, then try again."}), 500
     app.config["MAX_CONTENT_LENGTH"] = upload_limit_bytes(saved)
     cleanup_uploads(force=True)
     app.logger.info("Updated runtime settings.")
     return jsonify({"ok": True, "settings": saved})
+
+
+@app.route("/api/discovery", methods=["GET", "OPTIONS"])
+def api_discovery():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not check_session_key():
+        return jsonify({"error": "This Drop Air link expired. Refresh the page and try again."}), 401
+    if not check_code():
+        return jsonify({"error": "unauthorized"}), 401
+    snapshot = PEER_DISCOVERY.snapshot()
+    if is_admin_request():
+        snapshot["requests"] = PAIRING_REQUESTS.pending()
+    return jsonify(snapshot)
+
+
+def relay_discovered_peer(device_id: str, api_path: str, method: str, payload: dict | None = None):
+    if not re.fullmatch(r"[0-9a-f]{16,32}", device_id):
+        return jsonify({"error": "Invalid nearby device."}), 400
+    peer = PEER_DISCOVERY.get_peer(device_id)
+    if not peer:
+        return jsonify({"error": "That device is no longer nearby. Refresh the list and try again."}), 404
+    body = json.dumps(payload).encode("utf-8") if payload is not None else None
+    peer_request = Request(
+        f"http://{peer['address']}:{peer['port']}{api_path}",
+        data=body,
+        headers={"Content-Type": "application/json"} if body is not None else {},
+        method=method,
+    )
+    try:
+        with urlopen(peer_request, timeout=4) as response:
+            result = json.loads(response.read().decode("utf-8"))
+            return jsonify(result), response.status
+    except HTTPError as exc:
+        try:
+            result = json.loads(exc.read().decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            result = {"error": f"The nearby device returned HTTP {exc.code}."}
+        return jsonify(result), exc.code
+    except (OSError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+        app.logger.info("Could not relay pairing request to %s: %s", peer["device_name"], exc)
+        return jsonify({"error": "Could not reach that device. Check Wi-Fi and Windows Firewall, then refresh."}), 502
+
+
+@app.route("/api/discovery/<device_id>/pair", methods=["POST", "OPTIONS"])
+def api_discovery_pair(device_id: str):
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not check_session_key():
+        return jsonify({"error": "This Drop Air link expired. Refresh the page and try again."}), 401
+    if not check_code():
+        return jsonify({"error": "unauthorized"}), 401
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Invalid connection request."}), 400
+    return relay_discovered_peer(device_id, "/api/pair/requests", "POST", payload)
+
+
+@app.route("/api/discovery/<device_id>/pair/<request_id>", methods=["GET", "OPTIONS"])
+def api_discovery_pair_status(device_id: str, request_id: str):
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not check_session_key():
+        return jsonify({"error": "This Drop Air link expired. Refresh the page and try again."}), 401
+    if not check_code():
+        return jsonify({"error": "unauthorized"}), 401
+    if not re.fullmatch(r"[0-9a-f]{48}", request_id):
+        return jsonify({"error": "Invalid connection request."}), 400
+    return relay_discovered_peer(device_id, f"/api/pair/requests/{request_id}", "GET")
+
+
+@app.route("/api/admin/discovery/retry", methods=["POST", "OPTIONS"])
+def api_admin_retry_discovery():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_error = require_admin()
+    if admin_error:
+        return admin_error
+    if not check_code():
+        return jsonify({"error": "unauthorized"}), 401
+    PEER_DISCOVERY.restart(ACTIVE_PORT)
+    return jsonify({"ok": True, "message": "Local Wi-Fi discovery is restarting."})
+
+
+@app.route("/api/admin/network/firewall", methods=["POST", "OPTIONS"])
+def api_admin_open_firewall():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_error = require_admin()
+    if admin_error:
+        return admin_error
+    if not check_code():
+        return jsonify({"error": "unauthorized"}), 401
+    if os.name != "nt":
+        return jsonify({"error": "Windows Firewall settings are only available on Windows."}), 501
+    try:
+        subprocess.Popen(["control.exe", "firewall.cpl"], close_fds=True)
+    except OSError:
+        app.logger.exception("Could not open Windows Firewall settings.")
+        return jsonify({"error": "Windows Firewall settings could not be opened."}), 500
+    return jsonify({"ok": True})
 
 
 @app.route("/api/admin", methods=["GET", "OPTIONS"])
@@ -2085,6 +2202,7 @@ if __name__ == "__main__":
         )
     register_shutdown_cleanup()
     cleanup_uploads(force=True)
+    start_peer_discovery(port)
     print_qr(url)
     if settings["launch_browser_on_start"]:
         Timer(1.0, lambda: open_admin_browser(local_url)).start()

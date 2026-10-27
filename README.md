@@ -165,3 +165,7 @@ Available styles:
 ## Drop Air 1.6.6
 
 Set a device name and opt into **Let others see me on local Wi-Fi** in Settings to discover nearby Drop Air hosts. Wi-Fi discovery shares the name, random device ID, and web port; Bluetooth LE adds a short device ID hint for nearby devices. No session key or access code is announced. Connecting prompts the initiating user, and the receiving host must approve before a transfer link is returned. File transfers use Wi-Fi.
+
+## Drop Air 1.6.7
+
+Adds a **Find devices** action to the transfer page for desktop and iPhone browsers. The phone can browse the host’s Wi-Fi discovery results and request a connection; each connection still requires the receiving host’s approval. Browser device names are saved locally. Nearby services remain visible in the cache through quiet mDNS intervals, and the admin settings include retry and Windows Firewall actions. Settings now save atomically and report disk errors instead of claiming success, refreshing admin status preserves unsaved edits, and local developer settings are no longer copied into the installer.

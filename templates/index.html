@@ -420,12 +420,10 @@
 
     body.drawer-open {
       overflow: hidden;
-      touch-action: none;
     }
 
     body.qr-modal-open {
       overflow: hidden;
-      touch-action: none;
     }
 
     .qr-connect-screen { display: none; }
@@ -1832,6 +1830,7 @@
     .qr-modal[aria-hidden="false"] {
       opacity: 1;
       pointer-events: auto;
+      touch-action: pan-y;
     }
 
     .qr-modal-card {
@@ -1878,6 +1877,23 @@
       font-size: .9rem;
     }
 
+    .nearby-modal-card { display: grid; gap: 14px; max-height: min(82vh, 680px); overflow: auto; }
+    .nearby-modal-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding-right: 42px; }
+    .nearby-modal-heading .panel-title { margin: 0; }
+    .nearby-modal-heading .panel-subtitle { margin: 4px 0 0; }
+    .nearby-modal-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: end; }
+    .nearby-modal-controls label { display: grid; gap: 6px; color: var(--muted); font-size: .74rem; font-weight: 800; text-transform: uppercase; }
+    .nearby-modal-controls input { width: 100%; min-height: 42px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-soft); color: var(--ink); font: inherit; }
+    .nearby-modal-controls button { min-height: 42px; padding: 8px 12px; }
+    .nearby-modal-card .discovery-list { min-height: 70px; max-height: 36vh; overflow: auto; }
+    .nearby-modal-help { margin: 0; color: var(--muted); font-size: .82rem; line-height: 1.45; }
+    @media (max-width: 560px) {
+      .nearby-modal-card { padding: 16px; }
+      .nearby-modal-controls { grid-template-columns: 1fr 1fr; }
+      .nearby-modal-controls label { grid-column: 1 / -1; }
+      .nearby-modal-controls button { width: 100%; }
+    }
+
     .drawer {
       position: fixed;
       inset: 0 0 0 auto;
@@ -1908,6 +1924,7 @@
       scrollbar-gutter: stable;
       container-type: inline-size;
       pointer-events: auto;
+      touch-action: pan-y;
     }
 
     .drawer-panel > .panel {
@@ -1918,17 +1935,14 @@
     body.drawer-open .drawer-backdrop {
       opacity: 1;
       pointer-events: auto;
-      backdrop-filter: blur(5px);
+      backdrop-filter: none;
     }
 
     body.drawer-open .drawer { pointer-events: auto; }
     body.drawer-open .drawer-panel { transform: translateX(0); }
 
     body.drawer-open .drawer-panel > .panel,
-    body.drawer-open .drawer-panel > form.panel {
-      animation: drawer-item-in .28s ease both;
-      animation-delay: calc(var(--drawer-order, 0) * 45ms);
-    }
+    body.drawer-open .drawer-panel > form.panel { animation: none; }
 
     .drawer-top,
     .admin-actions {
@@ -2225,7 +2239,7 @@
       <p class="qr-connect-copy">Scan this code from the device you want to connect, or copy the Wi-Fi link.</p>
       <div class="qr-box">
         <div class="qr-stage" data-qr-stage>
-          <img data-qr-image data-qr-svg-url="{{ qr_svg_url }}" alt="QR code with the secure Drop Air transfer link" src="{{ qr_url }}">
+          <img data-qr-image data-qr-svg-url="{{ qr_svg_url }}" alt="QR code with the local Drop Air transfer link" src="{{ qr_url }}">
           <canvas class="qr-build-canvas" data-qr-canvas aria-hidden="true"></canvas>
         </div>
         <div class="url-box">
@@ -2277,6 +2291,7 @@
           <span id="openAdminAlert" class="update-alert" aria-label="New update available">!</span>
         </button>
         {% endif %}
+        <button id="findDevicesBtn" class="secondary-btn" type="button" aria-haspopup="dialog" aria-controls="nearbyModal" aria-expanded="false">Find devices</button>
       </div>
     </header>
 
@@ -2313,18 +2328,6 @@
             </div>
             <span class="counter">Host only</span>
           </div>
-        <div class="discovery-section" aria-labelledby="nearbyDevicesTitle">
-          <div class="discovery-heading">
-            <div>
-              <h3 class="panel-title" id="nearbyDevicesTitle">Nearby Drop Air</h3>
-              <p id="discoveryStatus" class="panel-subtitle">Enable “Let others see me” in Settings to appear here.</p>
-            </div>
-            <span id="discoveryCount" class="counter">Searching</span>
-          </div>
-          <div id="nearbyDevices" class="discovery-list" aria-live="polite">
-            <p class="discovery-empty">Drop Air devices on your local Wi-Fi appear here.</p>
-          </div>
-        </div>
           <div class="admin-card">
             <div class="qr-box">
               <div class="qr-stage" data-qr-stage>
@@ -2490,7 +2493,12 @@
             <input id="setDiscoverable" type="checkbox" />
             <span>Let others see me on local Wi-Fi</span>
           </label>
-          <p class="admin-note settings-field full">Your name and a short device ID are announced only while visibility is on. Each connection asks before sharing a link. Bluetooth helps nearby devices find each other; file transfers use Wi-Fi.</p>
+          <p class="admin-note settings-field full">Your name and a short device ID are announced only while visibility is on. Each connection asks before sharing a link. Bluetooth is an optional Windows proximity hint; file transfers use Wi-Fi.</p>
+          <div class="settings-field full admin-actions">
+            <button id="retryDiscoveryBtn" class="secondary-btn" type="button">Retry Wi-Fi discovery</button>
+            <button id="openFirewallBtn" class="secondary-btn" type="button">Open Firewall settings</button>
+            <span class="admin-note">If Windows blocked Drop Air, allow it on private networks, then retry. Drop Air uses local HTTP and has no SSL certificate prompt.</span>
+          </div>
           <label class="settings-field full">Access Code
             <input id="setAccessCode" type="text" placeholder="Empty = no code" />
           </label>
@@ -2509,7 +2517,7 @@
             <input id="setCleanupMaxFiles" type="number" min="0" step="1" />
           </label>
           <label class="settings-field full">Upload Limit (GB)
-            <input id="setMaxUploadGb" type="number" min="0.01" max="1024" step="0.1" />
+            <input id="setMaxUploadGb" type="number" min="0.01" max="1024" step="0.001" />
           </label>
           <p class="admin-note settings-field full">Changing this limit can make large uploads slower, use more disk space, or fail on some browsers and networks.</p>
           <label class="settings-field full">Open Browser On Start
@@ -2554,6 +2562,28 @@
       <img id="qrModalImage" class="qr-modal-image" alt="Large Drop Air QR code preview" src="" />
       <p class="qr-modal-copy">Scan this enlarged QR code from your phone or tablet.</p>
     </div>
+  </div>
+
+  <div id="nearbyModal" class="qr-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="nearbyDevicesTitle">
+    <section class="qr-modal-card nearby-modal-card">
+      <button id="nearbyModalClose" class="icon-btn qr-modal-close" type="button" aria-label="Close nearby devices">X</button>
+      <div class="nearby-modal-heading">
+        <div>
+          <h2 class="panel-title" id="nearbyDevicesTitle">Nearby Drop Air</h2>
+          <p id="discoveryStatus" class="panel-subtitle">Searching for opted-in devices on this Wi-Fi.</p>
+        </div>
+        <span id="discoveryCount" class="counter">Ready</span>
+      </div>
+      <div class="nearby-modal-controls">
+        <label>Your name on this device<input id="nearbyDeviceName" maxlength="32" autocomplete="nickname" /></label>
+        <button id="saveNearbyNameBtn" class="secondary-btn" type="button">Save name</button>
+        <button id="refreshNearbyBtn" class="primary-btn" type="button">Refresh</button>
+      </div>
+      <div id="nearbyDevices" class="discovery-list" aria-live="polite">
+        <p class="discovery-empty">Tap Refresh to look for nearby devices.</p>
+      </div>
+      <p class="nearby-modal-help">Devices must enable “Let others see me” in Settings. On iPhone, use this page over Wi-Fi; Bluetooth discovery requires the native Drop Air app. If Windows asks for firewall access, allow Drop Air on private networks.</p>
+    </section>
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -2657,10 +2687,22 @@
       openAlert: document.getElementById("openAdminAlert"),
       quit: document.getElementById("quitServerBtn"),
       refresh: document.getElementById("refreshAdminBtn"),
+      retryDiscovery: document.getElementById("retryDiscoveryBtn"),
+      openFirewall: document.getElementById("openFirewallBtn"),
       fileCount: document.getElementById("adminFileCount"),
       textCount: document.getElementById("adminTextCount"),
       totalSize: document.getElementById("adminTotalSize")
     };
+    const nearbyEls = {
+      open: document.getElementById("findDevicesBtn"),
+      modal: document.getElementById("nearbyModal"),
+      close: document.getElementById("nearbyModalClose"),
+      refresh: document.getElementById("refreshNearbyBtn"),
+      name: document.getElementById("nearbyDeviceName"),
+      saveName: document.getElementById("saveNearbyNameBtn")
+    };
+    const dirtySettings = new Set();
+    let lastDiscoveryState = "";
 
     function codeQuery() {
       const params = new URLSearchParams();
@@ -2706,6 +2748,7 @@
         return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       }
     }
+    const browserClientId = isAdmin ? localDeviceId : getClientId();
 
     function setConnectionCount(count) {
       const n = Number(count) || 0;
@@ -3152,16 +3195,21 @@
       return `${s}s`;
     }
 
-    function fillSettingsForm(data) {
+    function fillSettingsForm(data, force = false) {
       if (!isAdmin || !adminEls.form) return;
-      adminEls.accessCode.value = data.access_code || "";
-      adminEls.deviceName.value = data.device_name || "Drop Air device";
-      adminEls.discoverable.checked = Boolean(data.discoverable);
-      adminEls.cleanupMinutes.value = String(data.auto_cleanup_minutes ?? 10);
-      adminEls.cleanupDays.value = String(data.auto_cleanup_days ?? 0);
-      adminEls.cleanupMaxFiles.value = String(data.auto_cleanup_max_files ?? 0);
-      adminEls.maxUploadGb.value = String(data.max_upload_gb ?? 10);
-      adminEls.launchBrowser.value = data.launch_browser_on_start ? "true" : "false";
+      const fields = [
+        ["access_code", adminEls.accessCode, value => value || ""],
+        ["device_name", adminEls.deviceName, value => value || "Drop Air device"],
+        ["discoverable", adminEls.discoverable, Boolean],
+        ["auto_cleanup_minutes", adminEls.cleanupMinutes, value => String(value ?? 10)],
+        ["auto_cleanup_days", adminEls.cleanupDays, value => String(value ?? 0)],
+        ["auto_cleanup_max_files", adminEls.cleanupMaxFiles, value => String(value ?? 0)],
+        ["max_upload_gb", adminEls.maxUploadGb, value => String(value ?? 10)],
+        ["launch_browser_on_start", adminEls.launchBrowser, value => value ? "true" : "false"]
+      ];
+      fields.forEach(([key, element, format]) => {
+        if (force || !dirtySettings.has(element.id)) element[key === "discoverable" ? "checked" : "value"] = format(data[key]);
+      });
       applyUploadLimitUi(data);
     }
 
@@ -3204,50 +3252,77 @@
       if (!response.ok) throw new Error("This request expired or could not be updated.");
     }
 
+    async function retryHostDiscovery() {
+      const response = await fetch(`/api/admin/discovery/retry${codeQuery()}`, {
+        method: "POST",
+        headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {}
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Could not restart Wi-Fi discovery.");
+      adminEls.discoveryStatus.textContent = data.message || "Local Wi-Fi discovery is restarting.";
+      showToast("Wi-Fi discovery restarted. Allow Drop Air on private networks in Windows Firewall if needed.");
+      setTimeout(refreshDiscovery, 700);
+    }
+
+    async function openHostFirewallSettings() {
+      const response = await fetch(`/api/admin/network/firewall${codeQuery()}`, {
+        method: "POST",
+        headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {}
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Could not open Firewall settings.");
+      showToast("In Windows Firewall, allow Drop Air on Private networks, then retry discovery.");
+    }
+
     async function refreshDiscovery() {
-      if (!isAdmin || discoveryBusy || !adminEls.nearbyDevices) return;
+      const nearbyIsOpen = nearbyEls.modal?.getAttribute("aria-hidden") === "false";
+      if ((!isAdmin && !nearbyIsOpen) || discoveryBusy || !adminEls.nearbyDevices) return;
       discoveryBusy = true;
       try {
-        const response = await fetch(`/api/admin/discovery${codeQuery()}`, {
+        const response = await fetch(`/api/discovery${codeQuery()}`, {
           headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {}
         });
-        if (!response.ok) return;
+        if (!response.ok) throw new Error(`Discovery refresh failed (HTTP ${response.status})`);
         const data = await response.json();
         const peers = data.peers || [];
         adminEls.discoveryCount.textContent = `${peers.length} nearby`;
         adminEls.discoveryStatus.textContent = data.discoverable
           ? (data.bluetooth_advertising
-            ? "Visible over local Wi-Fi and Bluetooth LE. Sharing still needs your approval."
-            : "Visible over local Wi-Fi. Bluetooth advertising is unavailable on this device.")
-          : "You can browse nearby devices. Enable visibility in Settings to appear to them.";
-        const fragment = document.createDocumentFragment();
-        if (!peers.length) {
-          const empty = document.createElement("p");
-          empty.className = "discovery-empty";
-          empty.textContent = data.status || "No Drop Air devices found on this Wi-Fi yet.";
-          fragment.appendChild(empty);
+            ? "Visible on Wi-Fi and Bluetooth LE. The other device must approve each connection."
+            : "Visible on Wi-Fi. Bluetooth is unavailable; Wi-Fi discovery still works.")
+          : "You can browse opted-in devices. Turn on visibility in Settings to appear on other devices.";
+        const nextState = JSON.stringify([data.status, peers.map(peer => [peer.device_id, peer.device_name, peer.address, peer.port, peer.transports])]);
+        if (nextState !== lastDiscoveryState) {
+          lastDiscoveryState = nextState;
+          const fragment = document.createDocumentFragment();
+          if (!peers.length) {
+            const empty = document.createElement("p");
+            empty.className = "discovery-empty";
+            empty.textContent = data.status || "No opted-in Drop Air devices found. Check that both are on the same Wi-Fi.";
+            fragment.appendChild(empty);
+          }
+          peers.forEach(peer => {
+            const row = document.createElement("div");
+            row.className = "discovery-peer";
+            const copy = document.createElement("div");
+            copy.className = "discovery-peer-copy";
+            const name = document.createElement("div");
+            name.className = "discovery-peer-name";
+            name.textContent = peer.device_name || "Drop Air device";
+            const meta = document.createElement("div");
+            meta.className = "discovery-peer-meta";
+            meta.textContent = `${peer.address} · ${(peer.transports || ["Wi-Fi"]).join(" + ")}`;
+            copy.append(name, meta);
+            const connect = document.createElement("button");
+            connect.type = "button";
+            connect.className = "primary-btn";
+            connect.textContent = "Connect";
+            connect.addEventListener("click", () => connectToPeer(peer, connect));
+            row.append(copy, connect);
+            fragment.appendChild(row);
+          });
+          adminEls.nearbyDevices.replaceChildren(fragment);
         }
-        peers.forEach(peer => {
-          const row = document.createElement("div");
-          row.className = "discovery-peer";
-          const copy = document.createElement("div");
-          copy.className = "discovery-peer-copy";
-          const name = document.createElement("div");
-          name.className = "discovery-peer-name";
-          name.textContent = peer.device_name || "Drop Air device";
-          const meta = document.createElement("div");
-          meta.className = "discovery-peer-meta";
-          meta.textContent = `${peer.address} · ${(peer.transports || ["Wi-Fi"]).join(" + ")}`;
-          copy.append(name, meta);
-          const connect = document.createElement("button");
-          connect.type = "button";
-          connect.className = "primary-btn";
-          connect.textContent = "Connect";
-          connect.addEventListener("click", () => connectToPeer(peer, connect));
-          row.append(copy, connect);
-          fragment.appendChild(row);
-        });
-        adminEls.nearbyDevices.replaceChildren(fragment);
 
         for (const incoming of data.requests || []) {
           if (handledPairRequests.has(incoming.id)) continue;
@@ -3261,25 +3336,79 @@
           }
         }
       } catch (_) {
-        // Device discovery is a background convenience; keep transfers usable
-        // when multicast is blocked by the current Wi-Fi network.
+        if (nearbyIsOpen) {
+          adminEls.discoveryStatus.textContent = "Could not refresh nearby devices. Retry, and allow local Wi-Fi access if your browser asks.";
+        }
       } finally {
         discoveryBusy = false;
       }
     }
 
+    function suggestedNearbyName() {
+      const agent = navigator.userAgent || "";
+      if (/iPhone/i.test(agent)) return "iPhone";
+      if (/iPad/i.test(agent)) return "iPad";
+      if (/Android/i.test(agent)) return "Android device";
+      return "Browser device";
+    }
+
+    function nearbyClientName() {
+      if (isAdmin) return cleanClientName(adminEls.deviceName?.value || "Drop Air device");
+      return cleanClientName(nearbyEls.name?.value || "Browser device");
+    }
+
+    function cleanClientName(value) {
+      return [...String(value || "")].filter(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127).join("").trim().slice(0, 32) || "Browser device";
+    }
+
+    function openNearby() {
+      nearbyEls.name.value = isAdmin
+        ? (adminEls.deviceName.value || "Drop Air device")
+        : getNearbySavedName();
+      nearbyEls.name.disabled = isAdmin;
+      nearbyEls.saveName.hidden = isAdmin;
+      nearbyEls.modal.setAttribute("aria-hidden", "false");
+      nearbyEls.open.setAttribute("aria-expanded", "true");
+      document.body.classList.add("qr-modal-open");
+      nearbyEls.close.focus({ preventScroll: true });
+      refreshDiscovery();
+    }
+
+    function closeNearby() {
+      nearbyEls.modal.setAttribute("aria-hidden", "true");
+      nearbyEls.open.setAttribute("aria-expanded", "false");
+      document.body.classList.remove("qr-modal-open");
+      nearbyEls.open.focus({ preventScroll: true });
+    }
+
+    function getNearbySavedName() {
+      try { return localStorage.getItem("dropAirNearbyName") || suggestedNearbyName(); }
+      catch (_) { return suggestedNearbyName(); }
+    }
+
+    function saveNearbyName() {
+      try {
+        localStorage.setItem("dropAirNearbyName", cleanClientName(nearbyEls.name.value));
+        nearbyEls.name.value = cleanClientName(nearbyEls.name.value);
+        showToast("This device name is saved in this browser");
+      } catch (_) {
+        showToast("This browser is not allowing names to be saved");
+      }
+    }
+
     async function connectToPeer(peer, button) {
       const peerUrl = `http://${peer.address}:${Number(peer.port)}`;
+      const relayUrl = `/api/discovery/${encodeURIComponent(peer.device_id)}/pair`;
       const displayName = peer.device_name || "Drop Air device";
       if (!confirm(`Connect to ${displayName} at ${peer.address}? Its owner will be asked before the transfer link is shared.`)) return;
       button.disabled = true;
       const previousLabel = button.textContent;
       button.textContent = "Waiting…";
       try {
-        const requestResponse = await fetch(`${peerUrl}/api/pair/requests`, {
+        const requestResponse = await fetch(`${relayUrl}${codeQuery()}`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ device_id: localDeviceId, device_name: adminEls.deviceName.value || "Drop Air device" })
+          headers: { "Content-Type": "application/json", ...(accessCode ? { "X-Drop-Air-Code": accessCode } : {}) },
+          body: JSON.stringify({ device_id: browserClientId, device_name: nearbyClientName() })
         });
         const requestData = await requestResponse.json().catch(() => ({}));
         if (!requestResponse.ok) throw new Error(requestData.error || "Could not request a connection.");
@@ -3287,7 +3416,9 @@
         const deadline = Date.now() + 120000;
         while (Date.now() < deadline) {
           await new Promise(resolve => setTimeout(resolve, 1500));
-          const statusResponse = await fetch(`${peerUrl}/api/pair/requests/${encodeURIComponent(requestId)}`);
+          const statusResponse = await fetch(`${relayUrl}/${encodeURIComponent(requestId)}${codeQuery()}`, {
+            headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {}
+          });
           const statusData = await statusResponse.json().catch(() => ({}));
           if (!statusResponse.ok || statusData.decision === "declined") {
             throw new Error("The other device declined or the request expired.");
@@ -3411,9 +3542,13 @@
           headers: { "Content-Type": "application/json", ...(accessCode ? { "X-Drop-Air-Code": accessCode } : {}) },
           body: JSON.stringify(nextSettings)
         });
-        if (!r.ok) throw new Error(await r.text() || "Failed to save settings.");
+        if (!r.ok) {
+          const failure = await r.json().catch(() => ({}));
+          throw new Error(failure.error || "Failed to save settings.");
+        }
         const data = await r.json();
-        fillSettingsForm(data.settings);
+        dirtySettings.clear();
+        fillSettingsForm(data.settings, true);
         Object.assign(initialSettings, data.settings);
         refreshDiscovery();
         showToast("Admin settings saved");
@@ -4202,7 +4337,9 @@
       adminEls.backdrop.addEventListener("click", closeAdmin);
       adminEls.form.addEventListener("submit", saveSettings);
       refreshDiscovery();
-      setInterval(() => refreshDiscovery(), 2500);
+      setInterval(() => { if (!document.hidden) refreshDiscovery(); }, 5000);
+      adminEls.retryDiscovery.addEventListener("click", () => retryHostDiscovery().catch(err => showToast(err.message)));
+      adminEls.openFirewall.addEventListener("click", () => openHostFirewallSettings().catch(err => showToast(err.message)));
       adminEls.generateCode.addEventListener("click", generateAccessCode);
       adminEls.clearCode.addEventListener("click", () => {
         adminEls.accessCode.value = "";
@@ -4220,9 +4357,29 @@
         openAdmin();
       }
     }
+    nearbyEls.open.addEventListener("click", openNearby);
+    nearbyEls.close.addEventListener("click", closeNearby);
+    nearbyEls.refresh.addEventListener("click", refreshDiscovery);
+    nearbyEls.saveName.addEventListener("click", saveNearbyName);
+    nearbyEls.modal.addEventListener("click", event => {
+      if (event.target === nearbyEls.modal) closeNearby();
+    });
+    nearbyEls.name.addEventListener("keydown", event => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        saveNearbyName();
+      }
+    });
+    if (isAdmin) {
+      adminEls.form.querySelectorAll("input, select").forEach(element => {
+        ["input", "change"].forEach(type => element.addEventListener(type, () => dirtySettings.add(element.id)));
+      });
+    }
     document.addEventListener("keydown", e => {
       if (e.key === "Escape" && qrModal?.getAttribute("aria-hidden") === "false") {
         closeQrModal();
+      } else if (e.key === "Escape" && nearbyEls.modal?.getAttribute("aria-hidden") === "false") {
+        closeNearby();
       }
     });
     filesBody.addEventListener("click", e => {

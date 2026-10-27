@@ -1,5 +1,6 @@
 import os
 import io
+import json
 import re
 import socket
 import sys
@@ -36,6 +37,7 @@ class DropAirReleaseUiTests(unittest.TestCase):
         with patch.dict(os.environ, {"DROP_AIR_ICON": ""}):
             self.assertEqual(app.app_icon_path().name, "drop_air_brand.ico")
         self.assertIn('IconFilename: "{app}\\assets\\icon\\drop_air_brand.ico"', self.installer_source)
+        self.assertNotIn('Source: "..\\settings.json"', self.installer_source)
 
     def test_pyinstaller_build_uses_the_current_icon_and_desktop_entry(self):
         root = Path(__file__).resolve().parents[1]
@@ -702,6 +704,9 @@ class DropAirReleaseUiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.get_json()["settings"]["device_name"], "Benji's Desk")
             self.assertTrue(response.get_json()["settings"]["discoverable"])
+            persisted = json.loads(app.SETTINGS_FILE.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["device_name"], "Benji's Desk")
+            self.assertTrue(persisted["discoverable"])
             invalid = self.client.post(
                 "/api/settings",
                 json={"device_name": "x" * 33},
@@ -710,6 +715,79 @@ class DropAirReleaseUiTests(unittest.TestCase):
             self.assertEqual(invalid.status_code, 400)
         finally:
             app.set_settings(previous)
+
+    def test_settings_write_failure_does_not_report_success_or_change_runtime(self):
+        previous = app.get_settings()
+        with patch.object(app, "save_settings", side_effect=OSError("read only")):
+            with self.assertRaises(OSError):
+                app.set_settings({**previous, "device_name": "Unsaved name"})
+            self.assertEqual(app.get_settings(), previous)
+            response = self.client.post(
+                "/api/settings",
+                json={"device_name": "Unsaved name"},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "localhost:8000"},
+            )
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("could not be saved", response.get_json()["error"].lower())
+        self.assertEqual(app.get_settings(), previous)
+
+    def test_public_discovery_endpoint_requires_a_valid_transfer_session(self):
+        guest = {"REMOTE_ADDR": "192.168.1.40", "HTTP_HOST": "192.168.1.2:8000"}
+        denied = self.client.get("/api/discovery", environ_overrides=guest)
+        self.assertEqual(denied.status_code, 401)
+        allowed = self.client.get(
+            f"/api/discovery?k={app.session_snapshot()['key']}", environ_overrides=guest
+        )
+        self.assertEqual(allowed.status_code, 200)
+        self.assertIn("peers", allowed.get_json())
+
+    def test_phone_pairing_is_relayed_only_to_a_discovered_peer(self):
+        peer = {
+            "device_id": "b" * 32,
+            "device_name": "Living Room",
+            "address": "192.168.1.21",
+            "port": 8000,
+            "transports": ["Wi-Fi"],
+        }
+
+        class RelayResponse:
+            status = 202
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            @staticmethod
+            def read():
+                return b'{"request":{"id":"abc"}}'
+
+        with patch.object(app.PEER_DISCOVERY, "get_peer", return_value=peer), patch.object(
+            app, "urlopen", return_value=RelayResponse()
+        ) as relay:
+            response = self.client.post(
+                f"/api/discovery/{peer['device_id']}/pair",
+                json={"device_id": "c" * 24, "device_name": "iPhone"},
+                environ_overrides={"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "localhost:8000"},
+            )
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.get_json(), {"request": {"id": "abc"}})
+        self.assertTrue(relay.call_args.args[0].full_url.startswith("http://192.168.1.21:8000/api/pair/requests"))
+
+    def test_discovery_peer_cache_does_not_expire_after_quiet_mdns_period(self):
+        discovery = PeerDiscovery("a" * 32, lambda: {"discoverable": False})
+        discovery._peers["b" * 32] = {
+            "device_id": "b" * 32,
+            "device_name": "Quiet peer",
+            "address": "192.168.1.21",
+            "port": 8000,
+            "transports": ["Wi-Fi"],
+            "last_seen": time.time() - 15,
+        }
+        self.assertEqual(len(discovery.snapshot()["peers"]), 1)
+        discovery._peers["b" * 32]["last_seen"] = time.time() - 121
+        self.assertEqual(discovery.snapshot()["peers"], [])
 
     def test_spoofed_localhost_host_header_cannot_access_admin(self):
         response = self.client.get(
@@ -792,6 +870,10 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn('id="setDeviceName"', source)
         self.assertIn('id="setDiscoverable"', source)
         self.assertIn('id="nearbyDevices"', source)
+        self.assertIn('id="findDevicesBtn"', source)
+        self.assertIn('id="nearbyModal"', source)
+        self.assertIn('step="0.001"', source)
+        self.assertIn('id="retryDiscoveryBtn"', source)
         self.assertIn("confirm(`Connect to ${displayName}", source)
         self.assertIn("Allow ${incoming.device_name}", source)
 

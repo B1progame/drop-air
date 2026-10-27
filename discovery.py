@@ -21,7 +21,10 @@ from collections import defaultdict, deque
 DISCOVERY_SERVICE = "_dropair._tcp.local."
 DISCOVERY_PROTOCOL = "1"
 BLE_SERVICE_UUID = uuid.UUID("70d75f3a-8c65-4f34-91d2-e2e8842b9781")
-PEER_TTL_SECONDS = 12
+# Zeroconf service callbacks announce additions and changes, not heartbeats.
+# Keep a peer through ordinary quiet periods and remove it promptly when a
+# service-removal event arrives; this TTL is only a crash/stale-cache fallback.
+PEER_TTL_SECONDS = 120
 BLE_PEER_TTL_SECONDS = 10
 PAIR_REQUEST_TTL_SECONDS = 120
 PAIR_RATE_WINDOW_SECONDS = 60
@@ -184,6 +187,21 @@ class PeerDiscovery:
         if self._thread and self._thread.is_alive() and self._thread is not threading.current_thread():
             self._thread.join(timeout=1)
 
+    def restart(self, port: int | None = None) -> None:
+        if port is not None:
+            self._port = int(port)
+        self._stop.set()
+        thread = self._thread
+        if thread and thread.is_alive():
+            def restart_after_shutdown():
+                thread.join(timeout=7)
+                if not thread.is_alive():
+                    self.start(self._port)
+
+            threading.Thread(target=restart_after_shutdown, name="DropAirDiscoveryRetry", daemon=True).start()
+        else:
+            self.start(self._port)
+
     def _accept_service(self, info) -> bool:
         try:
             properties = info.properties
@@ -264,6 +282,18 @@ class PeerDiscovery:
             "bluetooth_advertising": bluetooth_advertising,
             "peers": peers,
         }
+
+    def get_peer(self, device_id: str) -> dict | None:
+        now = time.time()
+        with self._lock:
+            peer = self._peers.get(str(device_id).lower())
+            if not peer or now - peer["last_seen"] > PEER_TTL_SECONDS:
+                if peer:
+                    self._peers.pop(str(device_id).lower(), None)
+                return None
+            if not private_ipv4(peer.get("address", "")) or not 1024 <= int(peer.get("port", 0)) <= 65535:
+                return None
+            return {key: value for key, value in peer.items() if key != "last_seen"}
 
     def _run(self) -> None:
         while not self._stop.is_set():
