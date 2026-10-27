@@ -1124,7 +1124,7 @@
 
     .progress-shell {
       margin-top: 12px;
-      height: 8px;
+      height: 22px;
       border-radius: 999px;
       background: color-mix(in srgb, var(--line) 70%, transparent);
       overflow: hidden;
@@ -1141,7 +1141,7 @@
       background-size: 42px 100%, 100% 100%;
       position: relative;
       overflow: hidden;
-      transition: width .22s cubic-bezier(.2, .8, .2, 1);
+      transition: width .12s linear;
     }
 
     .progress-bar::after {
@@ -1158,6 +1158,20 @@
 
     .dropzone.uploading .progress-bar {
       animation: progress-liquid 1.2s linear infinite;
+    }
+
+    .progress-details {
+      position: absolute;
+      inset: 0 9px;
+      display: flex;
+      align-items: center;
+      color: var(--ink);
+      font-size: .66rem;
+      font-weight: 850;
+      line-height: 1;
+      text-shadow: 0 1px 2px color-mix(in srgb, var(--surface) 70%, transparent);
+      white-space: nowrap;
+      pointer-events: none;
     }
 
     .upload-state {
@@ -2388,7 +2402,10 @@
                 <button id="pickBtn" class="primary-btn" type="button">Choose Files</button>
               </div>
               <div id="uploadState" class="upload-state" aria-live="polite">Idle</div>
-              <div class="progress-shell" aria-hidden="true"><div id="progressBar" class="progress-bar"></div></div>
+              <div class="progress-shell" id="progressShell" role="progressbar" aria-label="Upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div id="progressBar" class="progress-bar"></div>
+                <span id="progressDetails" class="progress-details">Ready</span>
+              </div>
               <div id="uploadQueue" class="upload-queue" aria-live="polite"></div>
             </div>
           </div>
@@ -2588,6 +2605,7 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
+  {% if request.args.get('desktop') == '1' %}<script src="qrc:///qtwebchannel/qwebchannel.js"></script>{% endif %}
   <script src="{{ url_for('static', filename='vendor/gsap/gsap.min.js') }}"></script>
   <script>
     let accessCode = "{{ access_code }}";
@@ -2608,6 +2626,8 @@
     const dropzone = document.getElementById("dropzone");
     const statusEl = document.getElementById("status");
     const progressBar = document.getElementById("progressBar");
+    const progressShell = document.getElementById("progressShell");
+    const progressDetails = document.getElementById("progressDetails");
     const uploadState = document.getElementById("uploadState");
     const uploadQueue = document.getElementById("uploadQueue");
     const uploadLimitBadge = document.getElementById("uploadLimitBadge");
@@ -2626,6 +2646,7 @@
     const connectionLabel = document.getElementById("connectionLabel");
     const toast = document.getElementById("toast");
     let toastTimer;
+    let nativeClipboardPromise;
     let sessionSyncTimer;
     let currentTextIndex = 0;
     let currentTextItemId = "";
@@ -2875,7 +2896,25 @@
     }
 
     function setProgress(percent) {
-      progressBar.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+      const value = Math.max(0, Math.min(100, percent));
+      progressBar.style.width = `${value}%`;
+      progressShell?.setAttribute("aria-valuenow", String(Math.round(value)));
+      return Math.round(value);
+    }
+
+    function readNativeClipboard() {
+      const read = bridge => new Promise(resolve => bridge.readClipboard(resolve));
+      if (window.dropAirClipboard) return read(window.dropAirClipboard);
+      if (!window.qt?.webChannelTransport || !window.QWebChannel) return Promise.resolve(null);
+      if (!nativeClipboardPromise) {
+        nativeClipboardPromise = new Promise(resolve => {
+          new QWebChannel(qt.webChannelTransport, channel => {
+            window.dropAirClipboard = channel.objects.clipboardBridge;
+            resolve(read(window.dropAirClipboard));
+          });
+        });
+      }
+      return nativeClipboardPromise;
     }
 
     function setUploadState(label) {
@@ -4105,10 +4144,15 @@
       setUploadState("Reading clipboard");
       try {
         const files = [];
-        let text = "";
+        const nativeClipboard = await readNativeClipboard();
+        let text = nativeClipboard?.text || "";
+        if (nativeClipboard?.image) {
+          const blob = await fetch(`data:image/png;base64,${nativeClipboard.image}`).then(response => response.blob());
+          files.push(new File([blob], clipboardFileName("image/png"), { type: "image/png" }));
+        }
         let clipboardReadError = null;
 
-        if (navigator.clipboard.read) {
+        if (!files.length && !text && navigator.clipboard?.read) {
           try {
             const items = await navigator.clipboard.read();
             for (const item of items) {
@@ -4135,7 +4179,7 @@
           return;
         }
 
-        if (!text && navigator.clipboard.readText) {
+        if (!text && navigator.clipboard?.readText) {
           try {
             text = await navigator.clipboard.readText();
           } catch (err) {
@@ -4173,12 +4217,19 @@
           ctx.sentBytes[ctx.index] = loaded;
           const sentBytes = ctx.confirmedBytes + ctx.sentBytes.reduce((sum, value) => sum + value, 0);
           const elapsed = (performance.now() - ctx.startedAt) / 1000;
-          const speed = elapsed > 0 ? sentBytes / elapsed : 0;
+          const now = performance.now();
+          ctx.samples.push({ at: now, bytes: sentBytes });
+          while (ctx.samples.length > 2 && now - ctx.samples[0].at > 4000) ctx.samples.shift();
+          const firstSample = ctx.samples[0];
+          const speed = firstSample && now > firstSample.at
+            ? Math.max(0, sentBytes - firstSample.bytes) / ((now - firstSample.at) / 1000)
+            : (elapsed > 0 ? sentBytes / elapsed : 0);
           const remaining = Math.max(ctx.totalBytes - sentBytes, 0);
           const eta = speed > 0 ? formatEta(remaining / speed) : "...";
           const filePct = ev.lengthComputable && ev.total > 0 ? Math.floor((ev.loaded / ev.total) * 100) : 0;
           const totalPct = ctx.totalBytes > 0 ? Math.floor((sentBytes / ctx.totalBytes) * 100) : filePct;
-          setProgress(totalPct);
+          const roundedTotalPct = setProgress(totalPct);
+          if (progressDetails) progressDetails.textContent = `${roundedTotalPct}%  ·  ${human(speed)}/s  ·  ${eta} left`;
           updateUploadQueueItem(ctx.index, filePct, `${filePct}%`);
           setStatus(`Uploading ${file.name} (${ctx.index + 1}/${ctx.totalFiles}) ${filePct}% - ${human(speed)}/s - ETA ${eta}`);
         };
@@ -4244,7 +4295,7 @@
       renderUploadQueue(files);
       const totalBytes = files.reduce((sum, f) => sum + (f.size || 0), 0);
       const startedAt = performance.now();
-      const progress = { startedAt, totalBytes, confirmedBytes: 0, sentBytes: new Array(files.length).fill(0), totalFiles: files.length };
+      const progress = { startedAt, totalBytes, confirmedBytes: 0, sentBytes: new Array(files.length).fill(0), samples: [], totalFiles: files.length };
       const completedNames = new Set();
       const failedNames = [];
       try {
@@ -4267,7 +4318,10 @@
           }
         };
         await Promise.all(Array.from({ length: Math.min(2, files.length) }, worker));
-        if (!failedNames.length) setProgress(100);
+        if (!failedNames.length) {
+          setProgress(100);
+          if (progressDetails) progressDetails.textContent = "100%  ·  Complete";
+        }
         await refreshFiles({ completedNames });
         setUploadState(failedNames.length ? "Failed" : "Complete");
         if (!failedNames.length) flashUploadDone();

@@ -169,3 +169,7 @@ Set a device name and opt into **Let others see me on local Wi-Fi** in Settings 
 ## Drop Air 1.6.7
 
 Adds a **Find devices** action to the transfer page for desktop and iPhone browsers. The phone can browse the host’s Wi-Fi discovery results and request a connection; each connection still requires the receiving host’s approval. Browser device names are saved locally. Nearby services remain visible in the cache through quiet mDNS intervals, and the admin settings include retry and Windows Firewall actions. Settings now save atomically and report disk errors instead of claiming success, refreshing admin status preserves unsaved edits, and local developer settings are no longer copied into the installer.
+
+## Drop Air 1.6.8
+
+Redesigns both startup skeletons to match the supplied circular-avatar and varied-line reference, with static placeholders that avoid repeated repaint work. Desktop paste now reads text and images from the native clipboard when browser clipboard access is unavailable. Uploads publish staged files atomically without a second full-file copy on filesystems that support hard links, and the transfer progress bar shows percentage, rolling speed, and remaining time. The updater now requests the required Windows elevation, targets the existing install folder, logs installer output, and verifies the installed version before restarting.

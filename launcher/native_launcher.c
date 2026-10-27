@@ -11,9 +11,6 @@ static HANDLE core_process;
 static DWORD core_pid;
 static ULONGLONG process_exit_time;
 static wchar_t app_dir[32768];
-static HICON startup_icon;
-static HFONT loading_title_font;
-static HFONT loading_subtitle_font;
 static HANDLE instance_mutex;
 static BOOL owns_instance_mutex;
 
@@ -33,26 +30,6 @@ static void rounded(HDC dc, int x, int y, int w, int h, COLORREF color, int radi
     RoundRect(dc, x, y, x + w, y + h, radius, radius);
     SelectObject(dc, old_pen);
     SelectObject(dc, old);
-    DeleteObject(pen);
-    DeleteObject(brush);
-}
-
-static void loading_track(HDC dc, int x, int y, int width) {
-    rounded(dc, x, y, width, 2, RGB(41, 49, 53), 1);
-    int segment = width / 4;
-    if (segment < 28) segment = 28;
-    int travel = (int)(GetTickCount64() % 1800) * (width + segment) / 1800 - segment;
-    rounded(dc, x + travel, y, segment, 2, RGB(33, 186, 200), 1);
-}
-
-static void panel(HDC dc, int x, int y, int w, int h) {
-    HBRUSH brush = CreateSolidBrush(RGB(32, 36, 40));
-    HPEN pen = CreatePen(PS_SOLID, 1, RGB(55, 63, 67));
-    HGDIOBJ old_brush = SelectObject(dc, brush);
-    HGDIOBJ old_pen = SelectObject(dc, pen);
-    RoundRect(dc, x, y, x + w, y + h, 8, 8);
-    SelectObject(dc, old_pen);
-    SelectObject(dc, old_brush);
     DeleteObject(pen);
     DeleteObject(brush);
 }
@@ -170,117 +147,42 @@ static BOOL has_dropair_window(void) {
 }
 
 static void draw_skeleton(HDC dc, RECT bounds) {
-    const COLORREF bone = RGB(48, 54, 58);
-    const COLORREF bone_light = RGB(59, 66, 70);
-    const COLORREF edge = RGB(55, 63, 67);
+    const COLORREF bone = RGB(48, 52, 55);
+    const COLORREF bone_light = RGB(55, 60, 64);
+    const COLORREF panel_fill = RGB(32, 36, 40);
+    const COLORREF panel_edge = RGB(48, 55, 59);
     int width = bounds.right - bounds.left;
     int height = bounds.bottom - bounds.top;
-    int margin = width > 760 ? 24 : 16;
-    int gap = 16;
-    int usable = width - margin * 2;
-    int left_width = (usable - gap) / 2;
-    int right_x = margin + left_width + gap;
-    int right_width = usable - left_width - gap;
-    int connect_y = 96;
-    int connect_height = 100;
-    panel(dc, margin, connect_y, usable, connect_height);
-    int qr_x = margin + 16, qr_y = connect_y + 16, qr_size = 68;
-    rounded(dc, qr_x, qr_y, qr_size, qr_size, RGB(220, 227, 229), 6);
+    int card_width = width - 40;
+    if (card_width > 560) card_width = 560;
+    if (card_width < 280) card_width = 280;
+    int card_height = 116;
+    int gap = 20;
+    int total_height = card_height * 3 + gap * 2;
+    int left = (width - card_width) / 2;
+    int top = (height - total_height) / 2;
+    const int title_widths[3] = {218, 204, 232};
+    const int line_widths[3][3] = {{330, 394, 286}, {352, 410, 318}, {310, 420, 292}};
     for (int index = 0; index < 3; ++index) {
-        int finder_x = qr_x + (index == 1 ? 43 : 7);
-        int finder_y = qr_y + (index == 2 ? 43 : 7);
-        rounded(dc, finder_x, finder_y, 18, 18, RGB(48, 56, 60), 2);
-        rounded(dc, finder_x + 4, finder_y + 4, 10, 10, RGB(220, 227, 229), 1);
-    }
-    rounded(dc, margin + 100, connect_y + 24, usable - 260 < 212 ? usable - 260 : 212, 18, bone, 5);
-    rounded(dc, margin + 100, connect_y + 52, usable - 260 < 310 ? usable - 260 : 310, 12, bone, 4);
-    rounded(dc, margin + 100, connect_y + 74, usable - 260 < 235 ? usable - 260 : 235, 10, bone, 4);
-    rounded(dc, margin + usable - 136, connect_y + 32, 112, 36, RGB(35, 70, 74), 9);
-
-    int panel_y = connect_y + connect_height + 14;
-    int upload_height = height * 29 / 100;
-    if (upload_height < 300) upload_height = 300;
-
-    rounded(dc, margin, 24, 42, 42, bone_light, 10);
-    if (startup_icon) DrawIconEx(dc, margin, 24, startup_icon, 42, 42, 0, NULL, DI_NORMAL);
-    SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, RGB(237, 242, 244));
-    HGDIOBJ previous_font = SelectObject(dc, loading_title_font);
-    TextOutW(dc, margin + 56, 25, L"Drop Air", 8);
-    SelectObject(dc, loading_subtitle_font);
-    SetTextColor(dc, RGB(155, 168, 173));
-    TextOutW(dc, margin + 56, 52, L"Getting things ready...", 23);
-    SelectObject(dc, previous_font);
-    rounded(dc, width - margin - 110, 34, 110, 24, bone, 12);
-    int track_width = width - margin * 2 - 220;
-    if (track_width > 190) track_width = 190;
-    if (track_width < 80) track_width = 80;
-    loading_track(dc, margin + 56, 72, track_width);
-
-    panel(dc, margin, panel_y, left_width, upload_height);
-    rounded(dc, margin + 16, panel_y + 16, 112, 18, bone, 5);
-    rounded(dc, margin + 16, panel_y + 42, left_width - 32 < 184 ? left_width - 32 : 184, 12, bone, 4);
-    rounded(dc, margin + left_width - 74, panel_y + 22, 58, 24, bone, 12);
-
-    int drop_y = panel_y + 82;
-    int drop_h = upload_height - 96;
-    HPEN dash = CreatePen(PS_DASH, 1, RGB(40, 86, 91));
-    HGDIOBJ old_pen = SelectObject(dc, dash);
-    HGDIOBJ old_brush = SelectObject(dc, GetStockObject(HOLLOW_BRUSH));
-    RoundRect(dc, margin + 8, drop_y, margin + left_width - 8, drop_y + drop_h, 8, 8);
-    SelectObject(dc, old_brush);
-    SelectObject(dc, old_pen);
-    DeleteObject(dash);
-
-    int center = margin + left_width / 2;
-    rounded(dc, center - 22, drop_y + drop_h * 28 / 100, 44, 44, bone_light, 10);
-    HPEN icon_pen = CreatePen(PS_SOLID, 2, RGB(33, 186, 200));
-    old_pen = SelectObject(dc, icon_pen);
-    int icon_x = center, icon_y = drop_y + drop_h * 28 / 100;
-    MoveToEx(dc, icon_x, icon_y + 14, NULL); LineTo(dc, icon_x, icon_y + 30);
-    MoveToEx(dc, icon_x, icon_y + 14, NULL); LineTo(dc, icon_x - 6, icon_y + 20);
-    MoveToEx(dc, icon_x, icon_y + 14, NULL); LineTo(dc, icon_x + 6, icon_y + 20);
-    MoveToEx(dc, icon_x - 9, icon_y + 29, NULL); LineTo(dc, icon_x - 9, icon_y + 34);
-    LineTo(dc, icon_x + 9, icon_y + 34);
-    SelectObject(dc, old_pen);
-    DeleteObject(icon_pen);
-    rounded(dc, center - 130, drop_y + drop_h * 28 / 100 + 58, 260, 15, bone, 5);
-    rounded(dc, center - 60, drop_y + drop_h * 28 / 100 + 86, 120, 42, bone, 8);
-
-    int text_y = panel_y + upload_height + gap;
-    panel(dc, margin, text_y, left_width, 244);
-    rounded(dc, margin + 16, text_y + 18, 112, 18, bone, 5);
-    rounded(dc, margin + left_width - 74, text_y + 15, 58, 24, bone, 12);
-    HPEN outline = CreatePen(PS_SOLID, 1, RGB(55, 63, 67));
-    old_pen = SelectObject(dc, outline);
-    old_brush = SelectObject(dc, GetStockObject(HOLLOW_BRUSH));
-    RoundRect(dc, margin + 8, text_y + 56, margin + left_width - 8, text_y + 168, 8, 8);
-    SelectObject(dc, old_brush);
-    SelectObject(dc, old_pen);
-    DeleteObject(outline);
-    rounded(dc, margin + 20, text_y + 72, left_width - 56 < 280 ? left_width - 56 : 280, 10, bone, 4);
-    rounded(dc, margin + 20, text_y + 92, left_width - 56 < 190 ? left_width - 56 : 190, 10, bone, 4);
-    rounded(dc, margin + 20, text_y + 126, left_width - 56 < 240 ? left_width - 56 : 240, 10, bone, 4);
-    rounded(dc, margin + 20, text_y + 190, 104, 34, RGB(35, 70, 74), 8);
-
-    int list_height = 278;
-    panel(dc, right_x, panel_y, right_width, list_height);
-    rounded(dc, right_x + 16, panel_y + 16, 112, 18, bone, 5);
-    rounded(dc, right_x + 16, panel_y + 42, right_width - 32 < 184 ? right_width - 32 : 184, 12, bone, 4);
-    for (int index = 0; index < 3; ++index) {
-        int row_y = panel_y + 68 + index * 66;
-        if (row_y + 64 > panel_y + list_height) break;
-        if (index) {
-            HPEN divider = CreatePen(PS_SOLID, 1, RGB(48, 55, 59));
-            old_pen = SelectObject(dc, divider);
-            MoveToEx(dc, right_x + 1, row_y, NULL);
-            LineTo(dc, right_x + right_width - 1, row_y);
-            SelectObject(dc, old_pen);
-            DeleteObject(divider);
+        int row_y = top + index * (card_height + gap);
+        HBRUSH brush = CreateSolidBrush(panel_fill);
+        HPEN pen = CreatePen(PS_SOLID, 1, panel_edge);
+        HGDIOBJ old_brush = SelectObject(dc, brush);
+        HGDIOBJ old_pen = SelectObject(dc, pen);
+        RoundRect(dc, left, row_y, left + card_width, row_y + card_height, 10, 10);
+        SelectObject(dc, old_pen);
+        SelectObject(dc, old_brush);
+        DeleteObject(pen);
+        DeleteObject(brush);
+        rounded(dc, left + 22, row_y + 30, 56, 56, bone_light, 56);
+        int text_x = left + 94;
+        int max_text_width = card_width - 122;
+        int title_width = title_widths[index] < max_text_width ? title_widths[index] : max_text_width;
+        rounded(dc, text_x, row_y + 18, title_width, 15, bone, 5);
+        for (int line = 0; line < 3; ++line) {
+            int line_width = line_widths[index][line] < max_text_width ? line_widths[index][line] : max_text_width;
+            rounded(dc, text_x, row_y + 48 + line * 13, line_width, 4, bone_light, 2);
         }
-        rounded(dc, right_x + 14, row_y + 12, 36, 36, bone_light, 8);
-        rounded(dc, right_x + 62, row_y + 14, right_width - 120 < 230 ? right_width - 120 : 230, 15, bone, 5);
-        rounded(dc, right_x + 62, row_y + 36, right_width - 120 < 86 ? right_width - 120 : 86, 10, bone, 4);
     }
 }
 
@@ -307,7 +209,6 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
         return 0;
     }
     case WM_TIMER:
-        InvalidateRect(window, NULL, FALSE);
         if (has_core_window() || (process_exit_time && has_dropair_window())) {
             KillTimer(window, 1);
             ShowWindow(window, SW_HIDE);
@@ -430,14 +331,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
 
     wchar_t icon_path[32768];
     swprintf(icon_path, 32768, L"%ls\\assets\\icon\\drop_air_brand.ico", app_dir);
-    loading_title_font = CreateFontW(-22, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-    loading_subtitle_font = CreateFontW(-13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
     HICON icon = (HICON)LoadImageW(NULL, icon_path, IMAGE_ICON, 32, 32, LR_LOADFROMFILE | LR_DEFAULTSIZE);
-    startup_icon = (HICON)LoadImageW(NULL, icon_path, IMAGE_ICON, 42, 42, LR_LOADFROMFILE);
     if (icon) {
         SendMessageW(startup_window, WM_SETICON, ICON_BIG, (LPARAM)icon);
         SendMessageW(startup_window, WM_SETICON, ICON_SMALL, (LPARAM)icon);
@@ -459,9 +353,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
         DispatchMessageW(&message);
     }
     if (icon) DestroyIcon(icon);
-    if (startup_icon) DestroyIcon(startup_icon);
-    if (loading_title_font) DeleteObject(loading_title_font);
-    if (loading_subtitle_font) DeleteObject(loading_subtitle_font);
     if (window_class.hbrBackground) DeleteObject(window_class.hbrBackground);
     return (int)message.wParam;
 }

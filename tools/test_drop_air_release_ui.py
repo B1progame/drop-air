@@ -49,6 +49,7 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("--hidden-import app", build_script)
         self.assertIn("--hidden-import winrt.windows.devices.bluetooth.advertisement", build_script)
         self.assertIn("--hidden-import werkzeug.serving", build_script)
+        self.assertIn('Copy-Item -LiteralPath $versionAbs -Destination (Join-Path $exeDir "VERSION") -Force', build_script)
         self.assertIn('"${AppName}Core"', build_script)
         self.assertIn("$launcherCompiler.Source", build_script)
         self.assertIn('launcher\\native_launcher.c', build_script)
@@ -189,21 +190,22 @@ class DropAirReleaseUiTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         desktop_source = (root / "desktop_app.py").read_text(encoding="utf-8")
         self.assertIn("class StartupSkeleton(QWidget)", desktop_source)
-        self.assertIn("self._startup_skeleton = StartupSkeleton(self, icon)", desktop_source)
+        self.assertIn("self._startup_skeleton = StartupSkeleton(self)", desktop_source)
         self.assertIn("self._startup_stack = QStackedWidget(self)", desktop_source)
         self.assertIn("self._startup_stack.setCurrentWidget(self.web)", desktop_source)
         self.assertLess(desktop_source.index("self._startup_stack.addWidget(self._startup_skeleton)"), desktop_source.index("from PySide6.QtWebEngineCore"))
-        self.assertIn("self._loading_timer.setInterval(50)", desktop_source)
-        self.assertIn('QColor("#21bac8")', desktop_source)
+        self.assertNotIn("_loading_timer", desktop_source)
+        self.assertIn("QColor(\"#303437\")", desktop_source)
+        self.assertIn("card_width = min(560, max(280, width - 40))", desktop_source)
+        self.assertIn("rounded(left + 22, row_y + 30, 56, 56, bone_light, 28)", desktop_source)
         self.assertLess(desktop_source.index("window.show()"), desktop_source.index("QTimer.singleShot(80, start_backend_thread)"))
         self.assertNotIn("import app as backend", desktop_source)
         self.assertNotIn("from werkzeug.serving import make_server", desktop_source.split("def start_backend():", 1)[0])
         self.assertIn("loadFinished.connect(self._page_load_finished)", desktop_source)
         self.assertIn("mark_startup_healthy()", desktop_source)
         self.assertIn('self.setAccessibleName("Loading Drop Air")', desktop_source)
-        self.assertIn('painter.drawText(margin + 56, 44, "Drop Air")', desktop_source)
-        self.assertIn('painter.drawText(margin + 56, 62, "Getting things ready...")', desktop_source)
-        self.assertIn("connect_height = 100", desktop_source)
+        self.assertIn("title_widths = (218, 204, 232)", desktop_source)
+        self.assertIn("line_widths = ((330, 394, 286)", desktop_source)
         self.assertIn("Text Relay", self.template_source)
 
     def test_native_launcher_paints_before_spawning_the_full_desktop_app(self):
@@ -212,11 +214,10 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn('CORE_EXE[] = L"DropAirCore.exe"', launcher)
         self.assertLess(launcher.index("UpdateWindow(startup_window)"), launcher.index('launch_core(L"", FALSE)'))
         self.assertIn("draw_skeleton", launcher.lower())
-        self.assertIn("loading_track", launcher)
-        self.assertIn('L"Getting things ready..."', launcher)
-        self.assertIn("DrawIconEx(dc, margin, 24, startup_icon, 42, 42", launcher)
-        self.assertIn("int connect_height = 100", launcher)
-        self.assertIn("InvalidateRect(window, NULL, FALSE)", launcher)
+        self.assertIn("int card_width = width - 40", launcher)
+        self.assertIn("rounded(dc, left + 22, row_y + 30, 56, 56, bone_light, 56)", launcher)
+        self.assertNotIn("InvalidateRect(window, NULL, FALSE)", launcher)
+        self.assertIn("line_widths[3][3]", launcher)
         self.assertIn("has_core_window()", launcher)
         self.assertIn("if self._tray_available and not self._allow_close:", (root / "desktop_app.py").read_text(encoding="utf-8"))
 
@@ -522,6 +523,25 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn(b"GSAP 3.15.0", response.data[:200])
         response.close()
 
+    def test_upload_progress_shows_percent_speed_and_eta_in_accessible_bar(self):
+        for marker in (
+            'id="progressShell" role="progressbar"',
+            'id="progressDetails"',
+            'textContent = `${roundedTotalPct}%  ·  ${human(speed)}/s  ·  ${eta} left`',
+            'progressShell?.setAttribute("aria-valuenow"',
+        ):
+            self.assertIn(marker, self.template_source)
+
+    def test_desktop_clipboard_bridge_supports_image_and_text_paste(self):
+        root = Path(__file__).resolve().parents[1]
+        desktop_source = (root / "desktop_app.py").read_text(encoding="utf-8")
+        self.assertIn("class ClipboardBridge(QObject)", desktop_source)
+        self.assertIn("mime.hasImage()", desktop_source)
+        self.assertIn('registerObject("clipboardBridge"', desktop_source)
+        self.assertIn("qrc:///qtwebchannel/qwebchannel.js", self.template_source)
+        self.assertIn("readNativeClipboard()", self.template_source)
+        self.assertIn('new File([blob], clipboardFileName("image/png")', self.template_source)
+
     def test_same_name_uploads_publish_unique_completed_files(self):
         key = app.session_snapshot()["key"]
         env = {"REMOTE_ADDR": "192.168.1.59", "HTTP_HOST": "192.168.1.2:8000"}
@@ -545,6 +565,26 @@ class DropAirReleaseUiTests(unittest.TestCase):
         finally:
             for name in names:
                 (app.UPLOAD_DIR / name).unlink(missing_ok=True)
+            app.invalidate_upload_snapshot()
+
+    def test_upload_publishes_completed_staging_file_without_copy_when_hardlinks_work(self):
+        key = app.session_snapshot()["key"]
+        name = "hardlink-publish-test.bin"
+        try:
+            with patch.object(app.shutil, "copyfileobj", side_effect=AssertionError("unexpected second disk copy")):
+                response = self.client.post(
+                    f"/api/upload?k={key}",
+                    data={"file": (io.BytesIO(b"complete payload"), name)},
+                    environ_overrides={"REMOTE_ADDR": "192.168.1.59", "HTTP_HOST": "192.168.1.2:8000"},
+                )
+            # On common local filesystems hard-link publication succeeds and
+            # never enters the compatibility copy path.
+            if response.status_code == 200:
+                self.assertEqual((app.UPLOAD_DIR / name).read_bytes(), b"complete payload")
+            else:
+                self.assertEqual(response.status_code, 500, response.get_json())
+        finally:
+            (app.UPLOAD_DIR / name).unlink(missing_ok=True)
             app.invalidate_upload_snapshot()
 
     def test_failed_upload_staging_is_hidden_and_removed(self):
@@ -906,6 +946,18 @@ class DropAirReleaseUiTests(unittest.TestCase):
         asset = app.find_release_setup_asset(info)
         self.assertIsNotNone(asset)
         self.assertEqual(asset["browser_download_url"], "setup")
+
+    def test_frozen_updater_targets_current_folder_logs_and_verifies_install(self):
+        source = Path(app.__file__).read_text(encoding="utf-8")
+        for marker in (
+            "-Verb RunAs -PassThru",
+            "/DIR=",
+            "update-install.log",
+            "update-helper.log",
+            "installedVersion -ne $expectedVersion",
+        ):
+            self.assertIn(marker, source)
+        self.assertNotIn("[Math]::Min(95, $percent + 2)", source)
 
     def test_updater_restart_resets_pyinstaller_environment(self):
         source = Path(app.__file__).read_text(encoding="utf-8")

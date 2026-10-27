@@ -39,6 +39,7 @@ $specPath = "build\spec_$stamp"
   --onedir `
   --windowed `
   --hidden-import app `
+  --hidden-import PySide6.QtWebChannel `
   --hidden-import winrt.windows.devices.bluetooth.advertisement `
   --hidden-import werkzeug.serving `
   --icon $iconAbs `
@@ -74,6 +75,7 @@ Get-ChildItem -LiteralPath $coreDir -Force | ForEach-Object {
   Copy-Item -LiteralPath $_.FullName -Destination $exeDir -Recurse -Force
 }
 Copy-Item -LiteralPath $assetsAbs -Destination (Join-Path $exeDir "assets") -Recurse -Force
+Copy-Item -LiteralPath $versionAbs -Destination (Join-Path $exeDir "VERSION") -Force
 $zeroconfLicense = Get-ChildItem ".venv\Lib\site-packages\zeroconf-*.dist-info\licenses\COPYING" -ErrorAction Stop | Select-Object -First 1
 $licenseDir = Join-Path $exeDir "licenses"
 New-Item -ItemType Directory -Path $licenseDir -Force | Out-Null

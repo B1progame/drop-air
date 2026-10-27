@@ -646,35 +646,42 @@ def install_update_from_release(info: dict) -> None:
                 eta_seconds=0,
             )
             helper = DATA_DIR / "finish-update.ps1"
+            install_log = DATA_DIR / "update-install.log"
+            helper_log = DATA_DIR / "update-helper.log"
+            install_dir = APP_DIR
             helper.write_text(
                 "\n".join(
                     [
                         "$ErrorActionPreference = 'Stop'",
-                        "function Show-Bar([string]$Label, [int]$Percent) {",
-                        "  $width = 28",
-                        "  $filled = [Math]::Floor($width * $Percent / 100)",
-                        "  $bar = ('#' * $filled) + ('-' * ($width - $filled))",
-                        "  Write-Host -NoNewline \"`r$Label`: [$bar] $Percent%\"",
-                        "}",
+                        f"$log = {powershell_literal(helper_log)}",
+                        f"$installDir = {powershell_literal(install_dir)}",
+                        f"$expectedVersion = {powershell_literal(str(info.get('latest_version', '')).lstrip('v'))}",
+                        "Start-Transcript -Path $log -Append | Out-Null",
+                        "trap { $_ | Out-String | Add-Content -Path $log; Write-Host ''; Write-Host ('Update failed: ' + $_.Exception.Message); Write-Host ('Details: ' + $log); exit 1 }",
                         "Start-Sleep -Milliseconds 700",
                         f"$setup = {powershell_literal(setup_exe)}",
-                        f"$app = {powershell_literal(APP_DIR / 'DropAir.exe' if getattr(sys, 'frozen', False) else Path(sys.executable))}",
+                        f"$app = {powershell_literal(APP_DIR / 'DropAir.exe')}",
+                        f"$installLog = {powershell_literal(install_log)}",
                         "Write-Host ''",
-                        "Write-Host 'Installing Drop Air update...'",
-                        "$proc = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS' -PassThru",
-                        "$percent = 3",
+                        "Write-Host ('Installing Drop Air ' + $expectedVersion + '...')",
+                        "Write-Host 'If Windows asks for permission, approve the Drop Air installer.'",
+                        "$setupArguments = \"/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /SP- /DIR=`\"$installDir`\" /LOG=`\"$installLog`\"\"",
+                        "$proc = Start-Process -FilePath $setup -ArgumentList $setupArguments -Verb RunAs -PassThru",
                         "while (-not $proc.HasExited) {",
-                        "  Show-Bar 'Installing setup' $percent",
-                        "  $percent = [Math]::Min(95, $percent + 2)",
+                        "  Write-Host -NoNewline '.'",
                         "  Start-Sleep -Milliseconds 350",
                         "}",
                         "$proc.WaitForExit()",
                         "if ($proc.ExitCode -ne 0) { throw \"Installer failed with exit code $($proc.ExitCode).\" }",
-                        "Show-Bar 'Installing setup' 100",
+                        "$versionFiles = @((Join-Path $installDir 'VERSION'), (Join-Path $installDir '_internal\\VERSION'))",
+                        "$installedVersion = ''",
+                        "foreach ($versionFile in $versionFiles) { if (Test-Path $versionFile) { $installedVersion = (Get-Content $versionFile -Raw).Trim(); break } }",
+                        "if ($installedVersion -ne $expectedVersion) { throw \"Installed version check failed: expected $expectedVersion, found '$installedVersion'. See $installLog\" }",
                         "Write-Host ''",
                         "Write-Host 'Restarting Drop Air...'",
                         "$env:PYINSTALLER_RESET_ENVIRONMENT = '1'",
                         "Start-Process -FilePath $app",
+                        "Stop-Transcript | Out-Null",
                     ]
                 ),
                 encoding="utf-8",
@@ -1730,16 +1737,30 @@ def api_upload():
             candidate_name = safe_name if index == 0 else f"{stem}_{index}{suffix}"
             target = UPLOAD_DIR / candidate_name
             try:
-                fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                # The staging file is on the same volume. Publishing a hard link
+                # makes the completed upload visible atomically without copying
+                # every byte a second time (important for multi-gigabyte files).
+                os.link(staging, target)
             except FileExistsError:
                 index += 1
                 continue
-            reserved_target = target
-            with UPLOAD_SNAPSHOT_LOCK:
-                ACTIVE_UPLOAD_TARGETS.add(target.name)
-            os.close(fd)
-            with staging.open("rb") as source, target.open("wb") as destination:
-                shutil.copyfileobj(source, destination, 1024 * 1024)
+            except OSError:
+                # Some removable or network filesystems disallow hard links;
+                # keep those destinations working with the previous safe path.
+                try:
+                    fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                except FileExistsError:
+                    index += 1
+                    continue
+                reserved_target = target
+                with UPLOAD_SNAPSHOT_LOCK:
+                    ACTIVE_UPLOAD_TARGETS.add(target.name)
+                with staging.open("rb") as source, os.fdopen(fd, "wb") as destination:
+                    shutil.copyfileobj(source, destination, 1024 * 1024)
+            else:
+                reserved_target = target
+                with UPLOAD_SNAPSHOT_LOCK:
+                    ACTIVE_UPLOAD_TARGETS.add(target.name)
             staging.unlink(missing_ok=True)
             staging = None
             with UPLOAD_SNAPSHOT_LOCK:

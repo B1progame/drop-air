@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import ctypes
+import base64
 import importlib
 import os
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 from pathlib import Path
 
@@ -22,6 +24,7 @@ if getattr(sys, "frozen", False) and hasattr(os, "add_dll_directory"):
 
 APP_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
+PROCESS_START_TIME = time.perf_counter()
 
 
 def read_app_version() -> str:
@@ -47,9 +50,11 @@ if "--version" in sys.argv[1:]:
     print(f"Drop Air {APP_VERSION}")
     raise SystemExit(0)
 
-from PySide6.QtCore import QObject, QStandardPaths, QTimer, QUrl, Qt, Signal
-from PySide6.QtGui import QAction, QColor, QFont, QIcon, QKeySequence, QPainter, QPen
+from PySide6.QtCore import QObject, QBuffer, QIODevice, QStandardPaths, QTimer, QUrl, Qt, Signal, Slot
+from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPen
 from PySide6.QtWidgets import QApplication, QMainWindow, QMenu, QMessageBox, QStackedWidget, QSystemTrayIcon, QWidget
+
+QT_IMPORT_FINISHED_AT = time.perf_counter()
 
 
 APP_ID = "B1progame.DropAir.Desktop"
@@ -75,38 +80,28 @@ def icon_for_app() -> QIcon:
 class StartupSkeleton(QWidget):
     """Paint the branded loading frame with Qt widgets, before Chromium is imported."""
 
-    def __init__(self, parent=None, icon: QIcon | None = None):
+    def __init__(self, parent=None):
         super().__init__(parent)
         self.setAccessibleName("Loading Drop Air")
         self.setMinimumSize(560, 520)
         self.setAutoFillBackground(True)
-        self._brand_icon = icon.pixmap(42, 42) if icon and not icon.isNull() else None
-        self._loading_phase = 0
-        self._loading_timer = QTimer(self)
-        self._loading_timer.setInterval(50)
-        self._loading_timer.timeout.connect(self._advance_loading)
-        self._loading_timer.start()
-
-    def _advance_loading(self) -> None:
-        self._loading_phase = (self._loading_phase + 1) % 36
-        self.update()
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(self.rect(), QColor("#171a1d"))
         width = self.width()
-        margin = 24 if width > 760 else 16
-        gap = 16
-        usable = max(1, width - margin * 2)
-        left_width = max(240, (usable - gap) // 2)
-        right_x = margin + left_width + gap
-        right_width = max(160, usable - left_width - gap)
-        bone = QColor("#30363a")
-        bone_light = QColor("#3b4246")
+        height = self.height()
+        card_width = min(560, max(280, width - 40))
+        card_height = 116
+        gap = 20
+        total_height = card_height * 3 + gap * 2
+        left = (width - card_width) / 2
+        top = (height - total_height) / 2
+        bone = QColor("#303437")
+        bone_light = QColor("#373c40")
         panel = QColor("#202428")
-        edge = QColor("#373f43")
-        accent = QColor("#21bac8")
+        edge = QColor("#30373b")
 
         def rounded(x, y, w, h, color, radius=6):
             painter.setPen(Qt.PenStyle.NoPen)
@@ -118,100 +113,41 @@ class StartupSkeleton(QWidget):
             painter.setBrush(panel)
             painter.drawRoundedRect(int(x), int(y), int(w), int(h), 8, 8)
 
-        rounded(margin, 24, 42, 42, bone_light, 10)
-        if self._brand_icon is not None:
-            painter.drawPixmap(margin, 24, self._brand_icon)
-        painter.setPen(QColor("#edf2f4"))
-        title_font = QFont(painter.font())
-        title_font.setPointSize(17)
-        title_font.setWeight(QFont.Weight.DemiBold)
-        painter.setFont(title_font)
-        painter.drawText(margin + 56, 44, "Drop Air")
-        subtitle_font = QFont(painter.font())
-        subtitle_font.setPointSize(9)
-        subtitle_font.setWeight(QFont.Weight.Normal)
-        painter.setFont(subtitle_font)
-        painter.setPen(QColor("#9ba8ad"))
-        painter.drawText(margin + 56, 62, "Getting things ready...")
-        rounded(max(margin, width - margin - 110), 34, 110, 24, bone, 12)
-        # A single moving accent makes the whole skeleton feel active without
-        # adding motion to every placeholder or delaying the first paint.
-        track_x, track_y, track_width = margin + 56, 72, min(190, max(80, width - margin * 2 - 220))
-        rounded(track_x, track_y, track_width, 2, QColor("#293135"), 1)
-        segment_width = max(28, track_width // 4)
-        segment_x = track_x + int((track_width + segment_width) * self._loading_phase / 36) - segment_width
-        rounded(segment_x, track_y, segment_width, 2, accent, 1)
-        # Mirror the dashboard: the connection strip spans both columns, then
-        # Send / Incoming sit side-by-side with Text Relay beneath Send.
-        connect_y = 96
-        connect_height = 100
-        panel_box(margin, connect_y, usable, connect_height)
-        qr_x, qr_y, qr_size = margin + 16, connect_y + 16, 68
-        rounded(qr_x, qr_y, qr_size, qr_size, QColor("#dce3e5"), 6)
-        for finder_x, finder_y in ((qr_x + 7, qr_y + 7), (qr_x + 43, qr_y + 7), (qr_x + 7, qr_y + 43)):
-            rounded(finder_x, finder_y, 18, 18, QColor("#30383c"), 2)
-            rounded(finder_x + 4, finder_y + 4, 10, 10, QColor("#dce3e5"), 1)
-        rounded(margin + 100, connect_y + 24, min(212, usable - 260), 18, bone, 5)
-        rounded(margin + 100, connect_y + 52, min(310, usable - 260), 12, bone, 4)
-        rounded(margin + 100, connect_y + 74, min(235, usable - 260), 10, bone, 4)
-        rounded(margin + usable - 136, connect_y + 32, 112, 36, QColor("#23464a"), 9)
-
-        panel_y = connect_y + connect_height + 14
-        upload_height = max(300, int(self.height() * .29))
-        panel_box(margin, panel_y, left_width, upload_height)
-        rounded(margin + 16, panel_y + 16, 112, 18, bone, 5)
-        rounded(margin + 16, panel_y + 42, min(184, left_width - 32), 12, bone, 4)
-        rounded(margin + left_width - 74, panel_y + 22, 58, 24, bone, 12)
-        drop_y = panel_y + 82
-        drop_h = max(120, upload_height - 96)
-        painter.setPen(QPen(QColor("#28565b"), 1, Qt.PenStyle.DashLine))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRoundedRect(int(margin + 8), int(drop_y), int(left_width - 16), int(drop_h), 8, 8)
-        center_x = margin + left_width / 2
-        rounded(center_x - 22, drop_y + drop_h * .28, 44, 44, bone_light, 10)
-        # Upload-arrow silhouette, matching the actual dropzone action.
-        painter.setPen(QPen(accent, 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-        arrow_x, arrow_y = int(center_x), int(drop_y + drop_h * .28)
-        painter.drawLine(arrow_x, arrow_y + 30, arrow_x, arrow_y + 14)
-        painter.drawLine(arrow_x, arrow_y + 14, arrow_x - 6, arrow_y + 20)
-        painter.drawLine(arrow_x, arrow_y + 14, arrow_x + 6, arrow_y + 20)
-        painter.drawLine(arrow_x - 9, arrow_y + 29, arrow_x - 9, arrow_y + 34)
-        painter.drawLine(arrow_x - 9, arrow_y + 34, arrow_x + 9, arrow_y + 34)
-        rounded(center_x - min(130, left_width * .33), drop_y + drop_h * .28 + 58, min(260, left_width * .66), 15, bone, 5)
-        rounded(center_x - 60, drop_y + drop_h * .28 + 86, 120, 42, bone, 8)
-
-        text_y = panel_y + upload_height + gap
-        panel_box(margin, text_y, left_width, 244)
-        rounded(margin + 16, text_y + 18, 112, 18, bone, 5)
-        rounded(margin + left_width - 74, text_y + 15, 58, 24, bone, 12)
-        painter.setPen(QPen(edge, 1))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRoundedRect(int(margin + 8), int(text_y + 56), int(left_width - 16), 112, 8, 8)
-        rounded(margin + 20, text_y + 72, min(280, left_width - 56), 10, bone, 4)
-        rounded(margin + 20, text_y + 92, min(190, left_width - 56), 10, bone, 4)
-        rounded(margin + 20, text_y + 126, min(240, left_width - 56), 10, bone, 4)
-        rounded(margin + 20, text_y + 190, 104, 34, QColor("#23464a"), 8)
-
-        list_height = 278
-        panel_box(right_x, panel_y, right_width, list_height)
-        rounded(right_x + 16, panel_y + 16, 112, 18, bone, 5)
-        rounded(right_x + 16, panel_y + 42, min(184, right_width - 32), 12, bone, 4)
+        title_widths = (218, 204, 232)
+        line_widths = ((330, 394, 286), (352, 410, 318), (310, 420, 292))
+        text_x = left + 94
         for index in range(3):
-            row_y = panel_y + 68 + index * 66
-            if row_y + 64 > panel_y + list_height:
-                break
-            if index:
-                painter.setPen(QPen(edge, 1))
-                painter.drawLine(int(right_x + 1), int(row_y), int(right_x + right_width - 1), int(row_y))
-            rounded(right_x + 14, row_y + 12, 36, 36, bone_light, 8)
-            rounded(right_x + 62, row_y + 14, min(230, right_width - 120), 15, bone, 5)
-            rounded(right_x + 62, row_y + 36, min(86, right_width - 120), 10, bone, 4)
+            row_y = top + index * (card_height + gap)
+            panel_box(left, row_y, card_width, card_height)
+            rounded(left + 22, row_y + 30, 56, 56, bone_light, 28)
+            rounded(text_x, row_y + 18, min(title_widths[index], card_width - 122), 15, bone, 5)
+            for line_index, line_width in enumerate(line_widths[index]):
+                rounded(text_x, row_y + 48 + line_index * 13, min(line_width, card_width - 122), 4, bone_light, 2)
         painter.end()
 
 
 class StartupSignals(QObject):
     backend_ready = Signal(object, object, str)
     backend_failed = Signal(str)
+
+
+class ClipboardBridge(QObject):
+    """Read clipboard data after an explicit click in the desktop dashboard."""
+
+    @Slot(result="QVariantMap")
+    def readClipboard(self) -> dict:
+        mime = QApplication.clipboard().mimeData()
+        result = {"text": mime.text() if mime.hasText() else "", "image": ""}
+        if mime.hasImage():
+            image = mime.imageData()
+            if hasattr(image, "toImage"):
+                image = image.toImage()
+            buffer = QBuffer()
+            buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+            if image.save(buffer, "PNG"):
+                result["image"] = base64.b64encode(bytes(buffer.data())).decode("ascii")
+            buffer.close()
+        return result
 
 
 class DropAirWindow(QMainWindow):
@@ -242,7 +178,7 @@ class DropAirWindow(QMainWindow):
             self.tray_icon.show()
 
         self.web = None
-        self._startup_skeleton = StartupSkeleton(self, icon)
+        self._startup_skeleton = StartupSkeleton(self)
         self._startup_stack = QStackedWidget(self)
         self._startup_stack.addWidget(self._startup_skeleton)
         self.setCentralWidget(self._startup_stack)
@@ -257,11 +193,12 @@ class DropAirWindow(QMainWindow):
             self.web.reload()
 
     def _page_load_finished(self, success: bool) -> None:
+        if backend is not None:
+            print(f"Startup profile: dashboard load finished={success} at {time.perf_counter() - PROCESS_START_TIME:.2f}s")
         if success:
             self._dashboard_healthy = True
             if self.web is not None:
                 self._startup_stack.setCurrentWidget(self.web)
-                self._startup_skeleton._loading_timer.stop()
             mark_startup_healthy()
         elif launch_previous_version("The dashboard failed to load after startup."):
             self._allow_close = True
@@ -277,8 +214,10 @@ class DropAirWindow(QMainWindow):
 
         # This slot runs only after the first skeleton paint and backend startup.
         # Importing WebEngine here keeps Chromium's initialization off the first frame.
+        webengine_import_started = time.perf_counter()
         from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
         from PySide6.QtWebEngineWidgets import QWebEngineView
+        print(f"Startup profile: Qt WebEngine imports took {time.perf_counter() - webengine_import_started:.2f}s")
 
         class DropAirPage(QWebEnginePage):
             def acceptNavigationRequest(self, target_url: QUrl, navigation_type, is_main_frame: bool) -> bool:
@@ -290,6 +229,12 @@ class DropAirWindow(QMainWindow):
 
         self.web = QWebEngineView(self)
         self.web.setPage(DropAirPage(self.web))
+        from PySide6.QtWebChannel import QWebChannel
+
+        self._clipboard_bridge = ClipboardBridge(self)
+        self._web_channel = QWebChannel(self.web.page())
+        self._web_channel.registerObject("clipboardBridge", self._clipboard_bridge)
+        self.web.page().setWebChannel(self._web_channel)
         # The dashboard runs on a local HTTP origin. Clipboard API is unavailable
         # there, and Chromium also disables execCommand clipboard writes by default.
         self.web.settings().setAttribute(
@@ -379,11 +324,14 @@ class DropAirWindow(QMainWindow):
 
 def start_backend():
     global backend
+    backend_import_started = time.perf_counter()
     backend = importlib.import_module("app")
     from werkzeug.serving import make_server
 
     backend.initialize_log_file()
     backend.redirect_stdio_to_log_if_windowless()
+    print(f"Startup profile: Python and Qt imported by {QT_IMPORT_FINISHED_AT - PROCESS_START_TIME:.2f}s")
+    print(f"Startup profile: backend module import took {time.perf_counter() - backend_import_started:.2f}s")
     backend.register_shutdown_cleanup()
     host = "0.0.0.0"
     port = backend.select_server_port(backend.DEFAULT_PORT)
@@ -400,6 +348,7 @@ def start_backend():
     )
     thread.start()
     backend.start_peer_discovery(port)
+    print(f"Startup profile: local server ready at {time.perf_counter() - PROCESS_START_TIME:.2f}s")
 
     local_url = backend.build_local_url(settings["access_code"])
     separator = "&" if "?" in local_url else "?"
