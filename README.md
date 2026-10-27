@@ -2,6 +2,8 @@
 
 Fast local file sharing from a native desktop window to iPhone/iPad (and back) over the same Wi-Fi network.
 
+Current desktop release: **1.6.9**. Startup avoids blocking hostname lookups, shows launch progress, and recovers to the previous version if loading fails.
+
 ## Features
 
 - AirDrop-like local transfer (no cloud)

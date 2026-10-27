@@ -167,7 +167,7 @@ class DropAirReleaseUiTests(unittest.TestCase):
         main_source = desktop_source[desktop_source.index("def main() -> int:"):]
         self.assertLess(main_source.index("window.show()"), main_source.index("startup_thread.start()"))
         self.assertIn('name="DropAirBackendStartup"', main_source)
-        self.assertIn("backend_ready.connect(window.set_backend)", main_source)
+        self.assertIn("backend_ready.connect(window.set_backend, Qt.ConnectionType.QueuedConnection)", main_source)
         start = desktop_source.index("def start_backend():")
         end = desktop_source.index("\ndef schedule_startup_maintenance()", start)
         self.assertIn('importlib.import_module("app")', desktop_source[start:end])
@@ -204,6 +204,24 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("loadFinished.connect(self._page_load_finished)", desktop_source)
         self.assertIn("mark_startup_healthy()", desktop_source)
         self.assertIn('self.setAccessibleName("Loading Drop Air")', desktop_source)
+        self.assertIn('self.setWindowTitle(f"Drop Air {APP_VERSION} — Starting")', desktop_source)
+        self.assertIn('self.setWindowTitle(f"Drop Air {APP_VERSION}")', desktop_source)
+        self.assertIn('STARTUP_STAGE_TIMEOUT_MS = 45_000', desktop_source)
+        self.assertIn('"Preparing the dashboard engine…"', desktop_source)
+        self.assertIn('"Loading the Drop Air dashboard…"', desktop_source)
+        self.assertIn('self._status_timer.setInterval(420)', desktop_source)
+        self.assertIn('self.update(0, int(self._status_top()), self.width(), 36)', desktop_source)
+        self.assertIn('status_y = self._status_top()', desktop_source)
+        self.assertIn("self._install_webengine()", desktop_source)
+        self.assertIn('from PySide6.QtWebEngineCore import QWebEnginePage', desktop_source)
+        self.assertLess(
+            desktop_source.index("self._startup_stack.addWidget(self._startup_skeleton)"),
+            desktop_source.index("from PySide6.QtWebEngineCore import QWebEnginePage"),
+        )
+        self.assertIn("renderProcessTerminated.connect(self._render_process_terminated)", desktop_source)
+        self.assertIn("loadProgress.connect(self._dashboard_load_progress)", desktop_source)
+        self.assertIn('f"Loading the Drop Air dashboard ({progress}%)…"', desktop_source)
+        self.assertIn("self.web.reload()", desktop_source)
         self.assertIn("title_widths = (218, 204, 232)", desktop_source)
         self.assertIn("line_widths = ((330, 394, 286)", desktop_source)
         self.assertIn("Text Relay", self.template_source)
@@ -220,6 +238,25 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("line_widths[3][3]", launcher)
         self.assertIn("has_core_window()", launcher)
         self.assertIn("if self._tray_available and not self._allow_close:", (root / "desktop_app.py").read_text(encoding="utf-8"))
+
+    def test_native_launcher_recovers_when_the_core_never_opens_a_window(self):
+        root = Path(__file__).resolve().parents[1]
+        launcher = (root / "launcher" / "native_launcher.c").read_text(encoding="utf-8")
+        self.assertIn("STARTUP_WINDOW_TIMEOUT_MS = 60000", launcher)
+        self.assertIn("if (core_dashboard_ready() ||", launcher)
+        self.assertIn("if (has_core_window()) ShowWindow(window, SW_HIDE)", launcher)
+        self.assertIn('wcsncmp(title, L"Drop Air ", 9)', launcher)
+        self.assertIn("command_line && *command_line && !resume", launcher)
+        timeout_handler = launcher.split("} else if (core_process && core_launch_time", 1)[1].split("case WM_CLOSE:", 1)[0]
+        self.assertIn("TerminateProcess(core_process, 1)", timeout_handler)
+        self.assertIn("launch_previous_version_after_timeout()", timeout_handler)
+        self.assertIn("DestroyWindow(window)", timeout_handler)
+        self.assertNotIn("WaitForSingleObject", timeout_handler)
+        recovery = launcher.split("static BOOL launch_previous_version_after_timeout", 1)[1].split("static LRESULT CALLBACK", 1)[0]
+        self.assertIn('L"LOCALAPPDATA"', recovery)
+        self.assertIn('L"DROP_AIR_ROLLBACK_ACTIVE"', recovery)
+        self.assertIn('--resume', recovery)
+        self.assertNotIn("WaitForSingleObject", recovery)
 
     def test_native_launcher_reuses_and_restores_the_existing_instance(self):
         root = Path(__file__).resolve().parents[1]
@@ -261,6 +298,10 @@ class DropAirReleaseUiTests(unittest.TestCase):
                 self.assertTrue(desktop_app.launch_previous_version("simulated startup failure"))
                 self.assertEqual(failed.read_text(encoding="utf-8").splitlines()[0], desktop_app.APP_VERSION)
                 self.assertFalse(pending.exists())
+                # The native launcher's single-instance guard still sees this
+                # failing window until it closes. Resume waits for it to exit
+                # instead of focusing it and abandoning the rollback launch.
+                self.assertEqual(spawn.call_args.args[0], [str(rollback_exe), "--resume"])
                 child_env = spawn.call_args.kwargs["env"]
                 self.assertEqual(child_env[desktop_app.ROLLBACK_ACTIVE_ENV], "1")
                 self.assertEqual(child_env[desktop_app.PYINSTALLER_RESET_ENV], "1")
@@ -660,6 +701,18 @@ class DropAirReleaseUiTests(unittest.TestCase):
         second = self.client.post(f"/api/connections?k={key}", json={"client_id": "phone-b"}, environ_overrides=env)
         self.assertEqual(second.status_code, 200)
         self.assertEqual(second.get_json()["count"], 2)
+
+    def test_desktop_server_binds_without_hostname_dns_lookup(self):
+        with patch("socket.getfqdn", side_effect=AssertionError("Startup must not wait for DNS")):
+            server = app.make_local_server("127.0.0.1", 0)
+        try:
+            self.assertTrue(server.multithread)
+            self.assertEqual(server.server_address[0], "127.0.0.1")
+            self.assertGreater(server.server_port, 0)
+            self.assertEqual(server.socket.getsockname()[1], server.server_port)
+            self.assertEqual(server.socket.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN), 1)
+        finally:
+            server.server_close()
 
     def test_server_port_skips_occupied_default(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as blocker:

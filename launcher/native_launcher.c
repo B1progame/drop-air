@@ -9,7 +9,9 @@ static const UINT ACTIVATE_DROP_AIR = WM_APP + 41;
 static HWND startup_window;
 static HANDLE core_process;
 static DWORD core_pid;
+static ULONGLONG core_launch_time;
 static ULONGLONG process_exit_time;
+static const ULONGLONG STARTUP_WINDOW_TIMEOUT_MS = 60000;
 static wchar_t app_dir[32768];
 static HANDLE instance_mutex;
 static BOOL owns_instance_mutex;
@@ -50,6 +52,23 @@ static BOOL has_core_window(void) {
     WindowSearch search = { core_pid, NULL };
     EnumWindows(find_core_window_safe, (LPARAM)&search);
     return search.window != NULL;
+}
+
+static BOOL core_dashboard_ready(void) {
+    WindowSearch search = { core_pid, NULL };
+    EnumWindows(find_core_window_safe, (LPARAM)&search);
+    if (!search.window) return FALSE;
+    wchar_t title[128] = {0};
+    GetWindowTextW(search.window, title, 127);
+    if (wcsncmp(title, L"Drop Air ", 9) != 0) return FALSE;
+    // Qt keeps a "Starting" suffix until the dashboard has loaded. Only
+    // accept the final version title, never an error dialog or splash title.
+    BOOL has_digit = FALSE;
+    for (const wchar_t *character = title + 9; *character; ++character) {
+        if (iswdigit(*character)) has_digit = TRUE;
+        else if (*character != L'.') return FALSE;
+    }
+    return has_digit;
 }
 
 typedef struct { HWND window; } DropAirWindowSearch;
@@ -194,6 +213,38 @@ static void close_core(void) {
     else if (core_process) TerminateProcess(core_process, 0);
 }
 
+static BOOL launch_previous_version_after_timeout(void) {
+    wchar_t rollback_active[2] = {0};
+    if (GetEnvironmentVariableW(L"DROP_AIR_ROLLBACK_ACTIVE", rollback_active, 2) == 1 && rollback_active[0] == L'1') return FALSE;
+    wchar_t data_dir[32768];
+    DWORD length = GetEnvironmentVariableW(L"DROP_AIR_DATA_DIR", data_dir, 32768);
+    if (!length || length >= 32768) {
+        length = GetEnvironmentVariableW(L"LOCALAPPDATA", data_dir, 32768);
+        if (!length || length >= 32768) return FALSE;
+        if (wcslen(data_dir) + wcslen(L"\\DropAir") >= 32768) return FALSE;
+        wcscat(data_dir, L"\\DropAir");
+    }
+    wchar_t rollback_dir[32768];
+    wchar_t executable[32768];
+    wchar_t command[65536];
+    if (swprintf(rollback_dir, 32768, L"%ls\\rollback", data_dir) < 0) return FALSE;
+    if (_wcsicmp(app_dir, rollback_dir) == 0) return FALSE;
+    if (swprintf(executable, 32768, L"%ls\\DropAir.exe", rollback_dir) < 0) return FALSE;
+    DWORD attributes = GetFileAttributesW(executable);
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) return FALSE;
+    if (swprintf(command, 65536, L"\"%ls\" --resume", executable) < 0) return FALSE;
+    SetEnvironmentVariableW(L"DROP_AIR_ROLLBACK_ACTIVE", L"1");
+    SetEnvironmentVariableW(L"PYINSTALLER_RESET_ENVIRONMENT", L"1");
+    STARTUPINFOW startup = {0};
+    PROCESS_INFORMATION process = {0};
+    startup.cb = sizeof(startup);
+    if (!CreateProcessW(executable, command, NULL, NULL, FALSE, CREATE_UNICODE_ENVIRONMENT,
+                        NULL, rollback_dir, &startup, &process)) return FALSE;
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return TRUE;
+}
+
 static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
     case WM_PAINT: {
@@ -209,18 +260,28 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
         return 0;
     }
     case WM_TIMER:
-        if (has_core_window() || (process_exit_time && has_dropair_window())) {
+        if (core_dashboard_ready() || (process_exit_time && has_dropair_window())) {
             KillTimer(window, 1);
             ShowWindow(window, SW_HIDE);
             DestroyWindow(window);
             return 0;
         }
+        if (has_core_window()) ShowWindow(window, SW_HIDE);
         if (core_process && WaitForSingleObject(core_process, 0) == WAIT_OBJECT_0) {
             if (!process_exit_time) process_exit_time = GetTickCount64();
             if (GetTickCount64() - process_exit_time > 10000) {
                 MessageBoxW(window, L"Drop Air could not start. Try reinstalling the app.", L"Drop Air", MB_OK | MB_ICONERROR);
                 DestroyWindow(window);
             }
+        } else if (core_process && core_launch_time && GetTickCount64() - core_launch_time >= STARTUP_WINDOW_TIMEOUT_MS) {
+            KillTimer(window, 1);
+            // This handle is only our own child. A nonblocking termination and
+            // detached recovery launch keep the UI timer free of wait loops.
+            TerminateProcess(core_process, 1);
+            if (!launch_previous_version_after_timeout()) {
+                MessageBoxW(window, L"Drop Air did not open its dashboard within 60 seconds. Close it and try again, or reinstall the latest version.", L"Drop Air could not start", MB_OK | MB_ICONERROR);
+            }
+            DestroyWindow(window);
         }
         return 0;
     case WM_CLOSE:
@@ -257,6 +318,7 @@ static BOOL launch_core(const wchar_t *arguments, BOOL wait_for_exit) {
     }
     core_process = process.hProcess;
     core_pid = process.dwProcessId;
+    core_launch_time = GetTickCount64();
     CloseHandle(process.hThread);
     return TRUE;
 }
@@ -276,9 +338,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     }
 
     if (!acquire_instance_mutex()) return 0;
+    BOOL resume = command_line && wcscmp(command_line, L"--resume") == 0;
     ExistingAppSearch existing = find_existing_dropair();
     if (existing.window) {
-        BOOL resume = command_line && wcsstr(command_line, L"--resume") != NULL;
         if (!resume) {
             focus_dropair_window(existing.window, existing.process_id);
             release_instance_mutex();
@@ -298,7 +360,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
             return 0;
         }
     }
-    if (command_line && *command_line) {
+    if (command_line && *command_line && !resume) {
         release_instance_mutex();
         if (!launch_core(command_line, TRUE)) return 1;
         return 0;

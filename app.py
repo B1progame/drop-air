@@ -1132,6 +1132,23 @@ def select_server_port(preferred_port: int) -> int:
     raise OSError(f"No available port found from {preferred_port} to {preferred_port + scan_limit - 1}.")
 
 
+def make_local_server(host: str, port: int):
+    """Bind the desktop's threaded server without hostname/DNS discovery."""
+    from socketserver import TCPServer
+    from werkzeug.serving import ThreadedWSGIServer
+
+    class LocalWSGIServer(ThreadedWSGIServer):
+        def server_bind(self) -> None:
+            # HTTPServer.server_bind calls getfqdn(), which may wait for an
+            # unavailable DNS server. The app only needs its bound port and
+            # already builds its public URL from the active network interface.
+            TCPServer.server_bind(self)
+            self.server_name = "localhost"
+            self.server_port = self.server_address[1]
+
+    return LocalWSGIServer(host, port, app)
+
+
 def build_public_url(access_code: str | None = None) -> str:
     port = ACTIVE_PORT
     base_url = f"http://{get_local_ip()}:{port}/"

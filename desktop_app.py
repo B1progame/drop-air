@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import webbrowser
 from pathlib import Path
 
@@ -60,6 +61,7 @@ QT_IMPORT_FINISHED_AT = time.perf_counter()
 APP_ID = "B1progame.DropAir.Desktop"
 ROLLBACK_ACTIVE_ENV = "DROP_AIR_ROLLBACK_ACTIVE"
 PYINSTALLER_RESET_ENV = "PYINSTALLER_RESET_ENVIRONMENT"
+STARTUP_STAGE_TIMEOUT_MS = 45_000
 
 def set_windows_app_id() -> None:
     if sys.platform == "win32":
@@ -85,6 +87,27 @@ class StartupSkeleton(QWidget):
         self.setAccessibleName("Loading Drop Air")
         self.setMinimumSize(560, 520)
         self.setAutoFillBackground(True)
+        self._status = "Starting local sharing…"
+        self._progress = 8
+        self._status_dots = 0
+        self._status_timer = QTimer(self)
+        self._status_timer.setInterval(420)
+        self._status_timer.timeout.connect(self._advance_status)
+        self._status_timer.start()
+
+    def set_status(self, status: str, progress: int) -> None:
+        self._status = status
+        self._progress = max(0, min(100, int(progress)))
+        self.update()
+
+    def _advance_status(self) -> None:
+        self._status_dots = (self._status_dots + 1) % 4
+        self.update(0, int(self._status_top()), self.width(), 36)
+
+    def _status_top(self) -> float:
+        cards_height = 116 * 3 + 20 * 2
+        total_height = cards_height + 52
+        return (self.height() - total_height) / 2 + cards_height + 12
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
@@ -95,7 +118,7 @@ class StartupSkeleton(QWidget):
         card_width = min(560, max(280, width - 40))
         card_height = 116
         gap = 20
-        total_height = card_height * 3 + gap * 2
+        total_height = card_height * 3 + gap * 2 + 52
         left = (width - card_width) / 2
         top = (height - total_height) / 2
         bone = QColor("#303437")
@@ -123,6 +146,24 @@ class StartupSkeleton(QWidget):
             rounded(text_x, row_y + 18, min(title_widths[index], card_width - 122), 15, bone, 5)
             for line_index, line_width in enumerate(line_widths[index]):
                 rounded(text_x, row_y + 48 + line_index * 13, min(line_width, card_width - 122), 4, bone_light, 2)
+        status_y = self._status_top()
+        painter.setPen(QColor("#aab3b8"))
+        status_font = painter.font()
+        status_font.setPointSize(9)
+        painter.setFont(status_font)
+        painter.drawText(
+            0,
+            int(status_y),
+            width,
+            18,
+            Qt.AlignmentFlag.AlignHCenter,
+            self._status + "." * self._status_dots,
+        )
+        progress_width = min(300, max(180, width - 80))
+        progress_x = (width - progress_width) / 2
+        rounded(progress_x, status_y + 25, progress_width, 3, bone, 2)
+        if self._progress:
+            rounded(progress_x, status_y + 25, progress_width * self._progress / 100, 3, QColor("#20b8c8"), 2)
         painter.end()
 
 
@@ -159,7 +200,13 @@ class DropAirWindow(QMainWindow):
         self._allow_close = False
         self._dashboard_url = ""
         self._dashboard_healthy = False
-        self.setWindowTitle(f"Drop Air {APP_VERSION}")
+        self._startup_failure_active = False
+        self._startup_stage = "local service"
+        self._startup_signals = None
+        self._startup_timeout = QTimer(self)
+        self._startup_timeout.setSingleShot(True)
+        self._startup_timeout.timeout.connect(self._startup_timed_out)
+        self.setWindowTitle(f"Drop Air {APP_VERSION} — Starting")
         self.setWindowIcon(icon)
         self.resize(1092, 1255)
 
@@ -193,66 +240,124 @@ class DropAirWindow(QMainWindow):
             self.web.reload()
 
     def _page_load_finished(self, success: bool) -> None:
+        if self._shutting_down or self._startup_failure_active:
+            return
         if backend is not None:
             print(f"Startup profile: dashboard load finished={success} at {time.perf_counter() - PROCESS_START_TIME:.2f}s")
         if success:
+            self._startup_timeout.stop()
+            self._startup_skeleton._status_timer.stop()
             self._dashboard_healthy = True
+            self.setWindowTitle(f"Drop Air {APP_VERSION}")
             if self.web is not None:
                 self._startup_stack.setCurrentWidget(self.web)
             mark_startup_healthy()
-        elif launch_previous_version("The dashboard failed to load after startup."):
-            self._allow_close = True
-            self.close()
         else:
-            QMessageBox.critical(self, "Drop Air could not load", "The dashboard failed to load.")
+            self.show_startup_error("The dashboard failed to load after startup.")
 
+    def _dashboard_load_progress(self, progress: int) -> None:
+        if self._shutting_down or self._startup_failure_active or self._dashboard_healthy:
+            return
+        if progress in {0, 25, 50, 75, 100}:
+            print(
+                f"Startup profile: dashboard load progress={progress}% at {time.perf_counter() - PROCESS_START_TIME:.2f}s",
+                flush=True,
+            )
+        self._startup_skeleton.set_status(
+            f"Loading the Drop Air dashboard ({progress}%)…",
+            72 + round(progress * 0.28),
+        )
+
+    def _set_startup_stage(self, stage: str, message: str, progress: int) -> None:
+        self._startup_stage = stage
+        self._startup_skeleton.set_status(message, progress)
+        self._startup_timeout.start(STARTUP_STAGE_TIMEOUT_MS)
+
+    def _startup_timed_out(self) -> None:
+        self.show_startup_error(
+            f"Drop Air stopped responding while {self._startup_stage} was starting."
+        )
+
+    def _render_process_terminated(self, status, exit_code: int) -> None:
+        status_text = getattr(status, "name", str(status))
+        self.show_startup_error(
+            f"The dashboard renderer stopped ({status_text}, code {exit_code})."
+        )
+
+    @Slot(object, object, str)
     def set_backend(self, server, server_thread: threading.Thread, url: str) -> None:
+        if self._shutting_down or self._startup_failure_active:
+            server.shutdown()
+            server.server_close()
+            if backend is not None:
+                backend.shutdown_drop_air()
+            server_thread.join(timeout=1)
+            return
         self._server = server
         self._server_thread = server_thread
         self._dashboard_url = url
         schedule_startup_maintenance()
+        self._set_startup_stage("dashboard engine", "Preparing the dashboard engine…", 42)
+        self._install_webengine()
 
-        # This slot runs only after the first skeleton paint and backend startup.
-        # Importing WebEngine here keeps Chromium's initialization off the first frame.
-        webengine_import_started = time.perf_counter()
-        from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
-        from PySide6.QtWebEngineWidgets import QWebEngineView
-        print(f"Startup profile: Qt WebEngine imports took {time.perf_counter() - webengine_import_started:.2f}s")
-
-        class DropAirPage(QWebEnginePage):
-            def acceptNavigationRequest(self, target_url: QUrl, navigation_type, is_main_frame: bool) -> bool:
-                host = (target_url.host() or "").lower()
-                if target_url.scheme() in {"http", "https"} and host not in {"127.0.0.1", "localhost", "::1"}:
-                    webbrowser.open(target_url.toString())
-                    return False
-                return super().acceptNavigationRequest(target_url, navigation_type, is_main_frame)
-
-        self.web = QWebEngineView(self)
-        self.web.setPage(DropAirPage(self.web))
-        from PySide6.QtWebChannel import QWebChannel
-
-        self._clipboard_bridge = ClipboardBridge(self)
-        self._web_channel = QWebChannel(self.web.page())
-        self._web_channel.registerObject("clipboardBridge", self._clipboard_bridge)
-        self.web.page().setWebChannel(self._web_channel)
-        # The dashboard runs on a local HTTP origin. Clipboard API is unavailable
-        # there, and Chromium also disables execCommand clipboard writes by default.
-        self.web.settings().setAttribute(
-            QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard,
-            True,
-        )
-        self.web.loadFinished.connect(self._page_load_finished)
-        self._startup_stack.addWidget(self.web)
-        profile = QWebEngineProfile.defaultProfile()
+    @Slot()
+    def _install_webengine(self) -> None:
+        if self._shutting_down or self._startup_failure_active:
+            return
         try:
-            Path(self._download_directory()).mkdir(parents=True, exist_ok=True)
-            profile.setDownloadPath(self._download_directory())
-        except (OSError, AttributeError):
-            pass
-        profile.downloadRequested.connect(self._save_download)
-        self.web.setUrl(QUrl(self._dashboard_url))
+            webengine_import_started = time.perf_counter()
+            from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
+            from PySide6.QtWebEngineWidgets import QWebEngineView
+            from PySide6.QtWebChannel import QWebChannel
+            print(f"Startup profile: Qt WebEngine imports took {time.perf_counter() - webengine_import_started:.2f}s", flush=True)
 
+            class DropAirPage(QWebEnginePage):
+                def acceptNavigationRequest(self, target_url: QUrl, navigation_type, is_main_frame) -> bool:
+                    host = (target_url.host() or "").lower()
+                    if target_url.scheme() in {"http", "https"} and host not in {"127.0.0.1", "localhost", "::1"}:
+                        webbrowser.open(target_url.toString())
+                        return False
+                    return super().acceptNavigationRequest(target_url, navigation_type, is_main_frame)
+
+            print("Startup profile: creating dashboard view", flush=True)
+            self.web = QWebEngineView(self)
+            print("Startup profile: dashboard view created", flush=True)
+            self.web.setPage(DropAirPage(self.web))
+            print("Startup profile: dashboard page attached", flush=True)
+
+            self._clipboard_bridge = ClipboardBridge(self)
+            self._web_channel = QWebChannel(self.web.page())
+            self._web_channel.registerObject("clipboardBridge", self._clipboard_bridge)
+            self.web.page().setWebChannel(self._web_channel)
+            print("Startup profile: clipboard bridge attached", flush=True)
+            self.web.settings().setAttribute(
+                QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard,
+                True,
+            )
+            self.web.loadFinished.connect(self._page_load_finished)
+            self.web.loadProgress.connect(self._dashboard_load_progress)
+            self.web.page().renderProcessTerminated.connect(self._render_process_terminated)
+            self._startup_stack.addWidget(self.web)
+            profile = QWebEngineProfile.defaultProfile()
+            try:
+                Path(self._download_directory()).mkdir(parents=True, exist_ok=True)
+                profile.setDownloadPath(self._download_directory())
+            except (OSError, AttributeError):
+                pass
+            profile.downloadRequested.connect(self._save_download)
+            self._set_startup_stage("dashboard page", "Loading the Drop Air dashboard…", 72)
+            self.web.setUrl(QUrl(self._dashboard_url))
+            print("Startup profile: dashboard URL requested", flush=True)
+        except Exception as exc:
+            print(f"Startup profile: dashboard initialization failed: {traceback.format_exc()}", flush=True)
+            self.show_startup_error(f"The dashboard could not be initialized: {exc}")
+
+    @Slot(str)
     def show_startup_error(self, message: str) -> None:
+        if self._shutting_down or self._startup_failure_active:
+            return
+        self._startup_failure_active = True
+        self._startup_timeout.stop()
         if launch_previous_version(message):
             if self._tray_available:
                 self.tray_icon.showMessage(
@@ -263,7 +368,26 @@ class DropAirWindow(QMainWindow):
             self._allow_close = True
             self.close()
             return
-        QMessageBox.critical(self, "Drop Air could not start", message)
+        self._startup_skeleton.set_status("Startup failed — close and try again", 0)
+        self._startup_skeleton._status_timer.stop()
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Critical)
+        box.setWindowTitle("Drop Air could not start")
+        box.setText(message)
+        if self.web is not None:
+            retry_button = box.addButton("Retry", QMessageBox.ButtonRole.AcceptRole)
+        else:
+            retry_button = None
+        box.addButton("Close", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if retry_button is not None and box.clickedButton() is retry_button:
+            self._startup_failure_active = False
+            self._startup_skeleton._status_timer.start()
+            self._set_startup_stage("dashboard page", "Retrying the dashboard…", 72)
+            self.web.reload()
+        else:
+            self._allow_close = True
+            self.close()
 
     def _show_from_tray(self) -> None:
         self.showNormal()
@@ -326,8 +450,6 @@ def start_backend():
     global backend
     backend_import_started = time.perf_counter()
     backend = importlib.import_module("app")
-    from werkzeug.serving import make_server
-
     backend.initialize_log_file()
     backend.redirect_stdio_to_log_if_windowless()
     print(f"Startup profile: Python and Qt imported by {QT_IMPORT_FINISHED_AT - PROCESS_START_TIME:.2f}s")
@@ -339,7 +461,7 @@ def start_backend():
     settings = backend.get_settings()
     backend.configure_request_logging()
 
-    server = make_server(host, port, backend.app, threaded=True)
+    server = backend.make_local_server(host, port)
     thread = threading.Thread(
         target=server.serve_forever,
         kwargs={"poll_interval": 0.1},
@@ -455,7 +577,7 @@ def launch_previous_version(reason: str) -> bool:
         environment[ROLLBACK_ACTIVE_ENV] = "1"
         environment[PYINSTALLER_RESET_ENV] = "1"
         subprocess.Popen(
-            [str(rollback_executable)],
+            [str(rollback_executable), "--resume"],
             cwd=str(rollback_executable.parent),
             close_fds=True,
             env=environment,
@@ -494,9 +616,11 @@ def main() -> int:
     window = DropAirWindow(icon)
     mark_startup_pending()
     startup_signals = StartupSignals()
+    window._startup_signals = startup_signals
     startup_results = []
-    startup_signals.backend_ready.connect(window.set_backend)
-    startup_signals.backend_failed.connect(window.show_startup_error)
+    startup_signals.backend_ready.connect(window.set_backend, Qt.ConnectionType.QueuedConnection)
+    startup_signals.backend_failed.connect(window.show_startup_error, Qt.ConnectionType.QueuedConnection)
+    window._set_startup_stage("local service", "Starting local sharing…", 8)
     window.show()
     startup_threads = []
 
@@ -505,8 +629,10 @@ def main() -> int:
             result = start_backend()
             startup_results.append(result)
             startup_signals.backend_ready.emit(*result)
-        except Exception as exc:
-            startup_signals.backend_failed.emit(str(exc))
+        except BaseException as exc:
+            diagnostic = traceback.format_exc()
+            print(f"Startup profile: backend initialization failed: {diagnostic}", flush=True)
+            startup_signals.backend_failed.emit(str(exc) or type(exc).__name__)
 
     def start_backend_thread() -> None:
         startup_thread = threading.Thread(
@@ -522,7 +648,7 @@ def main() -> int:
     QTimer.singleShot(80, start_backend_thread)
     exit_code = app.exec()
     for startup_thread in startup_threads:
-        startup_thread.join()
+        startup_thread.join(timeout=1)
 
     # If the user quit while the skeleton was still showing, clean up a backend
     # that finished after the Qt event loop had stopped dispatching signals.
