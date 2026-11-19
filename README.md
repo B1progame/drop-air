@@ -2,7 +2,7 @@
 
 Fast local file sharing from a native desktop window to iPhone/iPad (and back) over the same Wi-Fi network.
 
-Current desktop release: **1.6.9**. Startup avoids blocking hostname lookups, shows launch progress, and recovers to the previous version if loading fails.
+Current desktop release: **1.6.10**. The Windows installer offers Normal and Portable setup types; Portable keeps app data beside the launcher.
 
 ## Features
 
@@ -121,6 +121,8 @@ Output:
 .\build_installer.ps1
 ```
 
+The installer offers **Normal installation** (Start menu and optional desktop shortcuts, with per-user app data) and **Portable installation** (settings, uploads, and logs stored in a `data` folder beside Drop Air). The portable ZIP uses the same data-folder layout.
+
 Output:
 
 - `dist\DropAir.exe`
@@ -175,3 +177,7 @@ Adds a **Find devices** action to the transfer page for desktop and iPhone brows
 ## Drop Air 1.6.8
 
 Redesigns both startup skeletons to match the supplied circular-avatar and varied-line reference, with static placeholders that avoid repeated repaint work. Desktop paste now reads text and images from the native clipboard when browser clipboard access is unavailable. Uploads publish staged files atomically without a second full-file copy on filesystems that support hard links, and the transfer progress bar shows percentage, rolling speed, and remaining time. The updater now requests the required Windows elevation, targets the existing install folder, logs installer output, and verifies the installed version before restarting.
+
+## Drop Air 1.6.10
+
+Adds Normal and Portable installation types to the Inno Setup wizard. Portable mode, including the standalone portable ZIP, stores settings, uploads, and logs in a `data` folder beside the launcher. Normal mode retains per-user app data and the Start menu and optional desktop shortcuts.

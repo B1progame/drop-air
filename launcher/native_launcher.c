@@ -329,9 +329,21 @@ static void app_directory(void) {
     if (separator) *separator = L'\0';
 }
 
+static void configure_portable_data_dir(void) {
+    wchar_t marker[32768];
+    wchar_t data_dir[32768];
+    if (swprintf(marker, 32768, L"%ls\\portable.mode", app_dir) < 0) return;
+    DWORD attributes = GetFileAttributesW(marker);
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) return;
+    if (swprintf(data_dir, 32768, L"%ls\\data", app_dir) < 0) return;
+    CreateDirectoryW(data_dir, NULL);
+    SetEnvironmentVariableW(L"DROP_AIR_DATA_DIR", data_dir);
+}
+
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, int show_command) {
     (void)previous;
     app_directory();
+    configure_portable_data_dir();
     if (command_line && (wcscmp(command_line, L"--version") == 0 || wcscmp(command_line, L"-V") == 0)) {
         if (!launch_core(command_line, TRUE)) return 1;
         return 0;

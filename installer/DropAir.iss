@@ -45,25 +45,44 @@ CloseApplications=yes
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Components: normal; Flags: unchecked
+Name: "startmenu"; Description: "Create a Start menu shortcut"; GroupDescription: "{cm:AdditionalIcons}"; Components: normal
+
+[Types]
+Name: "normal"; Description: "Normal installation (shortcuts and per-user app data)"
+Name: "portable"; Description: "Portable installation (keeps app data beside Drop Air)"
+
+[Components]
+Name: "normal"; Description: "Normal installation with shortcuts and per-user app data"; Types: normal; Flags: fixed
+Name: "portable"; Description: "Portable installation with app data beside Drop Air"; Types: portable; Flags: fixed
 
 [Dirs]
 Name: "{app}\uploads"
+Name: "{app}\data"; Check: IsPortableInstall
 
 [Files]
-Source: "{app}\*"; DestDir: "{localappdata}\DropAir\rollback"; Flags: external ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist uninsneveruninstall; Check: ShouldSaveRollbackBackup
+Source: "{app}\*"; DestDir: "{localappdata}\DropAir\rollback"; Excludes: "portable.mode,data\*"; Flags: external ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist uninsneveruninstall; Check: ShouldSaveRollbackBackup
 Source: "..\dist\{#MyAppName}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "portable.mode"; DestDir: "{app}"; Flags: ignoreversion; Check: IsPortableInstall
 Source: "..\templates\*"; DestDir: "{app}\templates"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[InstallDelete]
+Type: files; Name: "{app}\portable.mode"; Check: not IsPortableInstall
+
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\assets\icon\drop_air_brand.ico"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\assets\icon\drop_air_brand.ico"; Tasks: desktopicon
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\assets\icon\drop_air_brand.ico"; Tasks: startmenu; Components: normal
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\assets\icon\drop_air_brand.ico"; Tasks: desktopicon; Components: normal
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+function IsPortableInstall: Boolean;
+begin
+  Result := WizardIsComponentSelected('portable');
+end;
+
 function ShouldSaveRollbackBackup: Boolean;
 begin
   Result := not FileExists(ExpandConstant('{localappdata}\DropAir\rollback\startup-failed.txt'));

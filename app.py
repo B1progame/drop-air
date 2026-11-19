@@ -44,6 +44,10 @@ def get_data_dir() -> Path:
     if env_override:
         return Path(env_override).expanduser()
 
+    # Portable packages keep settings and received files beside the launcher.
+    if (APP_DIR / "portable.mode").is_file():
+        return APP_DIR / "data"
+
     if os.name == "nt":
         local_appdata = (os.getenv("LOCALAPPDATA") or "").strip()
         if local_appdata:

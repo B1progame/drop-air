@@ -98,6 +98,7 @@ function New-ReleaseBundle {
   $publishScriptPath = Join-Path $TargetDir "publish-github-release.ps1"
 
   Copy-Item -LiteralPath $PortableFolderPath -Destination $portableTarget -Recurse -Force
+  Set-Content -LiteralPath (Join-Path $portableTarget "portable.mode") -Value "Drop Air portable data lives in the data folder beside this file." -Encoding ascii
   Copy-Item -LiteralPath $InstallerExePath -Destination $installerTarget -Force
   Compress-Archive -LiteralPath $portableTarget -DestinationPath $zipTarget -CompressionLevel Optimal -Force
 
@@ -122,18 +123,20 @@ function New-ReleaseBundle {
     "2. Create or push the git tag $Version.",
     "3. Open $releaseUrl",
     "4. Create a release from tag $Version.",
-    "5. Upload $installerName as the release asset.",
+    "5. Upload $installerName, $zipName, and SHA256SUMS.txt as release assets.",
     "6. The in-app updater downloads that setup installer, runs it silently, and restarts Drop Air."
   )
   Set-Content -LiteralPath $notesPath -Value $notes -Encoding utf8
 
   if ($Repo) {
-    $publishScript = @(
-      '$ErrorActionPreference = "Stop"',
-      '$root = Split-Path -Parent $MyInvocation.MyCommand.Path',
-      '$installer = Join-Path $root "' + $installerName + '"',
-      'gh release create ' + $Version + ' $installer --repo ' + $Repo + ' --title "' + $Version + '" --notes "Drop Air ' + $Version + ' release." --draft'
-    )
+    $publishScript = @"
+`$ErrorActionPreference = "Stop"
+`$root = Split-Path -Parent `$MyInvocation.MyCommand.Path
+`$installer = Join-Path `$root "$installerName"
+`$portable = Join-Path `$root "$zipName"
+`$checksums = Join-Path `$root "SHA256SUMS.txt"
+gh release create $Version `$installer `$portable `$checksums --repo $Repo --title "$Version" --notes "Drop Air $Version release." --draft
+"@
     Set-Content -LiteralPath $publishScriptPath -Value $publishScript -Encoding utf8
   }
 
