@@ -23,7 +23,8 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 import qrcode
-from flask import Flask, Response, jsonify, redirect, render_template, request, send_from_directory, url_for
+from flask import Flask, Response, jsonify, make_response, redirect, render_template, request, send_from_directory, url_for
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.utils import secure_filename
 from discovery import PairingRequests, PeerDiscovery, clean_device_name
@@ -76,6 +77,56 @@ SESSION_GRACE_SECONDS = int(os.getenv("DROP_AIR_SESSION_GRACE_SECONDS", "120") o
 SESSION_EXPIRES_AT = time.time() + SESSION_TTL_SECONDS
 SESSION_STATE_FILE = DATA_DIR / "session-state.json"
 SESSION_LOCK = Lock()
+SESSION_RECOVERY_COOKIE = "dropair_session_recovery"
+SESSION_RECOVERY_MAX_AGE = 30 * 24 * 60 * 60
+SESSION_RECOVERY_VALUE = "authorized-transfer-page-v1"
+
+
+def load_session_recovery_secret() -> str:
+    secret_path = DATA_DIR / "session-recovery.secret"
+    try:
+        secret = secret_path.read_text(encoding="utf-8").strip()
+        if len(secret) >= 48:
+            return secret
+    except OSError:
+        pass
+
+    secret = secrets.token_urlsafe(48)
+    try:
+        secret_path.write_text(secret, encoding="utf-8")
+    except OSError:
+        # Recovery remains available for this process if the data folder is read-only.
+        pass
+    return secret
+
+
+SESSION_RECOVERY_SERIALIZER = URLSafeTimedSerializer(
+    load_session_recovery_secret(), salt="drop-air-session-recovery-v1"
+)
+
+
+def has_valid_session_recovery_cookie() -> bool:
+    token = request.cookies.get(SESSION_RECOVERY_COOKIE, "")
+    if not token:
+        return False
+    try:
+        return SESSION_RECOVERY_SERIALIZER.loads(token, max_age=SESSION_RECOVERY_MAX_AGE) == SESSION_RECOVERY_VALUE
+    except BadSignature:
+        return False
+
+
+def attach_session_recovery_cookie(response):
+    token = SESSION_RECOVERY_SERIALIZER.dumps(SESSION_RECOVERY_VALUE)
+    response.set_cookie(
+        SESSION_RECOVERY_COOKIE,
+        token,
+        max_age=SESSION_RECOVERY_MAX_AGE,
+        httponly=True,
+        secure=request.is_secure,
+        samesite="Lax",
+        path="/",
+    )
+    return response
 
 
 def read_session_state(path: Path | None = None) -> dict:
@@ -1257,7 +1308,7 @@ def check_session_key() -> bool:
     if is_admin_request():
         return True
     supplied = request.args.get(SESSION_PARAM, "") or request.headers.get("X-Drop-Air-Key", "")
-    return is_valid_session_value(supplied)
+    return is_valid_session_value(supplied) or has_valid_session_recovery_cookie()
 
 
 def session_error():
@@ -1550,11 +1601,12 @@ def index():
     if not check_session_key():
         return session_error()
     if settings["access_code"] and request.args.get("code", "") == "":
-        return render_template(gate_tpl, session_key=session["key"], session_param=SESSION_PARAM)
+        response = make_response(render_template(gate_tpl, session_key=session["key"], session_param=SESSION_PARAM))
+        return attach_session_recovery_cookie(response)
     if not check_code():
         return code_error()
     public_url = build_public_url(settings["access_code"])
-    return render_template(
+    response = make_response(render_template(
         index_tpl,
         files=list_files(),
         access_code=settings["access_code"],
@@ -1576,7 +1628,8 @@ def index():
         app_version=APP_VERSION,
         log_file=str(LOG_FILE),
         text_ttl_minutes=TEXT_TTL_MINUTES,
-    )
+    ))
+    return attach_session_recovery_cookie(response)
 
 
 @app.route("/update", methods=["GET"])

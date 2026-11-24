@@ -2,7 +2,7 @@
 
 Fast local file sharing from a native desktop window to iPhone/iPad (and back) over the same Wi-Fi network.
 
-Current desktop release: **1.6.10**. The Windows installer offers Normal and Portable setup types; Portable keeps app data beside the launcher.
+Current desktop release: **1.6.11**. Restoring Drop Air from the tray refreshes the dashboard and safely recovers its session link after the page has been suspended.
 
 ## Features
 
@@ -181,3 +181,7 @@ Redesigns both startup skeletons to match the supplied circular-avatar and varie
 ## Drop Air 1.6.10
 
 Adds Normal and Portable installation types to the Inno Setup wizard. Portable mode, including the standalone portable ZIP, stores settings, uploads, and logs in a `data` folder beside the launcher. Normal mode retains per-user app data and the Start menu and optional desktop shortcuts.
+
+## Drop Air 1.6.11
+
+Fixes stale or frozen dashboard links after restoring Drop Air from the system tray. The tray restore now explicitly resumes dashboard refreshes, and a signed, HTTP-only recovery cookie lets an already-authorized page renew its session key after background timers have been suspended long enough for the old key to expire.

@@ -394,6 +394,18 @@ class DropAirWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self._dashboard_healthy and not self._shutting_down:
+            QTimer.singleShot(0, self._resume_dashboard_after_tray)
+
+    def _resume_dashboard_after_tray(self) -> None:
+        if self._shutting_down or not self._dashboard_healthy or self.web is None or not self.isVisible():
+            return
+        self.web.page().runJavaScript(
+            "if (typeof window.dropAirResume === 'function') window.dropAirResume();"
+        )
+
     def _tray_activated(self, reason) -> None:
         if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
             self._show_from_tray()

@@ -4103,13 +4103,19 @@
       }, delay);
     }
 
+    let resumeRefreshInProgress = false;
+    function resumeDashboard(force = false) {
+      if ((document.hidden && !force) || resumeRefreshInProgress) return;
+      resumeRefreshInProgress = true;
+      syncSession().finally(() => {
+        scheduleFilePoll(0);
+        scheduleTextPoll(0);
+        resumeRefreshInProgress = false;
+      });
+    }
+    window.dropAirResume = () => resumeDashboard(true);
     document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) {
-        syncSession().finally(() => {
-          scheduleFilePoll(0);
-          scheduleTextPoll(0);
-        });
-      }
+      if (!document.hidden) resumeDashboard();
     });
 
     async function shareText(e) {
