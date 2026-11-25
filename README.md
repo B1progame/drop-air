@@ -2,7 +2,7 @@
 
 Fast local file sharing from a native desktop window to iPhone/iPad (and back) over the same Wi-Fi network.
 
-Current desktop release: **1.6.13**. Drop Air exits after staying idle in the system tray for ten minutes, and the next launch creates a fresh QR session.
+Current desktop release: **1.6.14**. QR links and device discovery prefer the usable local Wi-Fi/Ethernet address instead of a VPN tunnel address.
 
 ## Features
 
@@ -181,6 +181,10 @@ Redesigns both startup skeletons to match the supplied circular-avatar and varie
 ## Drop Air 1.6.10
 
 Adds Normal and Portable installation types to the Inno Setup wizard. Portable mode, including the standalone portable ZIP, stores settings, uploads, and logs in a `data` folder beside the launcher. Normal mode retains per-user app data and the Start menu and optional desktop shortcuts.
+
+## Drop Air 1.6.14
+
+Fixes QR links and Wi-Fi discovery advertising a VPN tunnel address when the VPN is the default internet route. Drop Air now checks local IPv4 adapters, keeps an ordinary physical default route when available, and otherwise prefers Wi-Fi or a physical LAN interface. The advertised URL continues to use the selected, actually bound port.
 
 ## Drop Air 1.6.13
 

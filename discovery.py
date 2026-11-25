@@ -31,6 +31,15 @@ PAIR_RATE_WINDOW_SECONDS = 60
 PAIR_MAX_PER_IP_PER_WINDOW = 4
 PAIR_MAX_PENDING = 24
 _SAFE_ID = re.compile(r"^[0-9a-f]{16,32}$")
+_NON_LAN_INTERFACE_MARKERS = (
+    "vpn", "wireguard", "tunnel", "tun", "tap", "wintun", "utun", "tailscale",
+    "zerotier", "hamachi", "nordlynx", "mullvad", "surfshark", "expressvpn",
+    "cyberghost", "openvpn", "anyconnect", "globalprotect", "warp", "proton",
+    "vmware", "virtualbox", "hyper-v", "hyperv", "vEthernet", "default switch",
+    "vmnet", "host-only", "wsl", "docker", "container", "loopback", "bluetooth",
+    "wi-fi direct", "wifi direct",
+)
+_WIFI_INTERFACE_MARKERS = ("wi-fi", "wifi", "wlan", "wireless")
 
 
 def clean_device_name(value: object, fallback: str = "Drop Air device") -> str:
@@ -47,15 +56,49 @@ def private_ipv4(value: str) -> bool:
 
 
 def route_ipv4() -> str:
+    route_address = ""
     probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         probe.connect(("192.0.2.1", 9))
-        address = probe.getsockname()[0]
-        return address if private_ipv4(address) else "0.0.0.0"
+        route_address = probe.getsockname()[0]
     except OSError:
-        return "0.0.0.0"
+        pass
     finally:
         probe.close()
+
+    candidates: list[tuple[str, bool]] = []
+    try:
+        from ifaddr import get_adapters
+
+        for adapter in get_adapters():
+            for interface_ip in adapter.ips:
+                address = interface_ip.ip
+                if not isinstance(address, str) or not private_ipv4(address):
+                    continue
+                parsed = ipaddress.ip_address(address)
+                if parsed.is_link_local:
+                    continue
+                label = " ".join(
+                    str(value or "")
+                    for value in (adapter.nice_name, adapter.name, interface_ip.nice_name)
+                ).casefold()
+                if any(marker.casefold() in label for marker in _NON_LAN_INTERFACE_MARKERS):
+                    continue
+                is_wifi = any(marker in label for marker in _WIFI_INTERFACE_MARKERS)
+                candidates.append((address, is_wifi))
+    except (ImportError, OSError, AttributeError):
+        candidates = []
+
+    # Honor the OS route when it points at an ordinary LAN adapter. VPNs often
+    # become the default route, though, and their tunnel address cannot be
+    # reached by nearby devices; in that case select the physical Wi-Fi LAN.
+    candidate_addresses = {address for address, _is_wifi in candidates}
+    if route_address in candidate_addresses:
+        return route_address
+    if candidates:
+        wifi_candidates = [address for address, is_wifi in candidates if is_wifi]
+        return (wifi_candidates or [address for address, _is_wifi in candidates])[0]
+    return route_address if private_ipv4(route_address) else "0.0.0.0"
 
 
 class PairingRequests:

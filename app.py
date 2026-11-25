@@ -27,7 +27,7 @@ from flask import Flask, Response, jsonify, make_response, redirect, render_temp
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.utils import secure_filename
-from discovery import PairingRequests, PeerDiscovery, clean_device_name
+from discovery import PairingRequests, PeerDiscovery, clean_device_name, route_ipv4
 
 if getattr(sys, "frozen", False):
     APP_DIR = Path(sys.executable).resolve().parent
@@ -1157,14 +1157,8 @@ def require_admin():
 
 
 def get_local_ip() -> str:
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(("8.8.8.8", 80))
-        return s.getsockname()[0]
-    except OSError:
-        return "127.0.0.1"
-    finally:
-        s.close()
+    address = route_ipv4()
+    return address if address != "0.0.0.0" else "127.0.0.1"
 
 
 def is_port_available(host: str, port: int) -> bool:
