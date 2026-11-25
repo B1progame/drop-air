@@ -2,7 +2,7 @@
 
 Fast local file sharing from a native desktop window to iPhone/iPad (and back) over the same Wi-Fi network.
 
-Current desktop release: **1.6.12**. Restoring Drop Air from the tray reactivates a suspended WebEngine page, refreshes dashboard data, and reloads the local page only if its renderer does not respond.
+Current desktop release: **1.6.13**. Drop Air exits after staying idle in the system tray for ten minutes, and the next launch creates a fresh QR session.
 
 ## Features
 
@@ -181,6 +181,10 @@ Redesigns both startup skeletons to match the supplied circular-avatar and varie
 ## Drop Air 1.6.10
 
 Adds Normal and Portable installation types to the Inno Setup wizard. Portable mode, including the standalone portable ZIP, stores settings, uploads, and logs in a `data` folder beside the launcher. Normal mode retains per-user app data and the Start menu and optional desktop shortcuts.
+
+## Drop Air 1.6.13
+
+Automatically exits Drop Air after it has remained hidden in the system tray for ten minutes. Restoring the window before the timeout renews the session and QR immediately; launching again after the timeout starts the server with a fresh QR session.
 
 ## Drop Air 1.6.12
 

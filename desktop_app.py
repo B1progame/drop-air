@@ -62,6 +62,7 @@ APP_ID = "B1progame.DropAir.Desktop"
 ROLLBACK_ACTIVE_ENV = "DROP_AIR_ROLLBACK_ACTIVE"
 PYINSTALLER_RESET_ENV = "PYINSTALLER_RESET_ENVIRONMENT"
 STARTUP_STAGE_TIMEOUT_MS = 45_000
+TRAY_IDLE_EXIT_MS = 10 * 60 * 1000
 
 def set_windows_app_id() -> None:
     if sys.platform == "win32":
@@ -202,6 +203,10 @@ class DropAirWindow(QMainWindow):
         self._dashboard_healthy = False
         self._window_was_hidden = False
         self._resume_attempt = 0
+        self._tray_idle_timer = QTimer(self)
+        self._tray_idle_timer.setSingleShot(True)
+        self._tray_idle_timer.setInterval(TRAY_IDLE_EXIT_MS)
+        self._tray_idle_timer.timeout.connect(self._exit_after_tray_idle)
         self._startup_failure_active = False
         self._startup_stage = "local service"
         self._startup_signals = None
@@ -398,6 +403,7 @@ class DropAirWindow(QMainWindow):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        self._tray_idle_timer.stop()
         if self._window_was_hidden and self._dashboard_healthy and not self._shutting_down:
             self._window_was_hidden = False
             QTimer.singleShot(0, self._resume_dashboard_after_tray)
@@ -405,6 +411,15 @@ class DropAirWindow(QMainWindow):
     def hideEvent(self, event) -> None:
         self._window_was_hidden = True
         super().hideEvent(event)
+        if self._tray_available and not self._shutting_down:
+            self._tray_idle_timer.start()
+
+    def _exit_after_tray_idle(self) -> None:
+        if self._shutting_down or self.isVisible():
+            return
+        print("Tray idle timeout: stopping Drop Air after 10 minutes hidden", flush=True)
+        self._allow_close = True
+        self.close()
 
     def _resume_dashboard_after_tray(self) -> None:
         if self._shutting_down or not self._dashboard_healthy or self.web is None or not self.isVisible():
