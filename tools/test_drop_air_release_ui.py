@@ -39,6 +39,33 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn('IconFilename: "{app}\\assets\\icon\\drop_air_brand.ico"', self.installer_source)
         self.assertNotIn('Source: "..\\settings.json"', self.installer_source)
 
+    def test_obsolete_runtime_data_cleanup_preserves_uploads_and_settings(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            data_dir = root / "app-data"
+            uploads = data_dir / "uploads"
+            uploads.mkdir(parents=True)
+            keep_file = uploads / "keep.txt"
+            keep_file.write_text("keep", encoding="utf-8")
+            local_app_data = root / "local-app-data"
+            obsolete = [
+                data_dir / "rollback",
+                data_dir / "browser-profile",
+                local_app_data / "DropAir" / "rollback",
+                local_app_data / "DropAir" / "browser-profile",
+            ]
+            for path in obsolete:
+                path.mkdir(parents=True)
+                (path / "old-data.bin").write_bytes(b"old")
+
+            with patch.object(app, "DATA_DIR", data_dir), patch.dict(
+                os.environ, {"LOCALAPPDATA": str(local_app_data)}
+            ):
+                app.cleanup_obsolete_runtime_data()
+
+            self.assertTrue(all(not path.exists() for path in obsolete))
+            self.assertEqual(keep_file.read_text(encoding="utf-8"), "keep")
+
     def test_pyinstaller_build_uses_the_current_icon_and_desktop_entry(self):
         root = Path(__file__).resolve().parents[1]
         build_script = (root / "build_exe.ps1").read_text(encoding="utf-8")
@@ -202,7 +229,6 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertNotIn("import app as backend", desktop_source)
         self.assertNotIn("from werkzeug.serving import make_server", desktop_source.split("def start_backend():", 1)[0])
         self.assertIn("loadFinished.connect(self._page_load_finished)", desktop_source)
-        self.assertIn("mark_startup_healthy()", desktop_source)
         self.assertIn('self.setAccessibleName("Loading Drop Air")', desktop_source)
         self.assertIn('self.setWindowTitle(f"Drop Air {APP_VERSION} — Starting")', desktop_source)
         self.assertIn('self.setWindowTitle(f"Drop Air {APP_VERSION}")', desktop_source)
@@ -239,7 +265,7 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("has_core_window()", launcher)
         self.assertIn("if self._tray_available and not self._allow_close:", (root / "desktop_app.py").read_text(encoding="utf-8"))
 
-    def test_native_launcher_recovers_when_the_core_never_opens_a_window(self):
+    def test_native_launcher_reports_timeout_when_the_core_never_opens_a_window(self):
         root = Path(__file__).resolve().parents[1]
         launcher = (root / "launcher" / "native_launcher.c").read_text(encoding="utf-8")
         self.assertIn("STARTUP_WINDOW_TIMEOUT_MS = 60000", launcher)
@@ -249,14 +275,9 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("command_line && *command_line && !resume", launcher)
         timeout_handler = launcher.split("} else if (core_process && core_launch_time", 1)[1].split("case WM_CLOSE:", 1)[0]
         self.assertIn("TerminateProcess(core_process, 1)", timeout_handler)
-        self.assertIn("launch_previous_version_after_timeout()", timeout_handler)
+        self.assertNotIn("launch_previous_version", timeout_handler)
         self.assertIn("DestroyWindow(window)", timeout_handler)
         self.assertNotIn("WaitForSingleObject", timeout_handler)
-        recovery = launcher.split("static BOOL launch_previous_version_after_timeout", 1)[1].split("static LRESULT CALLBACK", 1)[0]
-        self.assertIn('L"LOCALAPPDATA"', recovery)
-        self.assertIn('L"DROP_AIR_ROLLBACK_ACTIVE"', recovery)
-        self.assertIn('--resume', recovery)
-        self.assertNotIn("WaitForSingleObject", recovery)
 
     def test_native_launcher_reuses_and_restores_the_existing_instance(self):
         root = Path(__file__).resolve().parents[1]
@@ -271,41 +292,6 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn("focus_dropair_window(existing.window, existing.process_id)", launcher)
         self.assertIn("ShowWindow(window, SW_SHOW)", launcher)
         self.assertNotIn("IsWindowVisible(window)", launcher[launcher.index("static BOOL CALLBACK find_existing_dropair_window"):launcher.index("static BOOL CALLBACK find_dropair_window")])
-
-    def test_startup_failure_has_a_previous_version_fallback(self):
-        root = Path(__file__).resolve().parents[1]
-        installer = (root / "installer" / "DropAir.iss").read_text(encoding="utf-8")
-        self.assertIn('DestDir: "{localappdata}\\DropAir\\rollback"', installer)
-        self.assertIn("ShouldSaveRollbackBackup", installer)
-        self.assertIn("startup-failed.txt", installer)
-        self.assertIn("DROP_AIR_ROLLBACK_ACTIVE", (root / "desktop_app.py").read_text(encoding="utf-8"))
-        self.assertIn("should_rollback_after_interrupted_startup", (root / "desktop_app.py").read_text(encoding="utf-8"))
-
-    def test_startup_failure_launches_the_previous_version_once(self):
-        with tempfile.TemporaryDirectory(prefix="drop-air-rollback-test-") as temp:
-            data_dir = Path(temp)
-            rollback_exe, pending, failed = (
-                data_dir / "rollback" / "DropAir.exe",
-                data_dir / "rollback" / "startup-pending.txt",
-                data_dir / "rollback" / "startup-failed.txt",
-            )
-            rollback_exe.parent.mkdir(parents=True)
-            rollback_exe.write_bytes(b"previous release")
-            pending.write_text(desktop_app.APP_VERSION, encoding="utf-8")
-            with patch.object(desktop_app, "backend", app), patch.object(app, "DATA_DIR", data_dir), patch.dict(
-                os.environ, {desktop_app.ROLLBACK_ACTIVE_ENV: ""}
-            ), patch("desktop_app.subprocess.Popen") as spawn:
-                self.assertTrue(desktop_app.launch_previous_version("simulated startup failure"))
-                self.assertEqual(failed.read_text(encoding="utf-8").splitlines()[0], desktop_app.APP_VERSION)
-                self.assertFalse(pending.exists())
-                # The native launcher's single-instance guard still sees this
-                # failing window until it closes. Resume waits for it to exit
-                # instead of focusing it and abandoning the rollback launch.
-                self.assertEqual(spawn.call_args.args[0], [str(rollback_exe), "--resume"])
-                child_env = spawn.call_args.kwargs["env"]
-                self.assertEqual(child_env[desktop_app.ROLLBACK_ACTIVE_ENV], "1")
-                self.assertEqual(child_env[desktop_app.PYINSTALLER_RESET_ENV], "1")
-                self.assertTrue(desktop_app.should_rollback_after_interrupted_startup())
 
     def test_primary_and_danger_button_text_use_contrasting_theme_tokens(self):
         self.assertIn("--accent-ink:", self.template_source)

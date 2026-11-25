@@ -59,8 +59,6 @@ QT_IMPORT_FINISHED_AT = time.perf_counter()
 
 
 APP_ID = "B1progame.DropAir.Desktop"
-ROLLBACK_ACTIVE_ENV = "DROP_AIR_ROLLBACK_ACTIVE"
-PYINSTALLER_RESET_ENV = "PYINSTALLER_RESET_ENVIRONMENT"
 STARTUP_STAGE_TIMEOUT_MS = 45_000
 TRAY_IDLE_EXIT_MS = 10 * 60 * 1000
 
@@ -258,7 +256,6 @@ class DropAirWindow(QMainWindow):
             self.setWindowTitle(f"Drop Air {APP_VERSION}")
             if self.web is not None:
                 self._startup_stack.setCurrentWidget(self.web)
-            mark_startup_healthy()
         else:
             self.show_startup_error("The dashboard failed to load after startup.")
 
@@ -365,16 +362,6 @@ class DropAirWindow(QMainWindow):
             return
         self._startup_failure_active = True
         self._startup_timeout.stop()
-        if launch_previous_version(message):
-            if self._tray_available:
-                self.tray_icon.showMessage(
-                    "Drop Air recovered",
-                    "Startup failed. Opening the last working version.",
-                    QSystemTrayIcon.MessageIcon.Warning,
-                )
-            self._allow_close = True
-            self.close()
-            return
         self._startup_skeleton.set_status("Startup failed — close and try again", 0)
         self._startup_skeleton._status_timer.stop()
         box = QMessageBox(self)
@@ -521,8 +508,6 @@ class DropAirWindow(QMainWindow):
         if not self._shutting_down:
             self._shutting_down = True
             self.tray_icon.hide()
-            if not self._dashboard_healthy:
-                clear_startup_pending()
             if self._server is not None:
                 self._server.shutdown()
                 self._server.server_close()
@@ -572,127 +557,18 @@ def schedule_startup_maintenance() -> None:
     if backend is None:
         return
     threading.Thread(
+        target=backend.cleanup_obsolete_runtime_data,
+        name="DropAirStorageCleanup",
+        daemon=True,
+    ).start()
+    threading.Thread(
         target=lambda: backend.cleanup_uploads(force=True),
         name="DropAirStartupCleanup",
         daemon=True,
     ).start()
 
 
-def rollback_paths() -> tuple[Path, Path, Path]:
-    data_dir_override = os.environ.get("DROP_AIR_DATA_DIR", "").strip()
-    if backend is not None:
-        data_dir = Path(backend.DATA_DIR)
-    elif data_dir_override:
-        data_dir = Path(data_dir_override).expanduser()
-    elif os.name == "nt" and os.environ.get("LOCALAPPDATA"):
-        data_dir = Path(os.environ["LOCALAPPDATA"]) / "DropAir"
-    else:
-        data_dir = Path.home() / "AppData" / "Local" / "DropAir" if os.name == "nt" else Path.home() / ".local" / "share" / "drop-air"
-    rollback_dir = data_dir / "rollback"
-    return (
-        rollback_dir / "DropAir.exe",
-        rollback_dir / "startup-pending.txt",
-        rollback_dir / "startup-failed.txt",
-    )
-
-
-def _version_parts(value: str) -> tuple[int, ...]:
-    parts = []
-    for part in value.lstrip("v").split("."):
-        digits = "".join(character for character in part if character.isdigit())
-        if not digits:
-            break
-        parts.append(int(digits))
-    return tuple(parts)
-
-
-def _is_rollback_process() -> bool:
-    if os.environ.get(ROLLBACK_ACTIVE_ENV) == "1":
-        return True
-    try:
-        return Path(sys.executable).resolve().parent == rollback_paths()[0].parent.resolve()
-    except OSError:
-        return False
-
-
-def _read_marker(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8").splitlines()[0].strip()
-    except (OSError, IndexError):
-        return ""
-
-
-def clear_startup_pending() -> None:
-    _rollback_executable, pending_path, _failed_path = rollback_paths()
-    pending_path.unlink(missing_ok=True)
-
-
-def mark_startup_pending() -> None:
-    if _is_rollback_process():
-        return
-    rollback_executable, pending_path, _failed_path = rollback_paths()
-    if not rollback_executable.is_file():
-        return
-    try:
-        pending_path.parent.mkdir(parents=True, exist_ok=True)
-        pending_path.write_text(APP_VERSION, encoding="utf-8")
-    except OSError:
-        pass
-
-
-def mark_startup_healthy() -> None:
-    if _is_rollback_process():
-        return
-    _rollback_executable, pending_path, failed_path = rollback_paths()
-    pending_path.unlink(missing_ok=True)
-    failed_version = _read_marker(failed_path)
-    if failed_version and _version_parts(APP_VERSION) > _version_parts(failed_version):
-        failed_path.unlink(missing_ok=True)
-
-
-def launch_previous_version(reason: str) -> bool:
-    if _is_rollback_process():
-        return False
-    rollback_executable, pending_path, failed_path = rollback_paths()
-    if not rollback_executable.is_file():
-        return False
-
-    try:
-        failed_path.parent.mkdir(parents=True, exist_ok=True)
-        failed_path.write_text(f"{APP_VERSION}\n{reason[:500]}", encoding="utf-8")
-        pending_path.unlink(missing_ok=True)
-        environment = os.environ.copy()
-        environment[ROLLBACK_ACTIVE_ENV] = "1"
-        environment[PYINSTALLER_RESET_ENV] = "1"
-        subprocess.Popen(
-            [str(rollback_executable), "--resume"],
-            cwd=str(rollback_executable.parent),
-            close_fds=True,
-            env=environment,
-        )
-        return True
-    except OSError:
-        failed_path.unlink(missing_ok=True)
-        return False
-
-
-def should_rollback_after_interrupted_startup() -> bool:
-    if _is_rollback_process():
-        return False
-    rollback_executable, pending_path, failed_path = rollback_paths()
-    if not rollback_executable.is_file():
-        return False
-    failed_version = _read_marker(failed_path)
-    pending_version = _read_marker(pending_path)
-    return APP_VERSION in {failed_version, pending_version}
-
-
 def main() -> int:
-    if should_rollback_after_interrupted_startup():
-        if launch_previous_version("The previous startup did not finish."):
-            return 0
-        clear_startup_pending()
-
     set_windows_app_id()
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
@@ -702,7 +578,6 @@ def main() -> int:
     app.setWindowIcon(icon)
 
     window = DropAirWindow(icon)
-    mark_startup_pending()
     startup_signals = StartupSignals()
     window._startup_signals = startup_signals
     startup_results = []

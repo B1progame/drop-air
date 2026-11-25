@@ -213,38 +213,6 @@ static void close_core(void) {
     else if (core_process) TerminateProcess(core_process, 0);
 }
 
-static BOOL launch_previous_version_after_timeout(void) {
-    wchar_t rollback_active[2] = {0};
-    if (GetEnvironmentVariableW(L"DROP_AIR_ROLLBACK_ACTIVE", rollback_active, 2) == 1 && rollback_active[0] == L'1') return FALSE;
-    wchar_t data_dir[32768];
-    DWORD length = GetEnvironmentVariableW(L"DROP_AIR_DATA_DIR", data_dir, 32768);
-    if (!length || length >= 32768) {
-        length = GetEnvironmentVariableW(L"LOCALAPPDATA", data_dir, 32768);
-        if (!length || length >= 32768) return FALSE;
-        if (wcslen(data_dir) + wcslen(L"\\DropAir") >= 32768) return FALSE;
-        wcscat(data_dir, L"\\DropAir");
-    }
-    wchar_t rollback_dir[32768];
-    wchar_t executable[32768];
-    wchar_t command[65536];
-    if (swprintf(rollback_dir, 32768, L"%ls\\rollback", data_dir) < 0) return FALSE;
-    if (_wcsicmp(app_dir, rollback_dir) == 0) return FALSE;
-    if (swprintf(executable, 32768, L"%ls\\DropAir.exe", rollback_dir) < 0) return FALSE;
-    DWORD attributes = GetFileAttributesW(executable);
-    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) return FALSE;
-    if (swprintf(command, 65536, L"\"%ls\" --resume", executable) < 0) return FALSE;
-    SetEnvironmentVariableW(L"DROP_AIR_ROLLBACK_ACTIVE", L"1");
-    SetEnvironmentVariableW(L"PYINSTALLER_RESET_ENVIRONMENT", L"1");
-    STARTUPINFOW startup = {0};
-    PROCESS_INFORMATION process = {0};
-    startup.cb = sizeof(startup);
-    if (!CreateProcessW(executable, command, NULL, NULL, FALSE, CREATE_UNICODE_ENVIRONMENT,
-                        NULL, rollback_dir, &startup, &process)) return FALSE;
-    CloseHandle(process.hThread);
-    CloseHandle(process.hProcess);
-    return TRUE;
-}
-
 static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
     case WM_PAINT: {
@@ -275,12 +243,10 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
             }
         } else if (core_process && core_launch_time && GetTickCount64() - core_launch_time >= STARTUP_WINDOW_TIMEOUT_MS) {
             KillTimer(window, 1);
-            // This handle is only our own child. A nonblocking termination and
-            // detached recovery launch keep the UI timer free of wait loops.
+            // This handle is only our own child, so stop the stalled core
+            // without blocking the launcher's UI timer.
             TerminateProcess(core_process, 1);
-            if (!launch_previous_version_after_timeout()) {
-                MessageBoxW(window, L"Drop Air did not open its dashboard within 60 seconds. Close it and try again, or reinstall the latest version.", L"Drop Air could not start", MB_OK | MB_ICONERROR);
-            }
+            MessageBoxW(window, L"Drop Air did not open its dashboard within 60 seconds. Close it and try again, or reinstall the latest version.", L"Drop Air could not start", MB_OK | MB_ICONERROR);
             DestroyWindow(window);
         }
         return 0;

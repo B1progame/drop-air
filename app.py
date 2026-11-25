@@ -276,8 +276,6 @@ UPLOAD_CLEANUP_NEXT_AT = 0.0
 
 app = Flask(__name__, template_folder=str(TEMPLATE_DIR), static_folder=str(STATIC_DIR), static_url_path="/static")
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
-BROWSER_PROCESS = None
-BROWSER_PROFILE_DIR = DATA_DIR / "browser-profile"
 TRAY_ICON = None
 _SHUTDOWN_DONE = False
 _CONSOLE_HANDLER = None
@@ -339,14 +337,12 @@ def browser_candidates() -> list[Path]:
 
 
 def open_admin_browser(url: str) -> None:
-    global BROWSER_PROCESS
     if os.name == "nt":
         for candidate in browser_candidates():
             if candidate.exists():
                 try:
-                    BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-                    BROWSER_PROCESS = subprocess.Popen(
-                        [str(candidate), "--new-window", f"--user-data-dir={BROWSER_PROFILE_DIR}", url],
+                    subprocess.Popen(
+                        [str(candidate), "--new-window", url],
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                     )
@@ -356,28 +352,29 @@ def open_admin_browser(url: str) -> None:
     webbrowser.open(url)
 
 
-def close_admin_browser() -> None:
-    global BROWSER_PROCESS
-    proc = BROWSER_PROCESS
-    BROWSER_PROCESS = None
-    if not proc or proc.poll() is not None:
-        return
-    try:
-        proc.terminate()
-        proc.wait(timeout=2)
-    except Exception:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-
-
 def initialize_log_file() -> None:
     try:
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         LOG_FILE.write_text("", encoding="utf-8")
     except OSError as exc:
         print(f"Could not initialize log file: {exc}")
+
+
+def cleanup_obsolete_runtime_data() -> None:
+    """Remove the old fallback copy and isolated browser profile off the UI thread."""
+    obsolete_paths = {DATA_DIR / "rollback", DATA_DIR / "browser-profile"}
+    local_app_data = (os.getenv("LOCALAPPDATA") or "").strip()
+    if local_app_data:
+        legacy_data_dir = Path(local_app_data) / "DropAir"
+        obsolete_paths.update({legacy_data_dir / "rollback", legacy_data_dir / "browser-profile"})
+
+    for obsolete_path in obsolete_paths:
+        try:
+            if obsolete_path.is_dir():
+                shutil.rmtree(obsolete_path)
+                print(f"Removed obsolete Drop Air data: {obsolete_path}", flush=True)
+        except OSError as exc:
+            print(f"Could not remove obsolete Drop Air data at {obsolete_path}: {exc}", flush=True)
 
 
 def redirect_stdio_to_log_if_windowless():
@@ -1535,7 +1532,6 @@ def shutdown_drop_air() -> None:
             pass
     cleanup_all_uploads_on_shutdown()
     clear_text_items()
-    close_admin_browser()
 
 
 def install_windows_console_close_handler() -> None:

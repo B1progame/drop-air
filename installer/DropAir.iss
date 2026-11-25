@@ -1,4 +1,4 @@
-﻿#ifndef MyAppName
+#ifndef MyAppName
 #define MyAppName "DropAir"
 #endif
 
@@ -61,7 +61,6 @@ Name: "{app}\uploads"
 Name: "{app}\data"; Check: IsPortableInstall
 
 [Files]
-Source: "{app}\*"; DestDir: "{localappdata}\DropAir\rollback"; Excludes: "portable.mode,data\*"; Flags: external ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist uninsneveruninstall; Check: ShouldSaveRollbackBackup
 Source: "..\dist\{#MyAppName}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "portable.mode"; DestDir: "{app}"; Flags: ignoreversion; Check: IsPortableInstall
 Source: "..\templates\*"; DestDir: "{app}\templates"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -81,9 +80,4 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: no
 function IsPortableInstall: Boolean;
 begin
   Result := WizardIsComponentSelected('portable');
-end;
-
-function ShouldSaveRollbackBackup: Boolean;
-begin
-  Result := not FileExists(ExpandConstant('{localappdata}\DropAir\rollback\startup-failed.txt'));
 end;
