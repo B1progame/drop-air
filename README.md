@@ -2,7 +2,7 @@
 
 Fast local file sharing from a native desktop window to iPhone/iPad (and back) over the same Wi-Fi network.
 
-Current desktop release: **1.6.11**. Restoring Drop Air from the tray refreshes the dashboard and safely recovers its session link after the page has been suspended.
+Current desktop release: **1.6.12**. Restoring Drop Air from the tray reactivates a suspended WebEngine page, refreshes dashboard data, and reloads the local page only if its renderer does not respond.
 
 ## Features
 
@@ -181,6 +181,10 @@ Redesigns both startup skeletons to match the supplied circular-avatar and varie
 ## Drop Air 1.6.10
 
 Adds Normal and Portable installation types to the Inno Setup wizard. Portable mode, including the standalone portable ZIP, stores settings, uploads, and logs in a `data` folder beside the launcher. Normal mode retains per-user app data and the Start menu and optional desktop shortcuts.
+
+## Drop Air 1.6.12
+
+Fixes the dashboard becoming stale or frozen after restoring it from the system tray. Tray restore explicitly moves Qt WebEngine back to its Active lifecycle state, refreshes its session and transfer data, waits for an in-progress reload instead of starting overlapping reloads, and recovers the page if its renderer does not answer. The signed session recovery cookie preserves authorized access through a reload.
 
 ## Drop Air 1.6.11
 

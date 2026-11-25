@@ -200,6 +200,8 @@ class DropAirWindow(QMainWindow):
         self._allow_close = False
         self._dashboard_url = ""
         self._dashboard_healthy = False
+        self._window_was_hidden = False
+        self._resume_attempt = 0
         self._startup_failure_active = False
         self._startup_stage = "local service"
         self._startup_signals = None
@@ -396,15 +398,74 @@ class DropAirWindow(QMainWindow):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        if self._dashboard_healthy and not self._shutting_down:
+        if self._window_was_hidden and self._dashboard_healthy and not self._shutting_down:
+            self._window_was_hidden = False
             QTimer.singleShot(0, self._resume_dashboard_after_tray)
+
+    def hideEvent(self, event) -> None:
+        self._window_was_hidden = True
+        super().hideEvent(event)
 
     def _resume_dashboard_after_tray(self) -> None:
         if self._shutting_down or not self._dashboard_healthy or self.web is None or not self.isVisible():
             return
-        self.web.page().runJavaScript(
-            "if (typeof window.dropAirResume === 'function') window.dropAirResume();"
-        )
+        page = self.web.page()
+        # Qt WebEngine may freeze or discard a page while its window is hidden.
+        # A discarded page reloads when it becomes Active; a frozen page resumes
+        # timers and event processing before we ask the dashboard to refresh.
+        try:
+            from PySide6.QtWebEngineCore import QWebEnginePage
+
+            active_state = QWebEnginePage.LifecycleState.Active
+            if page.lifecycleState() != active_state:
+                print(
+                    f"Tray restore: reactivating WebEngine page from {page.lifecycleState()}",
+                    flush=True,
+                )
+                page.setLifecycleState(active_state)
+        except (AttributeError, RuntimeError):
+            # Older Qt builds without the lifecycle API still get the JS resume.
+            pass
+
+        self._resume_attempt += 1
+        attempt = self._resume_attempt
+        retries = 0
+
+        def resume_dashboard() -> None:
+            nonlocal retries
+            if self._shutting_down or attempt != self._resume_attempt or not self.isVisible():
+                return
+            page.runJavaScript(
+                "if (typeof window.dropAirResume === 'function') { window.dropAirResume(); true; } else { false; }",
+                lambda resumed: on_resume_probe(bool(resumed)),
+            )
+
+        def on_resume_probe(resumed: bool) -> None:
+            nonlocal retries
+            if self._shutting_down or attempt != self._resume_attempt or not self.isVisible() or resumed:
+                return
+            # Activating a discarded page starts a navigation. Do not mistake
+            # that expected load window for a dead renderer or start a second
+            # overlapping reload.
+            if page.isLoading() and retries < 40:
+                retries += 1
+                QTimer.singleShot(250, resume_dashboard)
+                return
+            self._finish_dashboard_resume(attempt, False)
+
+        # Give Chromium a moment to wake after its lifecycle transition.
+        QTimer.singleShot(100, resume_dashboard)
+
+    def _finish_dashboard_resume(self, attempt: int, resumed: bool) -> None:
+        if self._shutting_down or attempt != self._resume_attempt or not self.isVisible():
+            return
+        if resumed:
+            return
+        # A renderer that did not answer is not usable. Reload the local page;
+        # its signed recovery cookie preserves access even if its QR key expired.
+        print("Tray restore: dashboard did not respond; reloading local page", flush=True)
+        if self.web is not None:
+            self.web.reload()
 
     def _tray_activated(self, reason) -> None:
         if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
