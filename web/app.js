@@ -239,6 +239,7 @@ function renderTargets(devices) {
   const online = !target || devices.some(d => d.id === target.id);
   $("targetLabel").textContent = !target ? "Everyone connected can download them"
     : online ? `Only for ${target.name}` : `Only for ${target.name}, which is not connected right now`;
+  $("textInput").placeholder = target ? `Send text only to ${target.name}…` : "Send text or a link…";
   if (!changed("targets", [devices.map(d => [d.id, d.name]), target, online])) return;
   const choices = online ? devices : [...devices, target];
   const chip = (label, iconName, pressed, onclick, offline) => {
@@ -281,7 +282,7 @@ function renderTexts() {
   if (!changed("texts", [state.texts, Math.floor(Date.now() / 60000)])) return;
   $("texts").replaceChildren(...state.texts.map(item => {
     const row = el("li", { className: "item text-item" },
-      el("div", { className: "meta" }, el("div", { className: "text-body", textContent: item.text }), el("span", { className: "sub", textContent: ago(item.created) })),
+      el("div", { className: "meta" }, el("div", { className: "text-body", textContent: item.text }), el("span", { className: "sub", textContent: ago(item.created) + (item.to ? (item.to === clientId ? " · just for you" : " · private send") : "") })),
       el("div", { className: "actions" }, iconButton("copy", "Copy text", () => copy(item.text)),
         iconButton("trash", "Delete text", event => remove(event.currentTarget, `/api/text/${encodeURIComponent(item.id)}`), "del")));
     if (enter(seen.texts, item.id)) row.classList.add("enter");
@@ -535,9 +536,19 @@ window.addEventListener("drop", event => {
   send([...event.dataTransfer.files]);
 });
 
+// Text and pasted text go where "Send to" says, like files.
 async function sendText(text) {
-  await api("/api/text", { method: "POST", body: { text } });
-  toast("Text shared");
+  const to = target;
+  if (to?.kind === "peer") {
+    if (!state.peers.some(p => p.device_id === to.id)) throw new Error(`${to.name} is not nearby right now`);
+    const peer = await pairWith(to);
+    const query = `k=${encodeURIComponent(peer.key)}${peer.code ? `&code=${encodeURIComponent(peer.code)}` : ""}`;
+    const response = await fetch(`${peer.origin}/api/text?${query}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+    if (!response.ok) { peerLinks.delete(to.id); throw new Error(`${to.name} did not take the text`); }
+  } else {
+    await api("/api/text", { method: "POST", body: to ? { text, to: to.id, from: clientId } : { text } });
+  }
+  toast(to ? `Text sent only to ${to.name}` : "Text shared with everyone");
   await refresh();
 }
 $("textForm").onsubmit = event => {

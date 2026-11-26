@@ -129,6 +129,11 @@ pub struct TextItem {
     pub id: String,
     pub text: String,
     pub created: u64,
+    /// recipient and sender page ids of a private send; empty = everyone
+    #[serde(default)]
+    pub to: String,
+    #[serde(default)]
+    pub from: String,
 }
 
 // Older Python versions wrote numeric ids.
@@ -446,12 +451,13 @@ impl Store {
         }
     }
 
-    pub fn add_text(&self, text: &str) -> Option<TextItem> {
+    pub fn add_text(&self, text: &str, to: String, from: String) -> Option<TextItem> {
         let text: String = text.chars().take(MAX_TEXT_CHARS).collect();
         if text.trim().is_empty() {
             return None;
         }
-        let item = TextItem { id: random_hex(8), text, created: now() };
+        let from = if to.is_empty() { String::new() } else { from };
+        let item = TextItem { id: random_hex(8), text, created: now(), to, from };
         let mut texts = lock(&self.texts);
         texts.insert(0, item.clone());
         texts.truncate(MAX_TEXT_ITEMS);

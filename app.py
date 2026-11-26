@@ -131,7 +131,8 @@ RECOVERY_SECRET = read_or_create(DATA_DIR / "session-recovery.secret", r"[\w-]{4
 SETTINGS = {**DEFAULT_SETTINGS, **{k: v for k, v in read_json(DATA_DIR / "settings.json", {}).items() if k in DEFAULT_SETTINGS}}
 SETTINGS["device_name"] = clean_device_name(SETTINGS["device_name"])
 TEXTS = [
-    {"id": str(item["id"]), "text": str(item.get("text", "")), "created": int(item.get("created", 0))}
+    {"id": str(item["id"]), "text": str(item.get("text", "")), "created": int(item.get("created", 0)),
+     "to": str(item.get("to", "")), "from": str(item.get("from", ""))}
     for item in read_json(DATA_DIR / "text_items.json", [])
     if isinstance(item, dict) and "id" in item
 ]
@@ -490,7 +491,7 @@ def api_state():
         "cleanup_minutes": SETTINGS["auto_cleanup_minutes"],
         "text_ttl_minutes": TEXT_TTL_MINUTES,
         "files": [f for f in list_files() if admin or not f["to"] or mine & {f["to"], f["from"]}],
-        "texts": TEXTS,
+        "texts": [t for t in list(TEXTS) if admin or not t["to"] or mine & {t["to"], t["from"]}],
         "clients": clients_list(admin),
         "peers": discovery["peers"],
         "discovery_status": discovery["status"],
@@ -604,10 +605,12 @@ def api_delete_file(name: str):
 @app.post("/api/text")
 def add_text():
     authorize()
-    text = str(payload().get("text", ""))[:MAX_TEXT_CHARS]
+    data = payload()
+    text = str(data.get("text", ""))[:MAX_TEXT_CHARS]
     if not text.strip():
         raise ApiError(400, "Paste text before sharing.")
-    item = {"id": secrets.token_hex(8), "text": text, "created": int(time.time())}
+    to, sender = (re.sub(r"[^A-Za-z0-9]", "", str(data.get(field, "")))[:64] for field in ("to", "from"))
+    item = {"id": secrets.token_hex(8), "text": text, "created": int(time.time()), "to": to, "from": sender if to else ""}
     with LOCK:
         TEXTS.insert(0, item)
         del TEXTS[MAX_TEXT_ITEMS:]

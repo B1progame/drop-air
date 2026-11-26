@@ -120,6 +120,20 @@ try:
     files = json.loads(call("GET", f"/api/state?k={key}&client_id=tabA&name=Pixel", host=LAN)[2])["files"]
     check("a private file reaches either page", "forpixel.txt" in [f["name"] for f in files], files)
 
+    # "Send to" must cover text and files alike: iPhone gets it, iPad does not.
+    state_of = lambda who: json.loads(call("GET", f"/api/state?k={key}&client_id={who}&name={who}", host=LAN)[2])
+    state_of("iphone1"), state_of("ipad1")
+    call("POST", "/api/text", {"text": "only iphone", "to": "iphone1", "from": "hostpage"})
+    call("POST", "/api/upload?name=only-iphone.txt&to=iphone1&from=hostpage", b"x")
+    got = lambda who: ([t["text"] for t in state_of(who)["texts"]], [f["name"] for f in state_of(who)["files"]])
+    texts, files = got("iphone1")
+    check("chosen device gets the text and file", "only iphone" in texts and "only-iphone.txt" in files, (texts, files))
+    texts, files = got("ipad1")
+    check("other device gets neither", "only iphone" not in texts and "only-iphone.txt" not in files, (texts, files))
+    check("host sees what it sent", "only iphone" in [t["text"] for t in json.loads(call("GET", "/api/state")[2])["texts"]])
+    call("POST", f"/api/text?k={key}", {"text": "to the host", "to": "host", "from": "iphone1"}, host=LAN)
+    check("phone to host: other phones do not see it", "to the host" not in got("ipad1")[0] and "to the host" in got("iphone1")[0])
+
     # A sender that disconnects halfway must leave nothing behind.
     connection = http.client.HTTPConnection("127.0.0.1", PORT, timeout=10)
     connection.putrequest("POST", "/api/upload?name=half.bin")

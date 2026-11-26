@@ -231,7 +231,7 @@ async fn api_state(State(app): State<App>, ConnectInfo(address): Peer, headers: 
         "cleanup_minutes": settings.auto_cleanup_minutes,
         "text_ttl_minutes": text_ttl_minutes(),
         "files": files,
-        "texts": *lock(&store.texts),
+        "texts": lock(&store.texts).iter().filter(|t| admin || t.to.is_empty() || mine.contains(&t.to) || mine.contains(&t.from)).cloned().collect::<Vec<_>>(),
         "clients": store.clients_json(admin),
         "peers": peers,
         "discovery_status": *lock(&store.discovery_status),
@@ -378,7 +378,8 @@ fn parse_json(body: &Bytes) -> Result<Value, ApiError> {
 async fn add_text(State(app): State<App>, ConnectInfo(address): Peer, headers: HeaderMap, Query(query): Params, body: Bytes) -> Result<Json<Value>, ApiError> {
     authorize(&app.store, address, &headers, &query)?;
     let payload = parse_json(&body)?;
-    let item = app.store.add_text(payload["text"].as_str().unwrap_or("")).ok_or_else(|| fail(400, "Paste text before sharing."))?;
+    let id = |key: &str| payload[key].as_str().unwrap_or("").chars().filter(char::is_ascii_alphanumeric).take(64).collect::<String>();
+    let item = app.store.add_text(payload["text"].as_str().unwrap_or(""), id("to"), id("from")).ok_or_else(|| fail(400, "Paste text before sharing."))?;
     Ok(Json(json!({ "ok": true, "item": item })))
 }
 

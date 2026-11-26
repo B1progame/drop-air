@@ -19,7 +19,7 @@ Both need Windows 10 or 11 (64-bit) with Microsoft Edge WebView2, which Windows 
 
 - Drop, pick or paste files and text; everyone connected can get them
 - Drop files onto a device in the **Nearby** area to send only to it
-- Pick a device under **Send to** and files keep going only there until you unselect it (text is always shared with everyone)
+- Pick a device under **Send to** and files and text keep going only there until you unselect it
 - The host can see each device's system, browser and address, and remove it
 - On phones, **Paste** opens a box where you long-press and choose Paste
 - Scan the QR code to connect a phone; no app needed on the phone
