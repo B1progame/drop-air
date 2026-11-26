@@ -134,6 +134,15 @@ try:
     call("POST", f"/api/text?k={key}", {"text": "to the host", "to": "host", "from": "iphone1"}, host=LAN)
     check("phone to host: other phones do not see it", "to the host" not in got("ipad1")[0] and "to the host" in got("iphone1")[0])
 
+    # Several chosen devices: both get it, a third does not.
+    state_of("macA"), state_of("macB"), state_of("macC")
+    call("POST", "/api/text", {"text": "for two", "to": "macA,macB", "from": "hostpage"})
+    call("POST", "/api/upload?name=for-two.txt&to=macA%2CmacB&from=hostpage", b"x")
+    for who, expected in [("macA", True), ("macB", True), ("macC", False)]:
+        texts, files = got(who)
+        check(f"{who} {'gets' if expected else 'does not get'} the two-device send",
+              ("for two" in texts) == expected and ("for-two.txt" in files) == expected, (texts, files))
+
     # A sender that disconnects halfway must leave nothing behind.
     connection = http.client.HTTPConnection("127.0.0.1", PORT, timeout=10)
     connection.putrequest("POST", "/api/upload?name=half.bin")
@@ -231,6 +240,29 @@ try:
 finally:
     run.kill()
     run.wait()
+
+# Quitting and starting again must end every old link and old cookie.
+again = {**env, "DROP_AIR_DATA_DIR": str(work / "restart")}
+keys, cookie = [], ""
+for attempt in (1, 2):
+    run = subprocess.Popen(command, env=again, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+    try:
+        for _ in range(100):
+            try:
+                keys.append(json.loads(call("GET", "/api/state")[2])["session_key"])
+                break
+            except OSError:
+                time.sleep(0.1)
+        if attempt == 1:
+            cookie = call("GET", f"/?k={keys[0]}", host=LAN)[1].get("set-cookie", "").split(";")[0]
+            check("cookie works while running", call("GET", "/api/state", headers={"Cookie": cookie}, host=LAN)[0] == 200)
+        else:
+            check("new key after restart", keys[0] != keys[1], keys)
+            check("old link refused after restart", call("GET", f"/api/state?k={keys[0]}", host=LAN)[0] == 404)
+            check("old cookie refused after restart", call("GET", "/api/state", headers={"Cookie": cookie}, host=LAN)[0] == 404)
+    finally:
+        run.kill()
+        run.wait()
 
 # Without PORT, each data folder gets its own random port and keeps it.
 chosen = []

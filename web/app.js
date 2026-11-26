@@ -33,8 +33,15 @@ const myDevice = describeDevice();
 let key = query.get("k") || "";
 let code = query.get("code") || "";
 let state = null;
-let target = null; // {kind:"host"|"client"|"peer", id, name, icon}; remembered until unselected
-try { target = JSON.parse(localStorage.getItem("dropAirTarget")) || null; } catch (_) {}
+// Chosen devices, remembered until unselected. Empty means everyone.
+let targets = []; // [{kind:"host"|"client"|"peer", id, name, icon}]
+try {
+  const saved = JSON.parse(localStorage.getItem("dropAirTargets") || localStorage.getItem("dropAirTarget"));
+  targets = (Array.isArray(saved) ? saved : [saved]).filter(device => device?.id);
+} catch (_) {}
+const isTarget = id => targets.some(device => device.id === id);
+const namesOf = devices => devices.length > 2 ? `${devices.length} devices` : devices.map(device => device.name).join(" and ");
+const routeLabel = to => !to ? "" : to === clientId ? " · just for you" : " · private send";
 let pickTarget = null;
 const peerLinks = new Map();
 
@@ -157,14 +164,16 @@ function renderRadar() {
   ].slice(0, SPOTS.length);
   if (!state.admin) devices.unshift({ kind: "host", id: "host", name: state.device_name, sub: "Host PC", icon: "pc" });
   // A host cannot send to itself, e.g. a choice left over from using the phone view.
-  if (target?.kind === "host" && state.admin) target = null;
-  const moved = target && devices.find(d => d.id !== target.id && d.ids?.includes(target.id));
-  if (moved) target.id = moved.id;
+  if (state.admin) targets = targets.filter(device => device.kind !== "host");
+  for (const chosen of targets) {
+    const moved = devices.find(d => d.id !== chosen.id && d.ids?.includes(chosen.id));
+    if (moved) chosen.id = moved.id;
+  }
   renderTargets(devices);
 
-  $("radarHint").textContent = target ? `Files go only to ${target.name} until you unselect it`
+  $("radarHint").textContent = targets.length ? `Sending only to ${namesOf(targets)} until you unselect`
     : devices.length ? (matchMedia("(pointer: coarse)").matches || !state.admin ? "Tap a device to always send to it" : "Drop files on a device to send only to it") : "No devices yet. Tap the QR button to connect your phone.";
-  if (!changed("radar", [devices, target, state.admin])) return;
+  if (!changed("radar", [devices, targets, state.admin])) return;
 
   const me = el("div", { className: "node me" }, el("b", {}, icon(state.admin ? "pc" : "phone")),
     el("span", { textContent: state.admin ? state.device_name : "This device" }));
@@ -175,8 +184,9 @@ function renderRadar() {
       el("span", { textContent: device.name }), el("small", { textContent: device.sub }));
     node.style.left = `${SPOTS[index][0]}%`;
     node.style.top = `${SPOTS[index][1]}%`;
+    node.dataset.id = device.id;
     if (enter(seen.nodes, device.id)) node.classList.add("new");
-    if (target?.id === device.id) node.classList.add("selected");
+    if (isTarget(device.id)) node.classList.add("selected");
     // The host gets a details sheet for connected devices; everywhere else a tap selects or unselects.
     node.onclick = device.kind === "client" && state.admin ? () => showDevice(device.id) : () => toggleTarget(device);
     node.ondragover = event => { event.preventDefault(); event.stopPropagation(); node.classList.add("over"); };
@@ -185,7 +195,7 @@ function renderRadar() {
       event.preventDefault();
       event.stopPropagation();
       node.classList.remove("over");
-      send([...event.dataTransfer.files], device);
+      send([...event.dataTransfer.files], [device]);
     };
     return node;
   }));
@@ -200,17 +210,17 @@ function showDevice(id) {
     ["Address", client.ip], ["Connected", minutes ? `${minutes} min` : "just now"]]
     .flatMap(([label, value]) => [el("dt", { textContent: label }), el("dd", { textContent: value })]));
   const device = { kind: "client", id, name: client.name, icon: /PC|Mac|Browser|Chromebook/.test(client.name) ? "pc" : "phone" };
-  $("deviceSelect").textContent = target?.id === id ? "Stop sending here" : "Always send here";
+  $("deviceSelect").textContent = isTarget(id) ? "Unselect" : "Select";
   $("deviceSelect").onclick = () => { $("deviceDialog").close(); toggleTarget(device); };
   $("deviceSend").onclick = () => {
     $("deviceDialog").close();
-    pickTarget = device;
+    pickTarget = [device];
     $("picker").click();
   };
   $("kickBtn").onclick = async () => {
     $("deviceDialog").close();
     if (!await confirmBox(`Remove ${client.name}?`, "It is blocked until you quit Drop Air or allow it again in Settings. The QR code changes.", "Remove")) return;
-    api(`/api/admin/kick/${id}`, { method: "POST" }).then(() => { toast(`${client.name} removed`); if (target?.id === id) setTarget(null); refresh(); }).catch(report);
+    api(`/api/admin/kick/${id}`, { method: "POST" }).then(() => { toast(`${client.name} removed`); setTargets(targets.filter(chosen => chosen.id !== id)); refresh(); }).catch(report);
   };
   $("deviceDialog").showModal();
   $("deviceDialog").focus();
@@ -225,31 +235,35 @@ function renderBlocked() {
       onclick: () => api("/api/admin/unblock", { method: "POST", body: { ip: device.ip } }).then(refresh).catch(report) }))));
 }
 
-function setTarget(device) {
-  target = device ? { kind: device.kind, id: device.id, name: device.name, icon: device.icon } : null;
-  try { localStorage.setItem("dropAirTarget", JSON.stringify(target)); } catch (_) {}
+function setTargets(next) {
+  targets = next.map(device => ({ kind: device.kind, id: device.id, name: device.name, icon: device.icon }));
+  try {
+    localStorage.setItem("dropAirTargets", JSON.stringify(targets));
+    localStorage.removeItem("dropAirTarget");
+  } catch (_) {}
   signatures.radar = signatures.targets = "";
   if (state) renderRadar();
 }
-const toggleTarget = device => setTarget(target?.id === device.id ? null : device);
+const toggleTarget = device => setTargets(isTarget(device.id) ? targets.filter(chosen => chosen.id !== device.id) : [...targets, device]);
 
-// "Send to" buttons above the drop zone. A chosen device that went away stays chosen,
-// so files meant for one person are never quietly shared with everyone.
+// "Send to" buttons above the drop zone, any number can be chosen. A chosen device that
+// went away stays chosen, so files meant for some are never quietly shared with everyone.
 function renderTargets(devices) {
-  const online = !target || devices.some(d => d.id === target.id);
-  $("targetLabel").textContent = !target ? "Everyone connected can download them"
-    : online ? `Only for ${target.name}` : `Only for ${target.name}, which is not connected right now`;
-  $("textInput").placeholder = target ? `Send text only to ${target.name}…` : "Send text or a link…";
-  if (!changed("targets", [devices.map(d => [d.id, d.name]), target, online])) return;
-  const choices = online ? devices : [...devices, target];
+  const here = new Set(devices.map(device => device.id));
+  const away = targets.filter(device => !here.has(device.id));
+  $("targetLabel").textContent = !targets.length ? "Everyone connected can download them"
+    : `Only for ${namesOf(targets)}${away.length ? ` (${namesOf(away)} not connected right now)` : ""}`;
+  $("textInput").placeholder = targets.length ? `Send text only to ${namesOf(targets)}…` : "Send text or a link…";
+  if (!changed("targets", [devices.map(d => [d.id, d.name]), targets])) return;
   const chip = (label, iconName, pressed, onclick, offline) => {
-    const button = el("button", { type: "button", onclick, className: offline ? "offline" : "" }, iconName && icon(iconName), label);
+    const button = el("button", { type: "button", onclick, className: offline ? "offline" : "" }, iconName && icon(pressed ? "check" : iconName), label);
     button.setAttribute("aria-pressed", pressed);
     return button;
   };
+  const choices = [...devices, ...away];
   $("toBar").hidden = !choices.length;
-  $("toBar").replaceChildren(el("span", { textContent: "Send to" }), chip("Everyone", "", !target, () => setTarget(null)),
-    ...choices.map(device => chip(device.name, device.icon, target?.id === device.id, () => toggleTarget(device), target?.id === device.id && !online)));
+  $("toBar").replaceChildren(el("span", { textContent: "Send to" }), chip("Everyone", "", !targets.length, () => setTargets([])),
+    ...choices.map(device => chip(device.name, device.icon, isTarget(device.id), () => toggleTarget(device), !here.has(device.id))));
 }
 
 function renderFiles() {
@@ -266,7 +280,7 @@ function renderFiles() {
         onclick: () => toast(`Downloading ${file.name}. Check your browser's downloads.`) }, icon("download"));
       get.setAttribute("aria-label", `Download ${file.name}`);
     }
-    const route = file.to ? (file.to === clientId ? " · just for you" : " · private send") : "";
+    const route = routeLabel(file.to);
     const row = el("li", { className: "item" }, el("span", { className: `type ${typeIcon(file.name)}` }, icon(typeIcon(file.name))),
       el("div", { className: "meta" }, el("span", { className: "name", textContent: file.name, title: file.name }),
         el("span", { className: "sub", textContent: `${human(file.size)} · ${ago(file.modified)}${route}` })),
@@ -282,7 +296,7 @@ function renderTexts() {
   if (!changed("texts", [state.texts, Math.floor(Date.now() / 60000)])) return;
   $("texts").replaceChildren(...state.texts.map(item => {
     const row = el("li", { className: "item text-item" },
-      el("div", { className: "meta" }, el("div", { className: "text-body", textContent: item.text }), el("span", { className: "sub", textContent: ago(item.created) + (item.to ? (item.to === clientId ? " · just for you" : " · private send") : "") })),
+      el("div", { className: "meta" }, el("div", { className: "text-body", textContent: item.text }), el("span", { className: "sub", textContent: ago(item.created) + routeLabel(item.to) })),
       el("div", { className: "actions" }, iconButton("copy", "Copy text", () => copy(item.text)),
         iconButton("trash", "Delete text", event => remove(event.currentTarget, `/api/text/${encodeURIComponent(item.id)}`), "del")));
     if (enter(seen.texts, item.id)) row.classList.add("enter");
@@ -415,47 +429,90 @@ async function pairWith(device) {
   throw new Error(`${device.name} did not accept`);
 }
 
-async function send(files, to = target) {
+// Splits the chosen devices into this host's pages and other Drop Air PCs (which must accept first).
+async function routes(to) {
+  const local = to.filter(device => device.kind !== "peer");
+  const list = !to.length || local.length ? [{ ids: local.map(device => device.id).join(","), devices: local, peer: null }] : [];
+  for (const device of to.filter(chosen => chosen.kind === "peer")) {
+    try {
+      if (!state.peers.some(p => p.device_id === device.id)) throw new Error(`${device.name} is not nearby right now`);
+      list.push({ ids: "", devices: [device], peer: await pairWith(device) });
+    } catch (error) { report(error); }
+  }
+  return list;
+}
+
+async function send(files, to = targets) {
   if (!files.length || !state) return;
   const tooBig = files.find(file => file.size > state.limit_bytes);
   if (tooBig) return toast(`${tooBig.name} is larger than ${state.limit_label}`);
-  let peer = null;
-  if (to?.kind === "peer" && !state.peers.some(p => p.device_id === to.id)) return toast(`${to.name} is not nearby right now`);
-  if (to?.kind === "peer") {
-    try { peer = await pairWith(to); } catch (error) { return report(error); }
-  }
-  flyTo(to);
-  for (const file of files) {
-    const job = { file, to, peer, sent: 0, xhr: null, done: false };
-    job.sub = el("span", { className: "sub", textContent: `Waiting · ${human(file.size)}` });
-    job.fill = el("i");
-    job.row = el("li", { className: "item enter" }, el("span", { className: "type" }, icon(typeIcon(file.name))),
-      el("div", { className: "meta" }, el("span", { className: "name", textContent: file.name }), job.sub, el("div", { className: "bar" }, job.fill)),
-      iconButton("x", `Cancel ${file.name}`, () => { job.cancelled = true; job.xhr ? job.xhr.abort() : finish(job, "Cancelled", "bad"); }, "del"));
-    $("queue").append(job.row);
-    queue.push(job);
+  const wanted = await routes([...to]);
+  if (!wanted.length) return;
+  launch(wanted.flatMap(route => route.devices));
+  for (const route of wanted) {
+    for (const file of files) {
+      const job = { file, route, xhr: null, done: false };
+      job.sub = el("span", { className: "sub", textContent: `Waiting · ${human(file.size)}` });
+      job.fill = el("i");
+      job.row = el("li", { className: "item enter" }, el("span", { className: "type" }, icon(typeIcon(file.name))),
+        el("div", { className: "meta" }, el("span", { className: "name", textContent: file.name }), job.sub, el("div", { className: "bar" }, job.fill)),
+        iconButton("x", `Cancel ${file.name}`, () => { job.cancelled = true; job.xhr ? job.xhr.abort() : finish(job, "Cancelled", "bad"); }, "del"));
+      $("queue").append(job.row);
+      queue.push(job);
+    }
   }
   pump();
 }
 
-// A paper plane leaves the drop zone for the receiving device.
-function flyTo(device) {
-  if (!motion()) return;
-  const from = $("drop").getBoundingClientRect();
-  const nodes = [...$("nodes").children];
-  const aim = (device && nodes.find(node => node.querySelector("span").textContent === device.name)) || nodes[0];
-  if (!aim || !from.width) return;
-  const to = aim.querySelector("b").getBoundingClientRect();
-  const start = [from.left + from.width / 2 - 15, from.top + from.height / 3];
-  const end = [to.left + to.width / 2 - 15, to.top + to.height / 2 - 15];
-  const plane = icon("send");
-  plane.classList.add("plane");
-  document.body.append(plane);
-  plane.animate([
-    { transform: `translate(${start[0]}px, ${start[1]}px) scale(.6)`, opacity: 0 },
-    { transform: `translate(${(start[0] + end[0]) / 2 + 60}px, ${(start[1] + end[1]) / 2}px) scale(1.4)`, opacity: 1 },
-    { transform: `translate(${end[0]}px, ${end[1]}px) scale(.4)`, opacity: .2 },
-  ], { duration: 750, easing: "cubic-bezier(.4,0,.2,1)" }).onfinish = () => plane.remove();
+/* ---------- send animation ---------- */
+
+const center = element => {
+  const box = element.getBoundingClientRect();
+  return [box.left + box.width / 2, box.top + box.height / 2];
+};
+function effect(className, [x, y], keyframes, options) {
+  const element = className === "plane" ? icon("send") : document.createElement("div");
+  element.classList.add(className);
+  document.body.append(element);
+  const place = frame => ({ ...frame, transform: `translate(${frame.at ? frame.at[0] : x}px, ${frame.at ? frame.at[1] : y}px) translate(-50%, -50%) ${frame.transform || ""}`, at: undefined });
+  element.animate(keyframes.map(place), { fill: "both", ...options }).onfinish = () => element.remove();
+}
+function ripple(point, delay = 0, size = 2.4) {
+  effect("burst", point, [{ transform: "scale(.3)", opacity: .9 }, { transform: `scale(${size})`, opacity: 0 }], { duration: 650, delay, easing: "ease-out" });
+}
+
+// Paper planes with a short trail fly from the drop zone to every receiver, which then
+// lights up. Sending to everyone also sends a wave out from this device.
+function launch(devices) {
+  if (!motion() || document.hidden) return;
+  const drop = $("drop").getBoundingClientRect();
+  const me = $("nodes").querySelector(".me b");
+  if (!me) return;
+  const nodes = [...$("nodes").querySelectorAll(".node:not(.me)")];
+  const aims = devices.length ? nodes.filter(node => devices.some(device => device.id === node.dataset.id)) : nodes;
+  const goals = aims.length ? aims.map(node => node.querySelector("b")) : [me];
+  const start = drop.width ? [drop.left + drop.width / 2, drop.top + drop.height / 3] : center(me);
+  if (!devices.length) [0, 140, 280].forEach(delay => ripple(center(me), delay, 6));
+  ripple(start, 0, 3);
+  goals.forEach((goal, index) => {
+    const end = center(goal);
+    const side = end[0] < start[0] ? -1 : 1;
+    const bend = [(start[0] + end[0]) / 2 + side * 70, Math.min(start[1], end[1]) - 40];
+    const angle = Math.atan2(end[1] - start[1], end[0] - start[0]) * 180 / Math.PI + 45;
+    for (let trail = 0; trail < 4; trail++) {
+      const size = 1 - trail * .2;
+      effect("plane", start, [
+        { at: start, transform: "rotate(0deg) scale(.4)", opacity: 0 },
+        { at: bend, transform: `rotate(${angle}deg) scale(${1.5 * size})`, opacity: 1 - trail * .27, offset: .5 },
+        { at: end, transform: `rotate(${angle}deg) scale(${.5 * size})`, opacity: 0 },
+      ], { duration: 820, delay: index * 120 + trail * 55, easing: "cubic-bezier(.45,.05,.35,1)" });
+    }
+    const arrive = index * 120 + 760;
+    ripple(end, arrive);
+    ripple(end, arrive + 130);
+    goal.animate([{ transform: "scale(1)" }, { transform: "scale(1.3)" }, { transform: "scale(.92)" }, { transform: "scale(1)" }],
+      { duration: 460, delay: arrive, easing: "ease-out" });
+  });
 }
 
 function pump() {
@@ -483,10 +540,11 @@ function finish(job, message, tone) {
 }
 
 function upload(job) {
-  const { file, to, peer } = job;
+  const { file, route } = job;
+  const { peer, devices } = route;
   const xhr = job.xhr = new XMLHttpRequest();
   const params = new URLSearchParams({ name: file.name, from: clientId });
-  if (to && !peer) params.set("to", to.id);
+  if (route.ids) params.set("to", route.ids);
   if (peer) { params.set("k", peer.key); if (peer.code) params.set("code", peer.code); }
   xhr.open("POST", `${peer ? peer.origin : ""}/api/upload?${params}`);
   xhr.setRequestHeader("Content-Type", "application/octet-stream");
@@ -507,10 +565,10 @@ function upload(job) {
     active--;
     let data = {};
     try { data = JSON.parse(xhr.responseText); } catch (_) {}
-    if (xhr.status >= 200 && xhr.status < 300) finish(job, to ? `Sent to ${to.name}` : "Sent", "good");
+    if (xhr.status >= 200 && xhr.status < 300) finish(job, devices.length ? `Sent to ${namesOf(devices)}` : "Sent to everyone", "good");
     else {
-      if (peer) peerLinks.delete(to.id);
-      finish(job, job.cancelled ? "Cancelled" : data.error === "missing file" ? `${to?.name} runs an older Drop Air` : data.error || "Upload failed", "bad");
+      if (peer) peerLinks.delete(devices[0].id);
+      finish(job, job.cancelled ? "Cancelled" : data.error === "missing file" ? `${namesOf(devices)} runs an older Drop Air` : data.error || "Upload failed", "bad");
     }
     pump();
     refresh();
@@ -520,9 +578,9 @@ function upload(job) {
 
 /* ---------- inputs ---------- */
 
-$("pickBtn").onclick = () => { pickTarget = target; $("picker").click(); };
+$("pickBtn").onclick = () => { pickTarget = null; $("picker").click(); };
 $("picker").onclick = () => { $("picker").value = ""; };
-$("picker").onchange = () => { send([...$("picker").files], pickTarget || target); pickTarget = null; };
+$("picker").onchange = () => { send([...$("picker").files], pickTarget || targets); pickTarget = null; };
 
 const drop = $("drop");
 let depth = 0;
@@ -538,17 +596,19 @@ window.addEventListener("drop", event => {
 
 // Text and pasted text go where "Send to" says, like files.
 async function sendText(text) {
-  const to = target;
-  if (to?.kind === "peer") {
-    if (!state.peers.some(p => p.device_id === to.id)) throw new Error(`${to.name} is not nearby right now`);
-    const peer = await pairWith(to);
+  const wanted = await routes([...targets]);
+  if (!wanted.length) return;
+  launch(wanted.flatMap(route => route.devices));
+  for (const { ids, devices, peer } of wanted) {
+    if (!peer) {
+      await api("/api/text", { method: "POST", body: ids ? { text, to: ids, from: clientId } : { text } });
+      continue;
+    }
     const query = `k=${encodeURIComponent(peer.key)}${peer.code ? `&code=${encodeURIComponent(peer.code)}` : ""}`;
     const response = await fetch(`${peer.origin}/api/text?${query}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
-    if (!response.ok) { peerLinks.delete(to.id); throw new Error(`${to.name} did not take the text`); }
-  } else {
-    await api("/api/text", { method: "POST", body: to ? { text, to: to.id, from: clientId } : { text } });
+    if (!response.ok) { peerLinks.delete(devices[0].id); throw new Error(`${devices[0].name} did not take the text`); }
   }
-  toast(to ? `Text sent only to ${to.name}` : "Text shared with everyone");
+  toast(targets.length ? `Text sent only to ${namesOf(targets)}` : "Text shared with everyone");
   await refresh();
 }
 $("textForm").onsubmit = event => {

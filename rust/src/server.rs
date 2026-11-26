@@ -211,7 +211,7 @@ async fn api_state(State(app): State<App>, ConnectInfo(address): Peer, headers: 
     let settings = store.settings();
     let (key, remaining) = store.session();
     let mine = store.same_device(&client_id);
-    let files: Vec<_> = store.files().into_iter().filter(|f| admin || f.to.is_empty() || mine.contains(&f.to) || mine.contains(&f.from)).collect();
+    let files: Vec<_> = store.files().into_iter().filter(|f| admin || f.to.is_empty() || addressed_to(&f.to, &mine) || mine.contains(&f.from)).collect();
     let peers: Vec<_> = {
         let mut peers: Vec<_> = lock(&store.peers).values().cloned().collect();
         peers.sort_by_key(|p| p.device_name.to_lowercase());
@@ -231,7 +231,7 @@ async fn api_state(State(app): State<App>, ConnectInfo(address): Peer, headers: 
         "cleanup_minutes": settings.auto_cleanup_minutes,
         "text_ttl_minutes": text_ttl_minutes(),
         "files": files,
-        "texts": lock(&store.texts).iter().filter(|t| admin || t.to.is_empty() || mine.contains(&t.to) || mine.contains(&t.from)).cloned().collect::<Vec<_>>(),
+        "texts": lock(&store.texts).iter().filter(|t| admin || t.to.is_empty() || addressed_to(&t.to, &mine) || mine.contains(&t.from)).cloned().collect::<Vec<_>>(),
         "clients": store.clients_json(admin),
         "peers": peers,
         "discovery_status": *lock(&store.discovery_status),
@@ -304,7 +304,7 @@ async fn upload(
     };
     drop(staging);
     let field = |key: &str| query.get(key).map(|v| v.chars().filter(char::is_ascii_alphanumeric).take(64).collect::<String>()).unwrap_or_default();
-    let to = field("to");
+    let to = clean_ids(query.get("to").map(String::as_str).unwrap_or(""));
     if to.is_empty() {
         lock(&store.routes).remove(&stored);
     } else {
@@ -379,7 +379,7 @@ async fn add_text(State(app): State<App>, ConnectInfo(address): Peer, headers: H
     authorize(&app.store, address, &headers, &query)?;
     let payload = parse_json(&body)?;
     let id = |key: &str| payload[key].as_str().unwrap_or("").chars().filter(char::is_ascii_alphanumeric).take(64).collect::<String>();
-    let item = app.store.add_text(payload["text"].as_str().unwrap_or(""), id("to"), id("from")).ok_or_else(|| fail(400, "Paste text before sharing."))?;
+    let item = app.store.add_text(payload["text"].as_str().unwrap_or(""), clean_ids(payload["to"].as_str().unwrap_or("")), id("from")).ok_or_else(|| fail(400, "Paste text before sharing."))?;
     Ok(Json(json!({ "ok": true, "item": item })))
 }
 

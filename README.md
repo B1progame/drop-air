@@ -2,7 +2,7 @@
 
 Fast local file and text sharing between a Windows PC and any phone, tablet or computer on the same Wi-Fi. No cloud, no account.
 
-> **The Python edition is no longer updated.** 1.7.3 is its final release.
+> **The Python edition is no longer updated.** 1.7.4 is its final release.
 > New features and fixes only go into the **Rust edition (2.x)**.
 > To switch: open Drop Air → **Switch to Rust**, or run the latest `DropAir-Setup-2.x.exe` from [Releases](https://github.com/B1progame/drop-air/releases). Your settings stay.
 
@@ -11,7 +11,7 @@ Fast local file and text sharing between a Windows PC and any phone, tablet or c
 | Edition | Installer | Installed size | Updates |
 |---|---|---|---|
 | **Rust 2.x** (recommended) | `DropAir-Setup-2.x.exe` | about 9 MB | yes |
-| Python 1.7.3 (final) | `DropAir-Setup-1.7.3.exe` | about 36 MB | none |
+| Python 1.7.4 (final) | `DropAir-Setup-1.7.4.exe` | about 36 MB | none |
 
 Both need Windows 10 or 11 (64-bit) with Microsoft Edge WebView2, which Windows 11 includes. Older releases were about 450 MB.
 
@@ -19,7 +19,7 @@ Both need Windows 10 or 11 (64-bit) with Microsoft Edge WebView2, which Windows 
 
 - Drop, pick or paste files and text; everyone connected can get them
 - Drop files onto a device in the **Nearby** area to send only to it
-- Pick a device under **Send to** and files and text keep going only there until you unselect it
+- Pick one or several devices under **Send to** and files and text keep going only there until you unselect them
 - The host can see each device's system, browser and address, and remove it
 - On phones, **Paste** opens a box where you long-press and choose Paste
 - Scan the QR code to connect a phone; no app needed on the phone
@@ -32,7 +32,7 @@ Each PC picks its own random port (20000–48999) on first start and keeps it. S
 
 ## Security
 
-Drop Air is meant for networks you trust: traffic is plain HTTP. Links carry a rotating session key, and an access code can be added in Settings. Host controls only work from this PC. A "private send" is hidden from other devices' lists but is not encrypted.
+Drop Air is meant for networks you trust: traffic is plain HTTP. Links carry a session key that changes every 5 minutes and on every start, and an access code can be added in Settings. Host controls only work from this PC. A "private send" is hidden from other devices' lists but is not encrypted.
 
 Shared files and texts are deleted when Drop Air quits, and by default after 10 minutes. Data lives in `%LOCALAPPDATA%\DropAir` (or `data\` next to the program in the portable ZIP).
 

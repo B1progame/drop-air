@@ -43,6 +43,22 @@ fn session_grace() -> u64 {
     env_number("DROP_AIR_SESSION_GRACE_SECONDS", 120)
 }
 
+/// A "to" value: one page id or several separated by commas.
+pub fn clean_ids(value: &str) -> String {
+    let ids: Vec<String> = value
+        .split(',')
+        .map(|id| id.chars().filter(char::is_ascii_alphanumeric).take(64).collect::<String>())
+        .filter(|id| !id.is_empty())
+        .take(16)
+        .collect();
+    ids.join(",")
+}
+
+/// Is any of the recipients one of these ids?
+pub fn addressed_to(to: &str, ids: &HashSet<String>) -> bool {
+    to.split(',').any(|id| ids.contains(id))
+}
+
 pub fn clean_device_name(value: &str) -> String {
     let name: String = value.chars().filter(|c| !c.is_control()).collect();
     let name: String = name.trim().chars().take(32).collect();
@@ -154,7 +170,6 @@ pub struct FileEntry {
     pub from: String,
 }
 
-#[derive(Serialize, Deserialize)]
 struct SessionState {
     key: String,
     expires_at: u64,
@@ -262,7 +277,8 @@ impl Store {
         let upload_dir = data_dir.join("uploads");
         std::fs::create_dir_all(&upload_dir)?;
         let device_id = read_or_create(&data_dir.join("device-id"), |v| v.len() == 32 && v.bytes().all(|b| b.is_ascii_hexdigit()), || random_hex(16));
-        let recovery_secret = read_or_create(&data_dir.join("session-recovery.secret"), |v| v.len() >= 48, || random_hex(32));
+        // A new key and cookie secret every start: links from before a restart stop working.
+        let recovery_secret = random_hex(32);
         let mut settings: Settings = std::fs::read(data_dir.join("settings.json"))
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
@@ -272,11 +288,7 @@ impl Store {
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
-        let session = std::fs::read(data_dir.join("session-state.json"))
-            .ok()
-            .and_then(|b| serde_json::from_slice::<SessionState>(&b).ok())
-            .filter(|s| s.key.len() == 32)
-            .unwrap_or_else(|| SessionState { key: random_hex(16), expires_at: now() + session_ttl(), previous: HashMap::new() });
+        let session = SessionState { key: random_hex(16), expires_at: now() + session_ttl(), previous: HashMap::new() };
         let store = Store {
             data_dir,
             upload_dir,
@@ -298,7 +310,6 @@ impl Store {
             port: Default::default(),
             asleep: Default::default(),
         };
-        store.persist_session(&lock(&store.session));
         Ok(store)
     }
 
@@ -317,12 +328,6 @@ impl Store {
         Ok(())
     }
 
-    fn persist_session(&self, session: &SessionState) {
-        if let Ok(data) = serde_json::to_vec(session) {
-            let _ = write_atomic(&self.data_dir.join("session-state.json"), &data);
-        }
-    }
-
     /// Current key and seconds left, rotating it when it has expired.
     pub fn session(&self) -> (String, u64) {
         let mut session = lock(&self.session);
@@ -334,7 +339,6 @@ impl Store {
             session.previous.insert(old, expired_at + session_grace());
             session.previous.retain(|_, expires| *expires > time);
             session.expires_at = time + session_ttl();
-            self.persist_session(&session);
         }
         (session.key.clone(), session.expires_at.saturating_sub(time))
     }
@@ -346,13 +350,11 @@ impl Store {
         lock(&self.blocked).insert(client.ip, client.name);
         lock(&self.clients).retain(|_, c| c.ip != client.ip);
         let secret = random_hex(32);
-        let _ = std::fs::write(self.data_dir.join("session-recovery.secret"), &secret);
         *lock(&self.recovery_secret) = secret;
         let mut session = lock(&self.session);
         let old = std::mem::replace(&mut session.key, random_hex(16));
         session.previous.insert(old, now() + session_grace());
         session.expires_at = now() + session_ttl();
-        self.persist_session(&session);
         true
     }
 
@@ -367,7 +369,6 @@ impl Store {
         session.key = random_hex(16);
         session.previous.clear();
         session.expires_at = now() + session_ttl();
-        self.persist_session(&session);
         lock(&self.clients).clear();
     }
 
@@ -376,7 +377,6 @@ impl Store {
         if self.asleep.swap(false, std::sync::atomic::Ordering::Relaxed) {
             let mut session = lock(&self.session);
             session.expires_at = now() + session_ttl();
-            self.persist_session(&session);
         }
     }
 

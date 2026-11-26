@@ -166,7 +166,8 @@ button.node:hover b,.node.over b{transform:scale(1.12) translateY(-2px);box-shad
 .text-body{white-space:pre-wrap;overflow-wrap:anywhere;max-height:120px;overflow:auto;user-select:text;scrollbar-width:thin}
 .actions{display:flex;flex:none}
 
-.plane{position:fixed;left:0;top:0;z-index:8;width:30px;height:30px;color:var(--blue-light);pointer-events:none;filter:drop-shadow(0 4px 10px var(--blue))}
+.plane{position:fixed;left:0;top:0;z-index:8;width:34px;height:34px;color:var(--blue-light);fill:color-mix(in srgb,var(--blue) 45%,transparent);pointer-events:none;filter:drop-shadow(0 0 10px var(--blue))}
+.burst{position:fixed;left:0;top:0;z-index:7;width:54px;height:54px;border:2px solid var(--blue-light);border-radius:50%;box-shadow:0 0 18px var(--blue),inset 0 0 14px var(--glow);opacity:0;pointer-events:none}
 
 .composer{display:flex;align-items:center;gap:8px;margin-top:12px;padding:6px 6px 6px 14px;border-radius:16px;background:var(--raised);border:1px solid transparent;transition:border-color .2s,box-shadow .25s}
 .composer:focus-within{border-color:var(--blue);box-shadow:0 0 0 4px var(--glow)}

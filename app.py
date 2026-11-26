@@ -45,7 +45,7 @@ def read_version() -> str:
             return candidate.read_text(encoding="utf-8").strip().lstrip("v")
         except OSError:
             continue
-    return "1.7.3"
+    return "1.7.4"
 
 
 APP_VERSION = read_version()
@@ -127,7 +127,8 @@ def read_or_create(path: Path, pattern: str, make) -> str:
 
 LOCK = threading.RLock()
 DEVICE_ID = read_or_create(DATA_DIR / "device-id", r"[0-9a-f]{32}", lambda: secrets.token_hex(16))
-RECOVERY_SECRET = read_or_create(DATA_DIR / "session-recovery.secret", r"[\w-]{48,}", lambda: secrets.token_hex(32))
+# A new key and cookie secret every start: links from before a restart stop working.
+RECOVERY_SECRET = secrets.token_hex(32)
 SETTINGS = {**DEFAULT_SETTINGS, **{k: v for k, v in read_json(DATA_DIR / "settings.json", {}).items() if k in DEFAULT_SETTINGS}}
 SETTINGS["device_name"] = clean_device_name(SETTINGS["device_name"])
 TEXTS = [
@@ -136,12 +137,7 @@ TEXTS = [
     for item in read_json(DATA_DIR / "text_items.json", [])
     if isinstance(item, dict) and "id" in item
 ]
-_saved = read_json(DATA_DIR / "session-state.json", {})
-SESSION = (
-    _saved
-    if len(str(_saved.get("key", ""))) == 32
-    else {"key": secrets.token_hex(16), "expires_at": time.time() + SESSION_TTL, "previous": {}}
-)
+SESSION = {"key": secrets.token_hex(16), "expires_at": time.time() + SESSION_TTL, "previous": {}}
 CLIENTS: dict[str, dict] = {}
 BLOCKED: dict[str, str] = {}  # devices the host removed, until Drop Air quits: address -> name
 ROUTES: dict[str, tuple[str, str]] = {}  # file name -> (recipient, sender) for private sends
@@ -168,7 +164,6 @@ def session() -> tuple[str, int]:
                 SESSION["previous"][SESSION["key"]] = expired_at + SESSION_GRACE
             SESSION["key"] = secrets.token_hex(16)
             SESSION["expires_at"] = now + SESSION_TTL
-            write_atomic(DATA_DIR / "session-state.json", json.dumps(SESSION))
         return SESSION["key"], int(SESSION["expires_at"] - now)
 
 
@@ -177,7 +172,6 @@ def sleep() -> None:
     ASLEEP.set()
     with LOCK:
         SESSION.update(key=secrets.token_hex(16), previous={}, expires_at=time.time() + SESSION_TTL)
-        write_atomic(DATA_DIR / "session-state.json", json.dumps(SESSION))
         CLIENTS.clear()
 
 
@@ -187,7 +181,6 @@ def wake() -> None:
         ASLEEP.clear()
         with LOCK:
             SESSION["expires_at"] = time.time() + SESSION_TTL
-            write_atomic(DATA_DIR / "session-state.json", json.dumps(SESSION))
 
 
 def public_url() -> str:
@@ -223,6 +216,16 @@ def file_path(name: str) -> Path | None:
         return None
     path = UPLOAD_DIR / name
     return path if path.is_file() and not path.is_symlink() else None
+
+
+def clean_ids(value: str) -> str:
+    """A "to" value: one page id or several separated by commas."""
+    ids = (re.sub(r"[^A-Za-z0-9]", "", part)[:64] for part in value.split(","))
+    return ",".join([part for part in ids if part][:16])
+
+
+def addressed_to(item: dict, ids: set[str]) -> bool:
+    return not item["to"] or item["from"] in ids or not ids.isdisjoint(item["to"].split(","))
 
 
 def list_files() -> list[dict]:
@@ -490,8 +493,8 @@ def api_state():
         "limit_label": f"{gb:g} GB" if gb >= 1 else f"{gb * 1024:.0f} MB",
         "cleanup_minutes": SETTINGS["auto_cleanup_minutes"],
         "text_ttl_minutes": TEXT_TTL_MINUTES,
-        "files": [f for f in list_files() if admin or not f["to"] or mine & {f["to"], f["from"]}],
-        "texts": [t for t in list(TEXTS) if admin or not t["to"] or mine & {t["to"], t["from"]}],
+        "files": [f for f in list_files() if admin or addressed_to(f, mine)],
+        "texts": [t for t in list(TEXTS) if admin or addressed_to(t, mine)],
         "clients": clients_list(admin),
         "peers": discovery["peers"],
         "discovery_status": discovery["status"],
@@ -549,8 +552,9 @@ def upload():
     def clean(field: str) -> str:
         return re.sub(r"[^A-Za-z0-9]", "", request.args.get(field, ""))[:64]
 
-    if clean("to"):
-        ROUTES[candidate] = (clean("to"), clean("from"))
+    to = clean_ids(request.args.get("to", ""))
+    if to:
+        ROUTES[candidate] = (to, clean("from"))
     else:
         ROUTES.pop(candidate, None)
     cleanup()
@@ -609,7 +613,8 @@ def add_text():
     text = str(data.get("text", ""))[:MAX_TEXT_CHARS]
     if not text.strip():
         raise ApiError(400, "Paste text before sharing.")
-    to, sender = (re.sub(r"[^A-Za-z0-9]", "", str(data.get(field, "")))[:64] for field in ("to", "from"))
+    to = clean_ids(str(data.get("to", "")))
+    sender = re.sub(r"[^A-Za-z0-9]", "", str(data.get("from", "")))[:64]
     item = {"id": secrets.token_hex(8), "text": text, "created": int(time.time()), "to": to, "from": sender if to else ""}
     with LOCK:
         TEXTS.insert(0, item)
@@ -712,7 +717,6 @@ def kick(client_id: str):
             if other["ip"] == client["ip"]:
                 del CLIENTS[key]
         RECOVERY_SECRET = secrets.token_hex(32)
-        (DATA_DIR / "session-recovery.secret").write_text(RECOVERY_SECRET, encoding="utf-8")
         SESSION["expires_at"] = time.time()  # rotate now; others get the grace time
     session()
     return jsonify({"ok": True})
