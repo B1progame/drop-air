@@ -1,2296 +1,888 @@
-import atexit
+"""Drop Air local server, Python edition (final release).
+
+Serves the same web/ interface and the same HTTP API as the Rust edition.
+Run ``python desktop_app.py`` for the tray app or ``python app.py`` for the server only.
+"""
+
+from __future__ import annotations
+
 import io
 import json
 import logging
 import os
 import re
 import secrets
-import signal
-import socket
 import shutil
+import socket
 import stat
 import subprocess
 import sys
 import tempfile
 import threading
 import time
-import webbrowser
-import zipfile
 from pathlib import Path
-from threading import Lock, Timer
+from socketserver import TCPServer
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import quote, unquote
 from urllib.request import Request, urlopen
 
 import qrcode
-from flask import Flask, Response, jsonify, make_response, redirect, render_template, request, send_from_directory, url_for
-from itsdangerous import BadSignature, URLSafeTimedSerializer
-from werkzeug.exceptions import RequestEntityTooLarge
-from werkzeug.utils import secure_filename
+import qrcode.image.svg
+from flask import Flask, Response, jsonify, request, send_from_directory
+from werkzeug.exceptions import HTTPException
+from werkzeug.serving import ThreadedWSGIServer, WSGIRequestHandler
+
 from discovery import PairingRequests, PeerDiscovery, clean_device_name, route_ipv4
 
-if getattr(sys, "frozen", False):
-    APP_DIR = Path(sys.executable).resolve().parent
-    TEMPLATE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR)) / "templates"
-    STATIC_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR)) / "static"
-else:
-    APP_DIR = Path(__file__).resolve().parent
-    TEMPLATE_DIR = APP_DIR / "templates"
-    STATIC_DIR = APP_DIR / "static"
+APP_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
+WEB_DIR = BUNDLE_DIR / "web"
 
-def get_data_dir() -> Path:
-    # Use a per-user writable folder for runtime data so packaged installs work from Program Files.
-    env_override = (os.getenv("DROP_AIR_DATA_DIR") or "").strip()
-    if env_override:
-        return Path(env_override).expanduser()
 
-    # Portable packages keep settings and received files beside the launcher.
+def read_version() -> str:
+    for candidate in (BUNDLE_DIR / "VERSION", APP_DIR / "VERSION"):
+        try:
+            return candidate.read_text(encoding="utf-8").strip().lstrip("v")
+        except OSError:
+            continue
+    return "1.7.0"
+
+
+APP_VERSION = read_version()
+
+
+def data_dir() -> Path:
+    override = os.getenv("DROP_AIR_DATA_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
     if (APP_DIR / "portable.mode").is_file():
         return APP_DIR / "data"
-
-    if os.name == "nt":
-        local_appdata = (os.getenv("LOCALAPPDATA") or "").strip()
-        if local_appdata:
-            return Path(local_appdata) / "DropAir"
-        return Path.home() / "AppData" / "Local" / "DropAir"
-
-    xdg_data_home = (os.getenv("XDG_DATA_HOME") or "").strip()
-    if xdg_data_home:
-        return Path(xdg_data_home) / "drop-air"
-    return Path.home() / ".local" / "share" / "drop-air"
+    base = os.getenv("LOCALAPPDATA") or str(Path.home() / ".local" / "share")
+    return Path(base) / "DropAir"
 
 
-DATA_DIR = get_data_dir()
+DATA_DIR = data_dir()
 UPLOAD_DIR = DATA_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-SETTINGS_FILE = DATA_DIR / "settings.json"
-LOG_FILE = DATA_DIR / "drop-air.log"
 
-DEFAULT_MAX_UPLOAD_GB = 10.0
-MAX_CONTENT_LENGTH = int(DEFAULT_MAX_UPLOAD_GB * 1024 * 1024 * 1024)
-ALLOWED_ORIGINS = "*"
-_ENV_SESSION_KEY = os.getenv("DROP_AIR_SESSION_KEY", "").strip()
-SESSION_PARAM = "k"
-SESSION_TTL_SECONDS = int(os.getenv("DROP_AIR_SESSION_TTL_SECONDS", "300") or "300")
-SESSION_GRACE_SECONDS = int(os.getenv("DROP_AIR_SESSION_GRACE_SECONDS", "120") or "120")
-SESSION_EXPIRES_AT = time.time() + SESSION_TTL_SECONDS
-SESSION_STATE_FILE = DATA_DIR / "session-state.json"
-SESSION_LOCK = Lock()
-SESSION_RECOVERY_COOKIE = "dropair_session_recovery"
-SESSION_RECOVERY_MAX_AGE = 30 * 24 * 60 * 60
-SESSION_RECOVERY_VALUE = "authorized-transfer-page-v1"
+STAGING_PREFIX = ".dropair-"
+BUFFER = 1024 * 1024
+SESSION_TTL = 300
+SESSION_GRACE = 120
+CLIENT_TTL = 30
+MAX_TEXT_ITEMS = 40
+MAX_TEXT_CHARS = 20_000
+COOKIE = "dropair_session_recovery"
+RELEASES_URL = "https://api.github.com/repos/B1progame/drop-air/releases?per_page=30"
+ASSET_PREFIX = "https://github.com/B1progame/drop-air/"
 
 
-def load_session_recovery_secret() -> str:
-    secret_path = DATA_DIR / "session-recovery.secret"
+def env_number(name: str, fallback: float) -> float:
     try:
-        secret = secret_path.read_text(encoding="utf-8").strip()
-        if len(secret) >= 48:
-            return secret
-    except OSError:
-        pass
-
-    secret = secrets.token_urlsafe(48)
-    try:
-        secret_path.write_text(secret, encoding="utf-8")
-    except OSError:
-        # Recovery remains available for this process if the data folder is read-only.
-        pass
-    return secret
+        return float(os.getenv(name, "") or fallback)
+    except ValueError:
+        return fallback
 
 
-SESSION_RECOVERY_SERIALIZER = URLSafeTimedSerializer(
-    load_session_recovery_secret(), salt="drop-air-session-recovery-v1"
-)
-
-
-def has_valid_session_recovery_cookie() -> bool:
-    token = request.cookies.get(SESSION_RECOVERY_COOKIE, "")
-    if not token:
-        return False
-    try:
-        return SESSION_RECOVERY_SERIALIZER.loads(token, max_age=SESSION_RECOVERY_MAX_AGE) == SESSION_RECOVERY_VALUE
-    except BadSignature:
-        return False
-
-
-def attach_session_recovery_cookie(response):
-    token = SESSION_RECOVERY_SERIALIZER.dumps(SESSION_RECOVERY_VALUE)
-    response.set_cookie(
-        SESSION_RECOVERY_COOKIE,
-        token,
-        max_age=SESSION_RECOVERY_MAX_AGE,
-        httponly=True,
-        secure=request.is_secure,
-        samesite="Lax",
-        path="/",
-    )
-    return response
-
-
-def read_session_state(path: Path | None = None) -> dict:
-    try:
-        state = json.loads((path or SESSION_STATE_FILE).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    key = state.get("key") if isinstance(state, dict) else None
-    if not isinstance(key, str) or len(key) != 32:
-        return {}
-    previous = state.get("previous", {})
-    if not isinstance(previous, dict):
-        previous = {}
-    try:
-        expires_at = float(state.get("expires_at", 0) or 0)
-    except (TypeError, ValueError):
-        return {}
-    previous_keys = {}
-    for item_key, expires in previous.items():
-        if not isinstance(item_key, str) or len(item_key) != 32:
-            continue
-        try:
-            previous_keys[item_key] = float(expires)
-        except (TypeError, ValueError):
-            continue
-    return {
-        "key": key,
-        "expires_at": expires_at,
-        "previous": previous_keys,
-    }
-
-
-def persist_session_state() -> None:
-    state = {
-        "key": SESSION_KEY,
-        "expires_at": SESSION_EXPIRES_AT,
-        "previous": SESSION_PREVIOUS_KEYS,
-    }
-    temporary = SESSION_STATE_FILE.with_suffix(".tmp")
-    try:
-        temporary.write_text(json.dumps(state, separators=(",", ":")), encoding="utf-8")
-        temporary.replace(SESSION_STATE_FILE)
-    except OSError:
-        try:
-            temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
-
-
-_SAVED_SESSION_STATE = read_session_state()
-SESSION_KEY = _ENV_SESSION_KEY if len(_ENV_SESSION_KEY) == 32 else _SAVED_SESSION_STATE.get("key", secrets.token_hex(16))
-if not _ENV_SESSION_KEY and _SAVED_SESSION_STATE.get("key"):
-    SESSION_EXPIRES_AT = _SAVED_SESSION_STATE["expires_at"] or SESSION_EXPIRES_AT
-SESSION_PREVIOUS_KEYS = _SAVED_SESSION_STATE.get("previous", {}) if not _ENV_SESSION_KEY else {}
-if not _ENV_SESSION_KEY:
-    persist_session_state()
-DEFAULT_PORT = int(os.getenv("PORT", "8000") or "8000")
-ACTIVE_PORT = DEFAULT_PORT
-VERSION_FILE = APP_DIR / "VERSION"
-BUNDLE_VERSION_FILE = BUNDLE_DIR / "VERSION"
-APP_VERSION = (
-    os.getenv("DROP_AIR_VERSION")
-    or (VERSION_FILE.read_text(encoding="utf-8").strip() if VERSION_FILE.exists() else "")
-    or (BUNDLE_VERSION_FILE.read_text(encoding="utf-8").strip() if BUNDLE_VERSION_FILE.exists() else "")
-    or "1.0.0"
-).lstrip("v")
-DEFAULT_UPDATE_REPO = "B1progame/drop-air"
-
-
-def detect_update_repo() -> str:
-    override = os.getenv("DROP_AIR_UPDATE_REPO", "").strip()
-    if override:
-        return override
-    if getattr(sys, "frozen", False):
-        return DEFAULT_UPDATE_REPO
-    try:
-        result = subprocess.run(
-            ["git", "config", "--get", "remote.origin.url"],
-            cwd=str(APP_DIR),
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    remote = (result.stdout or "").strip()
-    match = re.search(r"github\.com[:/](?P<owner>[^/]+)/(?P<repo>[^/\s]+?)(?:\.git)?$", remote)
-    if not match:
-        return DEFAULT_UPDATE_REPO
-    return f"{match.group('owner')}/{match.group('repo')}"
-
-
-UPDATE_REPO = detect_update_repo()
-UPDATE_STATUS_LOCK = Lock()
-UPDATE_STATUS = {
-    "running": False,
-    "phase": "idle",
-    "label": "Idle",
-    "message": "No update is running.",
-    "percent": 0,
-    "current": 0,
-    "total": 0,
-    "eta_seconds": None,
-    "speed_bps": 0,
-    "started_at": None,
-    "updated_at": None,
-    "ok": True,
-    "error": "",
-    "current_version": APP_VERSION,
-    "latest_version": "",
-}
-try:
-    ENV_MAX_UPLOAD_GB = float(os.getenv("DROP_AIR_MAX_UPLOAD_GB", str(DEFAULT_MAX_UPLOAD_GB)) or DEFAULT_MAX_UPLOAD_GB)
-except ValueError:
-    ENV_MAX_UPLOAD_GB = DEFAULT_MAX_UPLOAD_GB
+TEXT_TTL_MINUTES = int(env_number("DROP_AIR_TEXT_TTL_MINUTES", 10))
 DEFAULT_SETTINGS = {
     "access_code": os.getenv("DROP_AIR_CODE", "").strip(),
-    "auto_cleanup_minutes": int(os.getenv("DROP_AIR_AUTO_CLEANUP_MINUTES", "10") or "10"),
-    "auto_cleanup_days": int(os.getenv("DROP_AIR_AUTO_CLEANUP_DAYS", "0") or "0"),
-    "auto_cleanup_max_files": int(os.getenv("DROP_AIR_AUTO_CLEANUP_MAX_FILES", "0") or "0"),
-    "max_upload_gb": ENV_MAX_UPLOAD_GB,
-    "launch_browser_on_start": os.getenv("DROP_AIR_OPEN_BROWSER", "1").strip().lower()
-    not in {"0", "false", "no", "off"},
+    "auto_cleanup_minutes": int(env_number("DROP_AIR_AUTO_CLEANUP_MINUTES", 10)),
+    "auto_cleanup_days": int(env_number("DROP_AIR_AUTO_CLEANUP_DAYS", 0)),
+    "auto_cleanup_max_files": int(env_number("DROP_AIR_AUTO_CLEANUP_MAX_FILES", 0)),
+    "max_upload_gb": env_number("DROP_AIR_MAX_UPLOAD_GB", 10.0),
+    "launch_browser_on_start": True,
     "device_name": "Drop Air device",
     "discoverable": False,
 }
-SETTINGS_LOCK = Lock()
-SETTINGS = {}
-TEXT_ITEMS_FILE = DATA_DIR / "text_items.json"
-TEXT_ITEMS_LOCK = Lock()
-TEXT_ITEMS = []
-MAX_TEXT_ITEMS = 40
-MAX_TEXT_CHARS = 20000
-TEXT_TTL_MINUTES = int(os.getenv("DROP_AIR_TEXT_TTL_MINUTES", "10") or "10")
-
-# Upload directory metadata is shared by listing and stats requests. Keep only
-# primitive values here (never DirEntry objects), and rescan periodically so
-# edits made in the data folder outside the app become visible.
-UPLOAD_SNAPSHOT_TTL_SECONDS = 1.0
-UPLOAD_SNAPSHOT_LOCK = Lock()
-UPLOAD_SNAPSHOT = {"expires_at": 0.0, "files": []}
-ACTIVE_UPLOAD_TARGETS = set()
-UPLOAD_CLEANUP_LOCK = Lock()
-UPLOAD_CLEANUP_INTERVAL_SECONDS = 30.0
-UPLOAD_CLEANUP_NEXT_AT = 0.0
-
-app = Flask(__name__, template_folder=str(TEMPLATE_DIR), static_folder=str(STATIC_DIR), static_url_path="/static")
-app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
-TRAY_ICON = None
-_SHUTDOWN_DONE = False
-_CONSOLE_HANDLER = None
 
 
-def app_icon_path() -> Path | None:
-    env_icon = (os.getenv("DROP_AIR_ICON") or "").strip()
-    candidates = [
-        Path(env_icon).expanduser() if env_icon else None,
-        APP_DIR / "assets" / "icon" / "drop_air_brand.ico",
-        BUNDLE_DIR / "assets" / "icon" / "drop_air_brand.ico",
-        APP_DIR / "assets" / "icon" / "drop_air.ico",
-        BUNDLE_DIR / "assets" / "icon" / "drop_air.ico",
-    ]
-    for candidate in candidates:
-        if candidate and candidate.exists():
-            return candidate
-    return None
+def write_atomic(path: Path, text: str) -> None:
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(text, encoding="utf-8")
+    temporary.replace(path)
 
 
-def set_console_window_icon() -> None:
-    if os.name != "nt":
-        return
-    icon_path = app_icon_path()
-    if not icon_path:
-        return
+def read_json(path: Path, fallback):
     try:
-        import ctypes
-
-        user32 = ctypes.windll.user32
-        hwnd = user32.GetConsoleWindow()
-        if not hwnd:
-            return
-
-        image_icon = 1
-        lr_load_from_file = 0x00000010
-        wm_seticon = 0x0080
-        icon_small = 0
-        icon_big = 1
-
-        for icon_type, size in ((icon_small, 16), (icon_big, 32)):
-            icon_handle = user32.LoadImageW(None, str(icon_path), image_icon, size, size, lr_load_from_file)
-            if icon_handle:
-                user32.SendMessageW(hwnd, wm_seticon, icon_type, icon_handle)
-    except Exception:
-        pass
-
-
-def browser_candidates() -> list[Path]:
-    if os.name != "nt":
-        return []
-    roots = [os.getenv("ProgramFiles", ""), os.getenv("ProgramFiles(x86)", ""), os.getenv("LOCALAPPDATA", "")]
-    rels = [
-        "Microsoft\\Edge\\Application\\msedge.exe",
-        "Google\\Chrome\\Application\\chrome.exe",
-        "BraveSoftware\\Brave-Browser\\Application\\brave.exe",
-    ]
-    return [Path(root) / rel for root in roots if root for rel in rels]
-
-
-def open_admin_browser(url: str) -> None:
-    if os.name == "nt":
-        for candidate in browser_candidates():
-            if candidate.exists():
-                try:
-                    subprocess.Popen(
-                        [str(candidate), "--new-window", url],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                    return
-                except OSError:
-                    break
-    webbrowser.open(url)
-
-
-def initialize_log_file() -> None:
-    try:
-        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        LOG_FILE.write_text("", encoding="utf-8")
-    except OSError as exc:
-        print(f"Could not initialize log file: {exc}")
-
-
-def cleanup_obsolete_runtime_data() -> None:
-    """Remove the old fallback copy and isolated browser profile off the UI thread."""
-    obsolete_paths = {DATA_DIR / "rollback", DATA_DIR / "browser-profile"}
-    local_app_data = (os.getenv("LOCALAPPDATA") or "").strip()
-    if local_app_data:
-        legacy_data_dir = Path(local_app_data) / "DropAir"
-        obsolete_paths.update({legacy_data_dir / "rollback", legacy_data_dir / "browser-profile"})
-
-    for obsolete_path in obsolete_paths:
-        try:
-            if obsolete_path.is_dir():
-                shutil.rmtree(obsolete_path)
-                print(f"Removed obsolete Drop Air data: {obsolete_path}", flush=True)
-        except OSError as exc:
-            print(f"Could not remove obsolete Drop Air data at {obsolete_path}: {exc}", flush=True)
-
-
-def redirect_stdio_to_log_if_windowless():
-    if os.name != "nt":
-        return None
-    if sys.stdout is not None and sys.stderr is not None:
-        return None
-    try:
-        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        handle = LOG_FILE.open("a", encoding="utf-8", buffering=1)
-        sys.stdout = handle
-        sys.stderr = handle
-        return handle
-    except OSError:
-        return None
-
-
-def open_path(path: Path) -> None:
-    target = path.resolve()
-    if os.name == "nt":
-        os.startfile(str(target))  # type: ignore[attr-defined]
-    else:
-        webbrowser.open(target.as_uri())
-
-
-def show_log_file() -> None:
-    try:
-        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        LOG_FILE.touch(exist_ok=True)
-        open_path(LOG_FILE)
-    except Exception as exc:
-        app.logger.error("Could not open log file: %s", exc)
-
-
-def tray_image():
-    try:
-        from PIL import Image, ImageDraw
-
-        icon_path = app_icon_path()
-        if icon_path:
-            return Image.open(icon_path).resize((64, 64))
-
-        image = Image.new("RGBA", (64, 64), (14, 165, 183, 255))
-        draw = ImageDraw.Draw(image)
-        draw.rounded_rectangle((10, 10, 54, 54), radius=12, fill=(18, 185, 129, 255))
-        draw.line((32, 44, 32, 18), fill=(255, 255, 255, 255), width=5)
-        draw.line((22, 28, 32, 18, 42, 28), fill=(255, 255, 255, 255), width=5, joint="curve")
-        return image
-    except Exception:
-        return None
-
-
-def start_tray_icon(local_url: str) -> None:
-    if os.name != "nt":
-        return
-    try:
-        import pystray
-    except Exception as exc:
-        print(f"System tray unavailable: {exc}")
-        return
-
-    image = tray_image()
-    if image is None:
-        print("System tray unavailable: icon could not be created")
-        return
-
-    def open_dashboard(_icon=None, _item=None):
-        open_admin_browser(local_url)
-
-    def open_log(_icon=None, _item=None):
-        show_log_file()
-
-    def open_data_folder(_icon=None, _item=None):
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        open_path(DATA_DIR)
-
-    def open_uploads_folder(_icon=None, _item=None):
-        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        open_path(UPLOAD_DIR)
-
-    def quit_app(icon=None, _item=None):
-        app.logger.info("Tray requested server quit.")
-        try:
-            if icon:
-                icon.stop()
-        finally:
-            Timer(0.15, stop_server_process).start()
-
-    global TRAY_ICON
-    TRAY_ICON = pystray.Icon(
-        "Drop Air",
-        image,
-        "Drop Air",
-        pystray.Menu(
-            pystray.MenuItem("Open Dashboard", open_dashboard, default=True),
-            pystray.MenuItem("Show Log", open_log),
-            pystray.MenuItem("Open Data Folder", open_data_folder),
-            pystray.MenuItem("Open Uploads Folder", open_uploads_folder),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Quit Drop Air", quit_app),
-        ),
-    )
-    threading.Thread(target=TRAY_ICON.run, name="DropAirTray", daemon=True).start()
-
-
-def progress_bar(label: str, current: int, total: int | None) -> None:
-    if not total:
-        print(f"\r{label}: {current / (1024 * 1024):.1f} MB", end="", flush=True)
-        return
-    width = 28
-    ratio = min(max(current / total, 0), 1)
-    filled = int(width * ratio)
-    bar = "#" * filled + "-" * (width - filled)
-    print(f"\r{label}: [{bar}] {ratio * 100:5.1f}%", end="", flush=True)
-
-
-def update_status_snapshot() -> dict:
-    with UPDATE_STATUS_LOCK:
-        return dict(UPDATE_STATUS)
-
-
-def set_update_status(**updates) -> dict:
-    updates["updated_at"] = time.time()
-    with UPDATE_STATUS_LOCK:
-        UPDATE_STATUS.update(updates)
-        return dict(UPDATE_STATUS)
-
-
-def reset_update_status(info: dict) -> dict:
-    now = time.time()
-    with UPDATE_STATUS_LOCK:
-        UPDATE_STATUS.clear()
-        UPDATE_STATUS.update(
-            {
-                "running": True,
-                "phase": "preparing",
-                "label": "Preparing update",
-                "message": "Preparing Drop Air for update.",
-                "percent": 0,
-                "current": 0,
-                "total": 0,
-                "eta_seconds": None,
-                "speed_bps": 0,
-                "started_at": now,
-                "updated_at": now,
-                "ok": True,
-                "error": "",
-                "current_version": APP_VERSION,
-                "latest_version": str(info.get("latest_version", "")).lstrip("v"),
-            }
-        )
-        return dict(UPDATE_STATUS)
-
-
-def update_download_status(label: str, current: int, total: int | None, started_at: float) -> None:
-    elapsed = max(time.time() - started_at, 0.001)
-    speed = current / elapsed
-    percent = int(min(max((current / total) * 100, 0), 100)) if total else 0
-    remaining = max((total or 0) - current, 0)
-    eta = int(remaining / speed) if total and speed > 0 else None
-    set_update_status(
-        running=True,
-        phase="downloading",
-        label=label,
-        message=f"{label}...",
-        percent=percent,
-        current=current,
-        total=total or 0,
-        eta_seconds=eta,
-        speed_bps=int(speed),
-        ok=True,
-        error="",
-    )
-
-
-def github_json(url: str) -> dict:
-    req = Request(
-        url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": f"DropAir/{APP_VERSION}",
-        },
-    )
-    with urlopen(req, timeout=15) as response:
-        return json.loads(response.read().decode("utf-8"))
-
-
-def latest_release_info() -> dict:
-    if not UPDATE_REPO:
-        return {
-            "configured": False,
-            "repo": "",
-            "current_version": APP_VERSION,
-            "latest_version": "",
-            "update_available": False,
-            "release_url": "",
-            "message": "Set DROP_AIR_UPDATE_REPO=owner/repo to enable updates.",
-        }
-
-    try:
-        release = github_json(f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest")
-    except HTTPError as exc:
-        if exc.code == 404:
-            return {
-                "configured": True,
-                "repo": UPDATE_REPO,
-                "current_version": APP_VERSION,
-                "latest_version": "",
-                "update_available": False,
-                "release_url": f"https://github.com/{UPDATE_REPO}/releases",
-                "message": "No GitHub releases found yet. Publish a tagged release to enable updates.",
-            }
-        raise
-
-    latest = str(release.get("tag_name", "")).lstrip("v")
-    return {
-        "configured": True,
-        "repo": UPDATE_REPO,
-        "current_version": APP_VERSION,
-        "latest_version": latest,
-        "update_available": parse_version(latest) > parse_version(APP_VERSION),
-        "release_url": release.get("html_url", ""),
-        "zipball_url": release.get("zipball_url", ""),
-        "assets": release.get("assets", []),
-        "message": "Update available." if parse_version(latest) > parse_version(APP_VERSION) else "Drop Air is up to date.",
-    }
-
-
-def download_file_with_progress(url: str, target: Path, label: str) -> None:
-    req = Request(url, headers={"User-Agent": f"DropAir/{APP_VERSION}"})
-    with urlopen(req, timeout=30) as response, target.open("wb") as out:
-        total = int(response.headers.get("Content-Length") or "0")
-        done = 0
-        started_at = time.time()
-        update_download_status(label, done, total, started_at)
-        while True:
-            chunk = response.read(1024 * 256)
-            if not chunk:
-                break
-            out.write(chunk)
-            done += len(chunk)
-            update_download_status(label, done, total, started_at)
-            progress_bar(label, done, total)
-    print()
-
-
-def copy_source_tree(source_root: Path, destination_root: Path) -> None:
-    skip_names = {
-        ".git",
-        ".venv",
-        "__pycache__",
-        "build",
-        "dist",
-        "drop-air-public",
-        "uploads",
-        "settings.json",
-    }
-    for item in source_root.iterdir():
-        if item.name in skip_names or item.name.endswith((".pyc", ".pyo")):
-            continue
-        target = destination_root / item.name
-        if item.is_dir():
-            shutil.copytree(item, target, dirs_exist_ok=True)
-        else:
-            shutil.copy2(item, target)
-
-
-def find_release_setup_asset(info: dict) -> dict | None:
-    assets = info.get("assets") or []
-    preferred = []
-    for asset in assets:
-        name = str(asset.get("name", "")).lower()
-        if not name.endswith(".exe"):
-            continue
-        if any(token in name for token in ("setup", "installer", "install")):
-            preferred.append(asset)
-    return preferred[0] if preferred else None
-
-
-def powershell_literal(value: Path | str) -> str:
-    return "'" + str(value).replace("'", "''") + "'"
-
-
-def restart_current_app() -> None:
-    launcher = APP_DIR / "DropAir.exe"
-    executable = launcher if getattr(sys, "frozen", False) and launcher.is_file() else Path(sys.executable)
-    args = [str(executable)] + sys.argv[1:]
-    env = os.environ.copy()
-    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
-    subprocess.Popen(args, cwd=str(APP_DIR), close_fds=True, env=env)
-    os._exit(0)
-
-
-def install_update_from_release(info: dict) -> None:
-    print()
-    print(f"Updating Drop Air {APP_VERSION} -> {info.get('latest_version')}")
-    set_update_status(
-        running=True,
-        phase="preparing",
-        label="Preparing update",
-        message="Cleaning shared files and text before restart.",
-        percent=1,
-    )
-    cleanup_all_uploads_on_shutdown()
-    clear_text_items()
-
-    with tempfile.TemporaryDirectory(prefix="drop-air-update-") as tmp:
-        tmp_path = Path(tmp)
-        if getattr(sys, "frozen", False):
-            asset = find_release_setup_asset(info)
-            if not asset:
-                raise RuntimeError("No setup .exe release asset found. Upload the Drop Air setup installer to the release.")
-            setup_exe = tmp_path / Path(asset["name"]).name
-            download_file_with_progress(asset["browser_download_url"], setup_exe, "Downloading setup")
-            set_update_status(
-                running=True,
-                phase="installing",
-                label="Launching installer",
-                message="Download finished. Handing off to the installer.",
-                percent=100,
-                eta_seconds=0,
-            )
-            helper = DATA_DIR / "finish-update.ps1"
-            install_log = DATA_DIR / "update-install.log"
-            helper_log = DATA_DIR / "update-helper.log"
-            install_dir = APP_DIR
-            helper.write_text(
-                "\n".join(
-                    [
-                        "$ErrorActionPreference = 'Stop'",
-                        f"$log = {powershell_literal(helper_log)}",
-                        f"$installDir = {powershell_literal(install_dir)}",
-                        f"$expectedVersion = {powershell_literal(str(info.get('latest_version', '')).lstrip('v'))}",
-                        "Start-Transcript -Path $log -Append | Out-Null",
-                        "trap { $_ | Out-String | Add-Content -Path $log; Write-Host ''; Write-Host ('Update failed: ' + $_.Exception.Message); Write-Host ('Details: ' + $log); exit 1 }",
-                        "Start-Sleep -Milliseconds 700",
-                        f"$setup = {powershell_literal(setup_exe)}",
-                        f"$app = {powershell_literal(APP_DIR / 'DropAir.exe')}",
-                        f"$installLog = {powershell_literal(install_log)}",
-                        "Write-Host ''",
-                        "Write-Host ('Installing Drop Air ' + $expectedVersion + '...')",
-                        "Write-Host 'If Windows asks for permission, approve the Drop Air installer.'",
-                        "$setupArguments = \"/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /SP- /DIR=`\"$installDir`\" /LOG=`\"$installLog`\"\"",
-                        "$proc = Start-Process -FilePath $setup -ArgumentList $setupArguments -Verb RunAs -PassThru",
-                        "while (-not $proc.HasExited) {",
-                        "  Write-Host -NoNewline '.'",
-                        "  Start-Sleep -Milliseconds 350",
-                        "}",
-                        "$proc.WaitForExit()",
-                        "if ($proc.ExitCode -ne 0) { throw \"Installer failed with exit code $($proc.ExitCode).\" }",
-                        "$versionFiles = @((Join-Path $installDir 'VERSION'), (Join-Path $installDir '_internal\\VERSION'))",
-                        "$installedVersion = ''",
-                        "foreach ($versionFile in $versionFiles) { if (Test-Path $versionFile) { $installedVersion = (Get-Content $versionFile -Raw).Trim(); break } }",
-                        "if ($installedVersion -ne $expectedVersion) { throw \"Installed version check failed: expected $expectedVersion, found '$installedVersion'. See $installLog\" }",
-                        "Write-Host ''",
-                        "Write-Host 'Restarting Drop Air...'",
-                        "$env:PYINSTALLER_RESET_ENVIRONMENT = '1'",
-                        "Start-Process -FilePath $app",
-                        "Stop-Transcript | Out-Null",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            subprocess.Popen(
-                ["powershell.exe", "-ExecutionPolicy", "Bypass", "-File", str(helper)],
-                creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
-            )
-            os._exit(0)
-
-        archive = tmp_path / "source.zip"
-        download_file_with_progress(info["zipball_url"], archive, "Downloading")
-        print("Installing: extracting release...")
-        set_update_status(
-            running=True,
-            phase="extracting",
-            label="Extracting release",
-            message="Unpacking the release archive.",
-            percent=82,
-            eta_seconds=None,
-        )
-        with zipfile.ZipFile(archive) as zf:
-            zf.extractall(tmp_path / "release")
-        roots = [p for p in (tmp_path / "release").iterdir() if p.is_dir()]
-        if not roots:
-            raise RuntimeError("Release archive did not contain a source folder.")
-        print("Installing: copying source files...")
-        set_update_status(
-            running=True,
-            phase="installing",
-            label="Installing update",
-            message="Copying the new Drop Air files.",
-            percent=92,
-            eta_seconds=None,
-        )
-        copy_source_tree(roots[0], APP_DIR)
-        print("Restarting Drop Air...")
-        set_update_status(
-            running=True,
-            phase="restarting",
-            label="Restarting Drop Air",
-            message="Install complete. Drop Air is restarting.",
-            percent=100,
-            eta_seconds=0,
-        )
-        restart_current_app()
-
-
-def run_update_install(info: dict) -> None:
-    try:
-        install_update_from_release(info)
-    except Exception as exc:
-        app.logger.exception("Update failed.")
-        set_update_status(
-            running=False,
-            phase="failed",
-            label="Update failed",
-            message=str(exc),
-            ok=False,
-            error=str(exc),
-            eta_seconds=None,
-        )
-
-
-def start_update_install() -> dict:
-    info = latest_release_info()
-    if not info.get("configured"):
-        return {"ok": False, "error": info["message"]}
-    if not info.get("update_available"):
-        return {"ok": False, "error": "No update available."}
-    reset_update_status(info)
-    thread = threading.Thread(target=lambda: run_update_install(info), daemon=True)
-    thread.start()
-    return {
-        "ok": True,
-        "message": "Update started.",
-        "status_url": url_for("update_page", **dict(request.args)),
-    }
-
-
-class WerkzeugRequestFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        message = record.getMessage()
-        quiet_paths = ("GET /api/files ", "GET /api/text ", "GET /favicon.ico ")
-        if any(path in message for path in quiet_paths):
-            return False
-        return True
-
-
-def configure_request_logging() -> None:
-    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-    file_handler = logging.FileHandler(LOG_FILE, mode="a", encoding="utf-8")
-    file_handler.setFormatter(formatter)
-    file_handler.addFilter(WerkzeugRequestFilter())
-
-    request_logger = logging.getLogger("werkzeug")
-    request_logger.addFilter(WerkzeugRequestFilter())
-    request_logger.addHandler(file_handler)
-
-    app.logger.addHandler(file_handler)
-    app.logger.setLevel(logging.INFO)
-    app.logger.info("Drop Air log started.")
-
-
-def _coerce_non_negative_int(value, fallback: int) -> int:
-    try:
-        val = int(value)
-        if val < 0:
-            return fallback
-        return val
-    except (TypeError, ValueError):
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, type(fallback)) else fallback
+    except (OSError, ValueError):
         return fallback
 
 
-def _coerce_positive_float(value, fallback: float, minimum: float = 0.01, maximum: float = 1024.0) -> float:
+def read_or_create(path: Path, pattern: str, make) -> str:
     try:
-        val = float(value)
-        if not minimum <= val <= maximum:
-            return fallback
-        return round(val, 3)
-    except (TypeError, ValueError):
-        return fallback
-
-
-def _coerce_bool(value, fallback: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"1", "true", "yes", "on"}:
-            return True
-        if lowered in {"0", "false", "no", "off"}:
-            return False
-    if isinstance(value, int):
-        return bool(value)
-    return fallback
-
-
-def parse_version(value: str) -> tuple[int, ...]:
-    parts = re.findall(r"\d+", (value or "").lstrip("v"))
-    if not parts:
-        return (0,)
-    return tuple(int(part) for part in parts[:4])
-
-
-def _normalize_settings(raw: dict) -> dict:
-    return {
-        "access_code": str(raw.get("access_code", DEFAULT_SETTINGS["access_code"])).strip(),
-        "auto_cleanup_minutes": _coerce_non_negative_int(
-            raw.get("auto_cleanup_minutes", DEFAULT_SETTINGS["auto_cleanup_minutes"]),
-            DEFAULT_SETTINGS["auto_cleanup_minutes"],
-        ),
-        "auto_cleanup_days": _coerce_non_negative_int(
-            raw.get("auto_cleanup_days", DEFAULT_SETTINGS["auto_cleanup_days"]),
-            DEFAULT_SETTINGS["auto_cleanup_days"],
-        ),
-        "auto_cleanup_max_files": _coerce_non_negative_int(
-            raw.get("auto_cleanup_max_files", DEFAULT_SETTINGS["auto_cleanup_max_files"]),
-            DEFAULT_SETTINGS["auto_cleanup_max_files"],
-        ),
-        "max_upload_gb": _coerce_positive_float(
-            raw.get("max_upload_gb", DEFAULT_SETTINGS["max_upload_gb"]),
-            DEFAULT_SETTINGS["max_upload_gb"],
-        ),
-        "launch_browser_on_start": _coerce_bool(
-            raw.get("launch_browser_on_start", DEFAULT_SETTINGS["launch_browser_on_start"]),
-            DEFAULT_SETTINGS["launch_browser_on_start"],
-        ),
-        "device_name": clean_device_name(raw.get("device_name", DEFAULT_SETTINGS["device_name"])),
-        "discoverable": _coerce_bool(raw.get("discoverable", DEFAULT_SETTINGS["discoverable"]), False),
-    }
-
-
-def load_settings() -> dict:
-    merged = dict(DEFAULT_SETTINGS)
-    if SETTINGS_FILE.exists():
-        try:
-            stored = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            if isinstance(stored, dict):
-                merged.update(stored)
-        except (OSError, json.JSONDecodeError):
-            pass
-    return _normalize_settings(merged)
-
-
-def save_settings(settings: dict) -> None:
-    temporary = SETTINGS_FILE.with_name(f".{SETTINGS_FILE.name}.{secrets.token_hex(6)}.tmp")
-    try:
-        SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with temporary.open("w", encoding="utf-8", newline="\n") as stream:
-            json.dump(settings, stream, indent=2)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        temporary.replace(SETTINGS_FILE)
-    except OSError as exc:
-        try:
-            temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise OSError(f"Could not save settings to {SETTINGS_FILE}: {exc}") from exc
-
-
-def get_settings() -> dict:
-    with SETTINGS_LOCK:
-        return dict(SETTINGS)
-
-
-def set_settings(new_values: dict) -> dict:
-    with SETTINGS_LOCK:
-        updated = dict(SETTINGS)
-        updated.update(new_values)
-        save_settings(updated)
-        SETTINGS.clear()
-        SETTINGS.update(updated)
-        return dict(SETTINGS)
-
-
-SETTINGS = load_settings()
-
-
-def load_device_id() -> str:
-    device_id_file = DATA_DIR / "device-id"
-    try:
-        value = device_id_file.read_text(encoding="ascii").strip().lower()
-        if re.fullmatch(r"[0-9a-f]{32}", value):
+        value = path.read_text(encoding="utf-8").strip()
+        if re.fullmatch(pattern, value):
             return value
     except OSError:
         pass
-    value = secrets.token_hex(16)
-    try:
-        device_id_file.parent.mkdir(parents=True, exist_ok=True)
-        temporary = device_id_file.with_suffix(".tmp")
-        temporary.write_text(value, encoding="ascii")
-        temporary.replace(device_id_file)
-    except OSError:
-        pass
+    value = make()
+    path.write_text(value, encoding="utf-8")
     return value
 
 
-DEVICE_ID = load_device_id()
-PEER_DISCOVERY = PeerDiscovery(DEVICE_ID, get_settings)
-PAIRING_REQUESTS = PairingRequests()
+LOCK = threading.RLock()
+DEVICE_ID = read_or_create(DATA_DIR / "device-id", r"[0-9a-f]{32}", lambda: secrets.token_hex(16))
+RECOVERY_SECRET = read_or_create(DATA_DIR / "session-recovery.secret", r"[\w-]{48,}", lambda: secrets.token_hex(32))
+SETTINGS = {**DEFAULT_SETTINGS, **{k: v for k, v in read_json(DATA_DIR / "settings.json", {}).items() if k in DEFAULT_SETTINGS}}
+SETTINGS["device_name"] = clean_device_name(SETTINGS["device_name"])
+TEXTS = [
+    {"id": str(item["id"]), "text": str(item.get("text", "")), "created": int(item.get("created", 0))}
+    for item in read_json(DATA_DIR / "text_items.json", [])
+    if isinstance(item, dict) and "id" in item
+]
+_saved = read_json(DATA_DIR / "session-state.json", {})
+SESSION = (
+    _saved
+    if len(str(_saved.get("key", ""))) == 32
+    else {"key": secrets.token_hex(16), "expires_at": time.time() + SESSION_TTL, "previous": {}}
+)
+CLIENTS: dict[str, tuple[str, float]] = {}
+ROUTES: dict[str, tuple[str, str]] = {}  # file name -> (recipient, sender) for private sends
+PUBLISHING: set[str] = set()
+UPDATE = {"running": False, "percent": 0, "message": "", "error": ""}
+
+PORT = 0  # chosen when the server starts
+PEERS = PeerDiscovery(DEVICE_ID, lambda: dict(SETTINGS))
+PAIRS = PairingRequests()
+# The desktop shell replaces these.
+on_show = lambda: None
+on_quit = lambda: os._exit(0)
 
 
-def start_peer_discovery(port: int) -> None:
-    PEER_DISCOVERY.start(port)
+def session() -> tuple[str, int]:
+    with LOCK:
+        now = time.time()
+        SESSION["previous"] = {k: e for k, e in SESSION.get("previous", {}).items() if e > now}
+        if now >= SESSION.get("expires_at", 0):
+            SESSION["previous"][SESSION["key"]] = now + SESSION_GRACE
+            SESSION["key"] = secrets.token_hex(16)
+            SESSION["expires_at"] = now + SESSION_TTL
+            write_atomic(DATA_DIR / "session-state.json", json.dumps(SESSION))
+        return SESSION["key"], int(SESSION["expires_at"] - now)
 
 
-def stop_peer_discovery() -> None:
-    PEER_DISCOVERY.stop()
-
-
-def upload_limit_bytes(settings: dict | None = None) -> int:
-    settings = settings or get_settings()
-    return int(float(settings.get("max_upload_gb", DEFAULT_MAX_UPLOAD_GB)) * 1024 * 1024 * 1024)
-
-
-def upload_limit_label(settings: dict | None = None) -> str:
-    settings = settings or get_settings()
-    gb = float(settings.get("max_upload_gb", DEFAULT_MAX_UPLOAD_GB))
-    if gb >= 1:
-        label = f"{gb:g} GB"
-    else:
-        label = f"{gb * 1024:g} MB"
-    return f"{label} max"
-
-
-def _normalize_text_item(raw: dict) -> dict | None:
-    if not isinstance(raw, dict):
-        return None
-    text = str(raw.get("text", ""))[:MAX_TEXT_CHARS]
-    translated_text = str(raw.get("translated_text", ""))[:MAX_TEXT_CHARS]
-    if not text.strip() and not translated_text.strip():
-        return None
-    return {
-        "id": str(raw.get("id", int(time.time() * 1000))),
-        "text": text,
-        "translated_text": translated_text,
-        "source_language": str(raw.get("source_language", "auto"))[:16],
-        "target_language": str(raw.get("target_language", "en"))[:16],
-        "created": int(raw.get("created", time.time())),
-    }
-
-
-def load_text_items() -> list[dict]:
-    if not TEXT_ITEMS_FILE.exists():
-        return []
-    try:
-        stored = json.loads(TEXT_ITEMS_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(stored, list):
-        return []
-    items = []
-    for raw in stored[:MAX_TEXT_ITEMS]:
-        item = _normalize_text_item(raw)
-        if item:
-            items.append(item)
-    return items
-
-
-def save_text_items(items: list[dict]) -> None:
-    try:
-        TEXT_ITEMS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        TEXT_ITEMS_FILE.write_text(json.dumps(items[:MAX_TEXT_ITEMS], indent=2), encoding="utf-8")
-    except OSError as exc:
-        print(f"Could not save text items: {exc}")
-
-
-def cleanup_text_items() -> int:
-    if TEXT_TTL_MINUTES <= 0:
-        return 0
-    cutoff = int(time.time() - (TEXT_TTL_MINUTES * 60))
-    removed = 0
-    with TEXT_ITEMS_LOCK:
-        kept = [item for item in TEXT_ITEMS if int(item.get("created", 0)) >= cutoff]
-        removed = len(TEXT_ITEMS) - len(kept)
-        if removed:
-            TEXT_ITEMS[:] = kept
-            current = list(TEXT_ITEMS)
-        else:
-            current = []
-    if removed:
-        save_text_items(current)
-    return removed
-
-
-def list_text_items() -> list[dict]:
-    cleanup_text_items()
-    with TEXT_ITEMS_LOCK:
-        return list(TEXT_ITEMS)
-
-
-def delete_text_item(item_id: str) -> bool:
-    wanted = str(item_id)
-    with TEXT_ITEMS_LOCK:
-        before = len(TEXT_ITEMS)
-        kept = [item for item in TEXT_ITEMS if str(item.get("id", "")) != wanted]
-        if len(kept) == before:
-            return False
-        TEXT_ITEMS[:] = kept
-        current = list(TEXT_ITEMS)
-    save_text_items(current)
-    return True
-
-
-def add_text_item(payload: dict) -> dict:
-    item = _normalize_text_item(
-        {
-            "id": int(time.time() * 1000),
-            "text": str(payload.get("text", "")),
-            "translated_text": str(payload.get("translated_text", "")),
-            "source_language": str(payload.get("source_language", "auto")).strip() or "auto",
-            "target_language": str(payload.get("target_language", "en")).strip() or "en",
-            "created": int(time.time()),
-        }
-    )
-    if not item:
-        raise ValueError("Paste text before sharing.")
-    with TEXT_ITEMS_LOCK:
-        TEXT_ITEMS.insert(0, item)
-        del TEXT_ITEMS[MAX_TEXT_ITEMS:]
-        current = list(TEXT_ITEMS)
-    save_text_items(current)
-    return item
-
-
-TEXT_ITEMS = load_text_items()
-cleanup_text_items()
-
-CONNECTION_TTL_SECONDS = 30
-CONNECTIONS_LOCK = Lock()
-ACTIVE_CONNECTIONS: dict[str, dict] = {}
-
-
-def _connection_label(remote: str, client_id: str) -> str:
-    clean_remote = re.sub(r"[^0-9A-Fa-f:.]", "", remote or "unknown")[:64] or "unknown"
-    clean_client = re.sub(r"[^A-Za-z0-9_-]", "", client_id or "")[:80]
-    return f"{clean_remote}:{clean_client or 'anonymous'}"
-
-
-def prune_connections(now: float | None = None) -> None:
-    now = now or time.time()
-    with CONNECTIONS_LOCK:
-        for key, item in list(ACTIVE_CONNECTIONS.items()):
-            if float(item.get("seen", 0)) + CONNECTION_TTL_SECONDS < now:
-                del ACTIVE_CONNECTIONS[key]
-
-
-def active_connection_count() -> int:
-    prune_connections()
-    with CONNECTIONS_LOCK:
-        return len(ACTIVE_CONNECTIONS)
-
-
-def register_connection(client_id: str = "") -> int:
-    now = time.time()
-    remote = (request.remote_addr or "").strip()
-    key = _connection_label(remote, client_id)
-    prune_connections(now)
-    with CONNECTIONS_LOCK:
-        ACTIVE_CONNECTIONS[key] = {"seen": now, "remote": remote, "client_id": client_id}
-    return active_connection_count()
-
-
-def is_admin_request() -> bool:
-    remote = (request.remote_addr or "").strip()
-    # The HTTP Host header is caller-controlled. Only the actual loopback
-    # socket peer may use local host administration or approve pair requests.
-    return remote in {"127.0.0.1", "::1"}
-
-
-def require_admin():
-    if not is_admin_request():
-        return jsonify({"error": "admin access is only available on the host machine"}), 403
-    return None
-
-
-def get_local_ip() -> str:
+def public_url() -> str:
     address = route_ipv4()
-    return address if address != "0.0.0.0" else "127.0.0.1"
+    url = f"http://{'127.0.0.1' if address == '0.0.0.0' else address}:{PORT}/?k={session()[0]}"
+    if SETTINGS["access_code"]:
+        url += f"&code={quote(SETTINGS['access_code'], safe='')}"
+    return url + "&view=transfers"
 
 
-def is_port_available(host: str, port: int) -> bool:
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
-            if exclusive is not None:
-                s.setsockopt(socket.SOL_SOCKET, exclusive, 1)
-            s.bind((host, port))
-        return True
-    except OSError:
-        return False
+def local_url() -> str:
+    return f"http://127.0.0.1:{PORT}/?desktop=1"
 
 
-def select_server_port(preferred_port: int) -> int:
-    scan_limit = int(os.getenv("DROP_AIR_PORT_SCAN_LIMIT", "50") or "50")
-    for port in range(preferred_port, preferred_port + max(scan_limit, 1)):
-        if is_port_available("0.0.0.0", port):
-            return port
-    raise OSError(f"No available port found from {preferred_port} to {preferred_port + scan_limit - 1}.")
+def safe_file_name(raw: str) -> str:
+    """Plain Windows-safe name that keeps Unicode."""
+    last = re.split(r"[/\\]", raw)[-1]
+    name = re.sub(r'[<>:"|?*\x00-\x1f\x7f]', "_", last).lstrip(". ").rstrip(". ")[:180]
+    if re.fullmatch(r"(?i)(CON|PRN|AUX|NUL|COM\d|LPT\d)", name.split(".")[0]):
+        name = "_" + name
+    return name or f"file_{int(time.time())}"
 
 
-def make_local_server(host: str, port: int):
-    """Bind the desktop's threaded server without hostname/DNS discovery."""
-    from socketserver import TCPServer
-    from werkzeug.serving import ThreadedWSGIServer
-
-    class LocalWSGIServer(ThreadedWSGIServer):
-        def server_bind(self) -> None:
-            # HTTPServer.server_bind calls getfqdn(), which may wait for an
-            # unavailable DNS server. The app only needs its bound port and
-            # already builds its public URL from the active network interface.
-            TCPServer.server_bind(self)
-            self.server_name = "localhost"
-            self.server_port = self.server_address[1]
-
-    return LocalWSGIServer(host, port, app)
+def numbered_name(name: str, index: int) -> str:
+    if not index:
+        return name
+    dot = name.rfind(".")
+    return f"{name[:dot]}_{index}{name[dot:]}" if dot > 0 else f"{name}_{index}"
 
 
-def build_public_url(access_code: str | None = None) -> str:
-    port = ACTIVE_PORT
-    base_url = f"http://{get_local_ip()}:{port}/"
-    auth_query = build_auth_query(access_code).lstrip("?")
-    return f"{base_url}?{auth_query}&view=transfers"
+def file_path(name: str) -> Path | None:
+    if not name or re.search(r"[/\\:]", name) or name == ".." or name.startswith(STAGING_PREFIX):
+        return None
+    path = UPLOAD_DIR / name
+    return path if path.is_file() and not path.is_symlink() else None
 
 
-def session_snapshot(force_rotate: bool = False) -> dict:
-    global SESSION_KEY, SESSION_EXPIRES_AT
-    now = time.time()
-    with SESSION_LOCK:
-        for key, expires_at in list(SESSION_PREVIOUS_KEYS.items()):
-            if expires_at <= now:
-                del SESSION_PREVIOUS_KEYS[key]
-        if force_rotate or now >= SESSION_EXPIRES_AT:
-            SESSION_PREVIOUS_KEYS[SESSION_KEY] = now + SESSION_GRACE_SECONDS
-            SESSION_KEY = secrets.token_hex(16)
-            SESSION_EXPIRES_AT = now + SESSION_TTL_SECONDS
-            persist_session_state()
-        return {
-            "key": SESSION_KEY,
-            "expires_at": int(SESSION_EXPIRES_AT),
-            "ttl_seconds": SESSION_TTL_SECONDS,
-            "seconds_remaining": max(0, int(SESSION_EXPIRES_AT - now)),
-        }
+def list_files() -> list[dict]:
+    files = []
+    with os.scandir(UPLOAD_DIR) as entries:
+        for entry in entries:
+            if entry.name.startswith(STAGING_PREFIX) or entry.name in PUBLISHING:
+                continue
+            try:
+                info = entry.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if stat.S_ISREG(info.st_mode):
+                to, sender = ROUTES.get(entry.name, ("", ""))
+                files.append(
+                    {"name": entry.name, "size": info.st_size, "modified": int(info.st_mtime), "to": to, "from": sender}
+                )
+    files.sort(key=lambda item: item["modified"], reverse=True)
+    return files
 
 
-def build_auth_query(access_code: str | None = None) -> str:
-    code = access_code if access_code is not None else get_settings()["access_code"]
-    params = [(SESSION_PARAM, session_snapshot()["key"])]
-    if code:
-        params.append(("code", code))
-    return f"?{urlencode(params)}"
-
-
-def build_local_url(access_code: str | None = None) -> str:
-    port = ACTIVE_PORT
-    base_url = f"http://127.0.0.1:{port}/"
-    code = access_code if access_code is not None else get_settings()["access_code"]
-    return f"{base_url}?code={code}" if code else base_url
-
-
-def make_qr_svg(url: str) -> str:
-    qr = qrcode.QRCode(border=4, box_size=8, error_correction=qrcode.constants.ERROR_CORRECT_M)
-    qr.add_data(url)
-    qr.make(fit=True)
-    matrix = qr.get_matrix()
-    size = len(matrix)
-    rects = []
-    for y, row in enumerate(matrix):
-        for x, cell in enumerate(row):
-            if cell:
-                rects.append(f'<rect x="{x}" y="{y}" width="1" height="1"/>')
-    return (
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}" '
-        'shape-rendering="crispEdges" role="img" aria-label="Drop Air connection QR code">'
-        '<rect width="100%" height="100%" fill="#fff"/>'
-        '<g fill="#111827">'
-        f'{"".join(rects)}'
-        "</g></svg>"
-    )
-
-
-def make_qr_png(url: str) -> bytes:
-    qr = qrcode.QRCode(border=4, box_size=8, error_correction=qrcode.constants.ERROR_CORRECT_M)
-    qr.add_data(url)
-    qr.make(fit=True)
-    image = qr.make_image(fill_color="#000000", back_color="#ffffff")
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    return buffer.getvalue()
-
-
-def upload_stats() -> dict:
-    files = upload_snapshot()
-    return {
-        "file_count": len(files),
-        "total_size": sum(item["size"] for item in files),
-        "text_count": len(list_text_items()),
-        "data_dir": str(DATA_DIR),
-        "uploads_dir": str(UPLOAD_DIR),
-    }
-
-
-def check_code() -> bool:
-    access_code = get_settings()["access_code"]
-    if not access_code:
-        return True
-    supplied = request.args.get("code", "") or request.headers.get("X-Drop-Air-Code", "")
-    return supplied == access_code
-
-
-def is_valid_session_value(supplied: str) -> bool:
-    snapshot = session_snapshot()
-    if supplied == snapshot["key"]:
-        return True
-    with SESSION_LOCK:
-        return SESSION_PREVIOUS_KEYS.get(supplied, 0) > time.time()
-
-
-def check_session_key() -> bool:
-    if is_admin_request():
-        return True
-    supplied = request.args.get(SESSION_PARAM, "") or request.headers.get("X-Drop-Air-Key", "")
-    return is_valid_session_value(supplied) or has_valid_session_recovery_cookie()
-
-
-def session_error():
-    return render_template(
-        "not_found.html",
-        title="Link Not Found",
-        message="This Drop Air link is not valid for the current session.",
-        hint="Scan the current QR code from the host admin panel.",
-    ), 404
-
-
-def code_error():
-    return render_template(
-        "not_found.html",
-        title="Code Not Found",
-        message="This Drop Air access code does not exist.",
-        hint="Check the code or ask the host to generate a new guest link.",
-    ), 404
-
-
-@app.errorhandler(404)
-def not_found(_error):
-    return render_template(
-        "not_found.html",
-        title="Page Not Found",
-        message="This Drop Air page does not exist.",
-        hint="Scan the current QR code or copy a fresh link from the host admin panel.",
-    ), 404
-
-
-@app.errorhandler(RequestEntityTooLarge)
-def upload_too_large(_error):
-    message = f"Upload is larger than {upload_limit_label()}."
-    if request.path.startswith("/api/"):
-        return jsonify({"error": message}), 413
-    return render_template(
-        "not_found.html",
-        title="Upload Too Large",
-        message=message,
-        hint="Ask the host to raise the runtime upload limit if this transfer is intentional.",
-    ), 413
-
-
-def invalidate_upload_snapshot() -> None:
-    with UPLOAD_SNAPSHOT_LOCK:
-        UPLOAD_SNAPSHOT["expires_at"] = 0.0
-
-
-def upload_snapshot() -> list[dict]:
-    now = time.monotonic()
-    with UPLOAD_SNAPSHOT_LOCK:
-        if UPLOAD_SNAPSHOT["expires_at"] > now:
-            return [
-                dict(item) for item in UPLOAD_SNAPSHOT["files"]
-                if item["name"] not in ACTIVE_UPLOAD_TARGETS
-            ]
-
-        files = []
-        try:
-            with os.scandir(UPLOAD_DIR) as entries:
-                for entry in entries:
-                    if entry.name.startswith(".dropair-staging-") or entry.name in ACTIVE_UPLOAD_TARGETS:
-                        continue
-                    try:
-                        info = entry.stat(follow_symlinks=False)
-                        if not stat.S_ISREG(info.st_mode):
-                            continue
-                        files.append({
-                            "name": entry.name,
-                            "size": info.st_size,
-                            "modified": int(info.st_mtime),
-                            "mtime": info.st_mtime,
-                        })
-                    except OSError:
-                        # Files may be renamed or deleted while the directory is scanned.
-                        continue
-        except OSError:
-            files = []
-        files.sort(key=lambda item: item["mtime"], reverse=True)
-        UPLOAD_SNAPSHOT["files"] = files
-        UPLOAD_SNAPSHOT["expires_at"] = time.monotonic() + UPLOAD_SNAPSHOT_TTL_SECONDS
-        return [dict(item) for item in files]
-
-
-def list_files():
-    return [
-        {
-            "name": item["name"],
-            "size": item["size"],
-            "modified": item["modified"],
-            "url": url_for("download_file", filename=item["name"]),
-        }
-        for item in upload_snapshot()
-    ]
-
-
-def delete_upload_file(filename: str) -> bool:
-    safe_name = secure_filename(filename)
-    if not safe_name or safe_name != filename:
-        return False
-    target = (UPLOAD_DIR / safe_name).resolve()
-    uploads_root = UPLOAD_DIR.resolve()
-    if target.parent != uploads_root or not target.is_file():
+def delete_file(name: str) -> bool:
+    path = file_path(name)
+    if not path:
         return False
     try:
-        target.unlink()
+        path.unlink()
     except OSError:
         return False
-    invalidate_upload_snapshot()
+    ROUTES.pop(name, None)
     return True
 
 
-def cleanup_uploads(force: bool = False) -> None:
-    global UPLOAD_CLEANUP_NEXT_AT
-    settings = get_settings()
-    auto_cleanup_minutes = settings["auto_cleanup_minutes"]
-    auto_cleanup_days = settings["auto_cleanup_days"]
-    auto_cleanup_max_files = settings["auto_cleanup_max_files"]
-
-    if auto_cleanup_minutes <= 0 and auto_cleanup_days <= 0 and auto_cleanup_max_files <= 0:
-        return
-
-    now_mono = time.monotonic()
-    with UPLOAD_CLEANUP_LOCK:
-        if not force and now_mono < UPLOAD_CLEANUP_NEXT_AT:
-            return
-        UPLOAD_CLEANUP_NEXT_AT = now_mono + UPLOAD_CLEANUP_INTERVAL_SECONDS
-
-    files = upload_snapshot()
-    if not files:
-        return
-
-    now = time.time()
-    removed = 0
-
-    if auto_cleanup_minutes > 0:
-        cutoff = now - (auto_cleanup_minutes * 60)
-        for item in files:
-            try:
-                if item["mtime"] < cutoff:
-                    (UPLOAD_DIR / item["name"]).unlink(missing_ok=True)
-                    removed += 1
-            except OSError:
-                continue
-
-    if auto_cleanup_days > 0:
-        cutoff = now - (auto_cleanup_days * 24 * 60 * 60)
-        for item in files:
-            try:
-                if item["mtime"] < cutoff:
-                    (UPLOAD_DIR / item["name"]).unlink(missing_ok=True)
-                    removed += 1
-            except OSError:
-                continue
-
-    if auto_cleanup_max_files > 0:
-        if removed:
-            invalidate_upload_snapshot()
-        files = upload_snapshot()
-        for item in files[auto_cleanup_max_files:]:
-            try:
-                (UPLOAD_DIR / item["name"]).unlink(missing_ok=True)
-                removed += 1
-            except OSError:
-                continue
-
-    if removed:
-        invalidate_upload_snapshot()
-        print(f"Auto-cleanup removed {removed} upload file(s).")
-
-
-def cleanup_all_uploads_on_shutdown() -> None:
-    removed = 0
-    for p in UPLOAD_DIR.iterdir():
-        if not p.is_file():
-            continue
+def clear_uploads() -> None:
+    ROUTES.clear()
+    for entry in UPLOAD_DIR.iterdir():
         try:
-            p.unlink(missing_ok=True)
-            removed += 1
+            entry.unlink()
         except OSError:
-            continue
-    if removed:
-        invalidate_upload_snapshot()
-        print(f"Shutdown cleanup removed {removed} upload file(s).")
-
-
-def clear_text_items() -> None:
-    with TEXT_ITEMS_LOCK:
-        TEXT_ITEMS.clear()
-    save_text_items([])
-
-
-def clear_uploads() -> int:
-    removed = 0
-    for p in UPLOAD_DIR.iterdir():
-        if not p.is_file():
-            continue
-        try:
-            p.unlink(missing_ok=True)
-            removed += 1
-        except OSError:
-            continue
-    invalidate_upload_snapshot()
-    return removed
-
-
-def stop_server_process() -> None:
-    shutdown_drop_air()
-    logging.shutdown()
-    os._exit(0)
-
-
-def _handle_shutdown_signal(signum, _frame):
-    shutdown_drop_air()
-    raise SystemExit(0)
-
-
-def shutdown_drop_air() -> None:
-    global _SHUTDOWN_DONE, TRAY_ICON
-    if _SHUTDOWN_DONE:
-        return
-    _SHUTDOWN_DONE = True
-    stop_peer_discovery()
-    icon = TRAY_ICON
-    TRAY_ICON = None
-    if icon:
-        try:
-            icon.stop()
-        except Exception:
             pass
-    cleanup_all_uploads_on_shutdown()
-    clear_text_items()
 
 
-def install_windows_console_close_handler() -> None:
-    global _CONSOLE_HANDLER
-    if os.name != "nt":
-        return
-    try:
-        import ctypes
-
-        handler_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)
-
-        def handler(_event):
-            shutdown_drop_air()
+def retain_texts(keep) -> bool:
+    with LOCK:
+        kept = [item for item in TEXTS if keep(item)]
+        if len(kept) == len(TEXTS):
             return False
-
-        _CONSOLE_HANDLER = handler_type(handler)
-        ctypes.windll.kernel32.SetConsoleCtrlHandler(_CONSOLE_HANDLER, True)
-    except Exception:
-        pass
+        TEXTS[:] = kept
+        write_atomic(DATA_DIR / "text_items.json", json.dumps(TEXTS))
+        return True
 
 
-def register_shutdown_cleanup() -> None:
-    atexit.register(shutdown_drop_air)
-    install_windows_console_close_handler()
-    if threading.current_thread() is threading.main_thread():
-        if hasattr(signal, "SIGINT"):
-            signal.signal(signal.SIGINT, _handle_shutdown_signal)
-        if hasattr(signal, "SIGTERM"):
-            signal.signal(signal.SIGTERM, _handle_shutdown_signal)
+def cleanup() -> None:
+    now = time.time()
+    ages = [SETTINGS["auto_cleanup_minutes"] * 60, SETTINGS["auto_cleanup_days"] * 86400]
+    max_age = min((age for age in ages if age > 0), default=0)
+    kept = 0
+    for item in list_files():
+        expired = max_age and now - item["modified"] > max_age
+        overflow = 0 < SETTINGS["auto_cleanup_max_files"] <= kept
+        if expired or overflow:
+            delete_file(item["name"])
+        else:
+            kept += 1
+    if TEXT_TTL_MINUTES > 0:
+        retain_texts(lambda item: item["created"] >= now - TEXT_TTL_MINUTES * 60)
+    with LOCK:
+        for key, (_, seen) in list(CLIENTS.items()):
+            if now - seen > CLIENT_TTL:
+                del CLIENTS[key]
+
+
+def shutdown() -> None:
+    PEERS.stop()
+    clear_uploads()
+    retain_texts(lambda _item: False)
+    (DATA_DIR / "port").unlink(missing_ok=True)
+
+
+# --- HTTP -------------------------------------------------------------------
+
+app = Flask(__name__, static_folder=None)
+
+
+class ApiError(HTTPException):
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.code = status
+        self.message = message
+
+
+@app.errorhandler(ApiError)
+def api_error(error: ApiError):
+    return jsonify({"error": error.message}), error.code
+
+
+def is_loopback_authority(value: str) -> bool:
+    return re.fullmatch(r"(127\.0\.0\.1|localhost|\[::1\])(:\d+)?", value) is not None
+
+
+def is_admin() -> bool:
+    """Loopback socket AND loopback page, so other websites cannot drive the host."""
+    origin = request.headers.get("Origin", "")
+    return (
+        request.remote_addr in {"127.0.0.1", "::1"}
+        and is_loopback_authority(request.headers.get("Host", ""))
+        and (not origin or (origin.startswith("http://") and is_loopback_authority(origin[7:])))
+    )
+
+
+def require_admin() -> None:
+    if not is_admin():
+        raise ApiError(403, "admin access is only available on the host machine")
+
+
+def authorize() -> None:
+    if is_admin():
+        return
+    key = request.args.get("k") or request.headers.get("X-Drop-Air-Key", "")
+    current, _ = session()
+    cookie_ok = secrets.compare_digest(request.cookies.get(COOKIE, "").encode(), RECOVERY_SECRET.encode())
+    if not (key == current or SESSION["previous"].get(key, 0) > time.time() or cookie_ok):
+        raise ApiError(404, "invalid session link")
+    code = SETTINGS["access_code"]
+    supplied = request.args.get("code")
+    if supplied is None:
+        supplied = unquote(request.headers.get("X-Drop-Air-Code", ""))
+    if code and supplied != code:
+        raise ApiError(404, "code not found")
+
+
+def payload() -> dict:
+    if (request.content_length or 0) > 256 * 1024:
+        raise ApiError(413, "request too large")
+    value = request.get_json(silent=True)
+    if not isinstance(value, dict):
+        raise ApiError(400, "invalid payload")
+    return value
 
 
 @app.after_request
-def add_headers(resp):
-    resp.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGINS
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Drop-Air-Code, X-Drop-Air-Key"
-    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
-    if request.path == "/" or request.path.startswith("/api/") or request.path == "/qr.svg":
-        resp.headers["Cache-Control"] = "no-store, max-age=0"
-        resp.headers["Pragma"] = "no-cache"
-        resp.headers["Expires"] = "0"
-    return resp
+def common_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Drop-Air-Code, X-Drop-Air-Key"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers.setdefault("Cache-Control", "no-store")
+    return response
 
 
-@app.before_request
-def apply_runtime_upload_limit():
-    app.config["MAX_CONTENT_LENGTH"] = upload_limit_bytes()
-
-
-@app.route("/", methods=["GET"])
+@app.get("/")
 def index():
-    settings = get_settings()
-    session = session_snapshot()
-    theme = (request.args.get("theme", "") or "").lower()
-    index_tpl = "saved/index_v1.html" if theme == "classic" else "index.html"
-    gate_tpl = "saved/code_gate_v1.html" if theme == "classic" else "code_gate.html"
-
-    if not check_session_key():
-        return session_error()
-    if settings["access_code"] and request.args.get("code", "") == "":
-        response = make_response(render_template(gate_tpl, session_key=session["key"], session_param=SESSION_PARAM))
-        return attach_session_recovery_cookie(response)
-    if not check_code():
-        return code_error()
-    public_url = build_public_url(settings["access_code"])
-    response = make_response(render_template(
-        index_tpl,
-        files=list_files(),
-        access_code=settings["access_code"],
-        auth_query=build_auth_query(settings["access_code"]),
-        session_key=session["key"],
-        session_param=SESSION_PARAM,
-        session_seconds_remaining=session["seconds_remaining"],
-        settings=settings,
-        upload_limit_label=upload_limit_label(settings),
-        upload_limit_bytes=upload_limit_bytes(settings),
-        is_admin=is_admin_request(),
-        device_id=DEVICE_ID,
-        public_url=public_url,
-        local_url=build_local_url(settings["access_code"]),
-        qr_url=url_for("qr_png", url=public_url),
-        qr_svg_url=url_for("qr_code", url=public_url),
-        stats=upload_stats(),
-        connected_count=active_connection_count(),
-        app_version=APP_VERSION,
-        log_file=str(LOG_FILE),
-        text_ttl_minutes=TEXT_TTL_MINUTES,
-    ))
-    return attach_session_recovery_cookie(response)
-
-
-@app.route("/update", methods=["GET"])
-def update_page():
-    admin_error = require_admin()
-    if admin_error:
-        return admin_error
-    if not check_code():
-        return code_error()
-    settings = get_settings()
-    return render_template(
-        "update.html",
-        status=update_status_snapshot(),
-        auth_query=build_auth_query(settings["access_code"]),
-        app_version=APP_VERSION,
-        dashboard_url=url_for("index", **dict(request.args)),
-    )
-
-
-@app.route("/enter", methods=["POST"])
-def enter():
-    settings = get_settings()
-    code = request.form.get("code", "").strip()
-    supplied_session = request.form.get(SESSION_PARAM, "").strip()
-    session = session_snapshot()
-    theme = (request.args.get("theme", "") or request.form.get("theme", "")).lower()
-    if not theme and "theme=classic" in (request.referrer or ""):
-        theme = "classic"
-    if not is_admin_request() and not is_valid_session_value(supplied_session):
-        return session_error()
-    if not settings["access_code"] or code == settings["access_code"]:
-        if settings["access_code"]:
-            args = {SESSION_PARAM: supplied_session or session["key"], "code": code}
-            if theme:
-                args["theme"] = theme
-            return redirect(url_for("index", **args))
-        args = {SESSION_PARAM: supplied_session or session["key"]}
-        if theme:
-            args["theme"] = theme
-        return redirect(url_for("index", **args))
-    return code_error()
-
-
-@app.route("/api/session", methods=["GET", "OPTIONS"])
-def api_session():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    if not check_session_key():
-        return jsonify({"error": "invalid session link"}), 404
-    if not check_code():
-        return jsonify({"error": "code not found"}), 404
-    settings = get_settings()
-    session = session_snapshot()
-    public_url = build_public_url(settings["access_code"])
-    return jsonify(
-        {
-            "key": session["key"],
-            "expires_at": session["expires_at"],
-            "ttl_seconds": session["ttl_seconds"],
-            "seconds_remaining": session["seconds_remaining"],
-            "public_url": public_url,
-            "qr_url": url_for("qr_png", url=public_url),
-            "qr_svg_url": url_for("qr_code", url=public_url),
-        }
-    )
-
-
-@app.route("/api/pair/requests", methods=["POST", "OPTIONS"])
-def api_pair_request():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    if not get_settings().get("discoverable"):
-        return jsonify({"error": "this Drop Air device is not discoverable"}), 404
-    payload = request.get_json(silent=True)
-    item, error = PAIRING_REQUESTS.create(request.remote_addr or "", payload)
-    if error:
-        return jsonify({"error": error}), 400 if error.startswith("invalid") else 429
-    return jsonify({"request": item}), 202
-
-
-@app.route("/api/pair/requests/<request_id>", methods=["GET", "OPTIONS"])
-def api_pair_request_status(request_id: str):
-    if request.method == "OPTIONS":
-        return ("", 204)
-    if not re.fullmatch(r"[0-9a-f]{48}", request_id):
-        return jsonify({"error": "request expired or not found"}), 404
-    result = PAIRING_REQUESTS.status(request.remote_addr or "", request_id)
-    if result is None:
-        return jsonify({"error": "request expired or not found"}), 404
-    if result["decision"] == "accepted":
-        result["share_url"] = build_public_url(get_settings().get("access_code", ""))
-    return jsonify(result)
-
-
-@app.route("/api/connections", methods=["GET", "POST", "OPTIONS"])
-def api_connections():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    if not check_session_key():
-        return jsonify({"error": "invalid session link"}), 404
-    if not check_code():
-        return jsonify({"error": "code not found"}), 404
-    payload = request.get_json(silent=True) or {}
-    client_id = ""
-    if isinstance(payload, dict):
-        client_id = str(payload.get("client_id", "")).strip()
-    if request.method == "POST":
-        count = register_connection(client_id)
-    else:
-        count = active_connection_count()
-    return jsonify({"count": count, "ttl_seconds": CONNECTION_TTL_SECONDS})
-
-
-@app.route("/api/files", methods=["GET", "OPTIONS"])
-def api_files():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    if not check_session_key():
-        return jsonify({"error": "invalid session link"}), 404
-    if not check_code():
-        return jsonify({"error": "code not found"}), 404
-    cleanup_uploads()
-    return jsonify({"files": list_files()})
-
-
-@app.route("/api/files/<path:filename>", methods=["DELETE", "OPTIONS"])
-def api_delete_file(filename: str):
-    if request.method == "OPTIONS":
-        return ("", 204)
-    if not check_session_key():
-        return jsonify({"error": "invalid session link"}), 404
-    if not check_code():
-        return jsonify({"error": "code not found"}), 404
-    if not delete_upload_file(filename):
-        return jsonify({"error": "file not found"}), 404
-    app.logger.info("Deleted file %s.", filename)
-    return jsonify({"ok": True, "stats": upload_stats()})
-
-
-@app.route("/api/upload", methods=["POST", "OPTIONS"])
-def api_upload():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    if not check_session_key():
-        return jsonify({"error": "invalid session link"}), 404
-    if not check_code():
-        return jsonify({"error": "code not found"}), 404
-
-    limit = upload_limit_bytes()
-    if request.content_length and request.content_length > limit:
-        return jsonify({"error": f"Upload is larger than {upload_limit_label()}."}), 413
-
-    if "file" not in request.files:
-        return jsonify({"error": "missing file"}), 400
-
-    f = request.files["file"]
-    if not f.filename:
-        return jsonify({"error": "empty filename"}), 400
-    if f.content_length and f.content_length > limit:
-        return jsonify({"error": f"{f.filename} is larger than {upload_limit_label()}."}), 413
-
-    safe_name = secure_filename(f.filename)
-    if not safe_name:
-        safe_name = f"file_{int(time.time())}"
-
-    stem, suffix = Path(safe_name).stem, Path(safe_name).suffix
-    staging = None
-    reserved_target = None
     try:
-        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        # Stage content privately before reserving its visible download name.
-        # The bounded buffer avoids Werkzeug's small default copy buffer.
-        fd, staging_name = tempfile.mkstemp(prefix=".dropair-staging-", dir=UPLOAD_DIR)
-        os.close(fd)
+        authorize()
+    except ApiError as error:
+        if error.message != "code not found":
+            return Response(
+                "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
+                "<title>Link not found</title>"
+                "<body style='font:16px system-ui;display:grid;place-items:center;min-height:90vh;text-align:center'>"
+                "<div><h1>Link not found</h1><p>Scan the current QR code from the host PC.</p></div>",
+                404,
+                mimetype="text/html",
+            )
+    response = send_from_directory(WEB_DIR, "index.html")
+    response.set_cookie(COOKIE, RECOVERY_SECRET, max_age=30 * 86400, httponly=True, samesite="Lax")
+    return response
+
+
+@app.get("/assets/<name>")
+def asset(name: str):
+    types = {"app.css": "text/css", "app.js": "text/javascript", "logo.png": "image/png"}
+    if name not in types:
+        return "", 404
+    response = send_from_directory(WEB_DIR, name, mimetype=types[name])
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return send_from_directory(WEB_DIR, "logo.png")
+
+
+@app.get("/qr.svg")
+def qr_svg():
+    url = request.args.get("url") or public_url()
+    buffer = io.BytesIO()
+    qrcode.make(url, image_factory=qrcode.image.svg.SvgPathFillImage, border=4).save(buffer)
+    return Response(buffer.getvalue(), mimetype="image/svg+xml")
+
+
+@app.get("/api/state")
+def api_state():
+    authorize()
+    admin = is_admin()
+    client_id = re.sub(r"[^A-Za-z0-9]", "", request.args.get("client_id", ""))[:64]
+    if not admin and client_id:
+        with LOCK:
+            if len(CLIENTS) < 64 or client_id in CLIENTS:
+                CLIENTS[client_id] = (clean_device_name(request.args.get("name", "Browser")), time.time())
+    cleanup()
+    key, remaining = session()
+    gb = float(SETTINGS["max_upload_gb"])
+    discovery = PEERS.snapshot()
+    body = {
+        "version": APP_VERSION,
+        "edition": "python",
+        "admin": admin,
+        "device_id": DEVICE_ID,
+        "device_name": SETTINGS["device_name"],
+        "session_key": key,
+        "seconds_remaining": remaining,
+        "public_url": public_url(),
+        "limit_bytes": int(gb * 1024**3),
+        "limit_label": f"{gb:g} GB" if gb >= 1 else f"{gb * 1024:.0f} MB",
+        "cleanup_minutes": SETTINGS["auto_cleanup_minutes"],
+        "text_ttl_minutes": TEXT_TTL_MINUTES,
+        "files": [f for f in list_files() if admin or not f["to"] or client_id in (f["to"], f["from"])],
+        "texts": TEXTS,
+        "clients": sorted(({"id": k, "name": v[0]} for k, v in list(CLIENTS.items())), key=lambda c: c["id"]),
+        "peers": discovery["peers"],
+        "discovery_status": discovery["status"],
+    }
+    if admin:
+        body["settings"] = SETTINGS
+        body["requests"] = PAIRS.pending()
+    return jsonify(body)
+
+
+@app.post("/api/upload")
+def upload():
+    authorize()
+    limit = int(float(SETTINGS["max_upload_gb"]) * 1024**3)
+    expected = request.content_length
+    if expected is None or not request.args.get("name"):
+        raise ApiError(400, "missing file")
+    if expected > limit:
+        raise ApiError(413, f"Upload is larger than {float(SETTINGS['max_upload_gb']):g} GB.")
+    name = safe_file_name(request.args["name"])
+    staging = None
+    try:
+        # The raw body goes straight to disk once: no multipart parsing, no second copy.
+        handle, staging_name = tempfile.mkstemp(prefix=STAGING_PREFIX + "staging-", dir=UPLOAD_DIR)
         staging = Path(staging_name)
-        f.save(staging, buffer_size=1024 * 1024)
+        size = 0
+        with os.fdopen(handle, "wb") as out:
+            while chunk := request.stream.read(BUFFER):
+                size += len(chunk)
+                out.write(chunk)
+        if size != expected:
+            raise ApiError(400, "Upload was interrupted.")
         index = 0
         while True:
-            candidate_name = safe_name if index == 0 else f"{stem}_{index}{suffix}"
-            target = UPLOAD_DIR / candidate_name
+            candidate = numbered_name(name, index)
+            target = UPLOAD_DIR / candidate
             try:
-                # The staging file is on the same volume. Publishing a hard link
-                # makes the completed upload visible atomically without copying
-                # every byte a second time (important for multi-gigabyte files).
                 os.link(staging, target)
+                break
             except FileExistsError:
                 index += 1
-                continue
             except OSError:
-                # Some removable or network filesystems disallow hard links;
-                # keep those destinations working with the previous safe path.
-                try:
-                    fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-                except FileExistsError:
+                if target.exists():
                     index += 1
                     continue
-                reserved_target = target
-                with UPLOAD_SNAPSHOT_LOCK:
-                    ACTIVE_UPLOAD_TARGETS.add(target.name)
-                with staging.open("rb") as source, os.fdopen(fd, "wb") as destination:
-                    shutil.copyfileobj(source, destination, 1024 * 1024)
-            else:
-                reserved_target = target
-                with UPLOAD_SNAPSHOT_LOCK:
-                    ACTIVE_UPLOAD_TARGETS.add(target.name)
-            staging.unlink(missing_ok=True)
-            staging = None
-            with UPLOAD_SNAPSHOT_LOCK:
-                UPLOAD_SNAPSHOT["expires_at"] = 0.0
-                ACTIVE_UPLOAD_TARGETS.discard(target.name)
-            reserved_target = None
-            break
-    except Exception as exc:
+                staging.rename(target)
+                break
+    except OSError as error:
+        raise ApiError(500, f"Could not save upload: {error.strerror or error}") from error
+    finally:
         if staging:
-            try:
-                staging.unlink(missing_ok=True)
-            except OSError:
-                app.logger.exception("Could not remove incomplete upload staging file %s.", staging.name)
-        if reserved_target:
-            with UPLOAD_SNAPSHOT_LOCK:
-                ACTIVE_UPLOAD_TARGETS.discard(reserved_target.name)
-            try:
-                reserved_target.unlink(missing_ok=True)
-            except OSError:
-                app.logger.exception("Could not remove reserved upload target %s.", reserved_target.name)
-        return jsonify({"error": f"Could not save upload: {getattr(exc, 'strerror', None) or str(exc)}"}), 500
-    invalidate_upload_snapshot()
-    cleanup_uploads(force=get_settings()["auto_cleanup_max_files"] > 0)
-    app.logger.info("Uploaded file %s (%s bytes).", target.name, target.stat().st_size)
-    return jsonify({"ok": True, "filename": target.name, "size": target.stat().st_size})
+            staging.unlink(missing_ok=True)
+
+    def clean(field: str) -> str:
+        return re.sub(r"[^A-Za-z0-9]", "", request.args.get(field, ""))[:64]
+
+    if clean("to"):
+        ROUTES[candidate] = (clean("to"), clean("from"))
+    else:
+        ROUTES.pop(candidate, None)
+    cleanup()
+    return jsonify({"ok": True, "filename": candidate, "size": size})
 
 
-@app.route("/api/text", methods=["GET", "POST", "OPTIONS"])
-def api_text():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    if not check_session_key():
-        return jsonify({"error": "invalid session link"}), 404
-    if not check_code():
-        return jsonify({"error": "code not found"}), 404
+@app.get("/files/<name>")
+def download(name: str):
+    authorize()
+    path = file_path(name)
+    if not path:
+        raise ApiError(404, "file not found")
+    size = path.stat().st_size
+    start, end, status = 0, size - 1, 200
+    match = re.fullmatch(r"bytes=(\d*)-(\d*)", request.headers.get("Range", ""))
+    if match and any(match.groups()):
+        first, last = match.groups()
+        if first:
+            start, end = int(first), min(int(last or size - 1), size - 1)
+        else:
+            start = max(size - int(last), 0)
+        if start >= size or start > end:
+            return Response(status=416, headers={"Content-Range": f"bytes */{size}"})
+        status = 206
+    length = end - start + 1
 
-    if request.method == "GET":
-        return jsonify({"items": list_text_items()})
+    def chunks():
+        with path.open("rb") as source:
+            source.seek(start)
+            remaining = length
+            while remaining > 0 and (chunk := source.read(min(BUFFER, remaining))):
+                remaining -= len(chunk)
+                yield chunk
 
-    payload = request.get_json(silent=True) or {}
-    if not isinstance(payload, dict):
-        return jsonify({"error": "invalid payload"}), 400
-
-    try:
-        item = add_text_item(payload)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    app.logger.info("Shared text item %s (%s chars).", item["id"], len(item["text"]))
-    return jsonify({"ok": True, "item": item})
-
-
-@app.route("/api/text/<item_id>", methods=["DELETE", "OPTIONS"])
-def api_delete_text(item_id: str):
-    if request.method == "OPTIONS":
-        return ("", 204)
-    if not check_session_key():
-        return jsonify({"error": "invalid session link"}), 404
-    if not check_code():
-        return jsonify({"error": "code not found"}), 404
-    if not delete_text_item(item_id):
-        return jsonify({"error": "text item not found"}), 404
-    app.logger.info("Deleted text item %s.", item_id)
-    return jsonify({"ok": True, "stats": upload_stats()})
-
-
-@app.route("/api/settings", methods=["GET", "POST", "OPTIONS"])
-def api_settings():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    admin_error = require_admin()
-    if admin_error:
-        return admin_error
-    if not check_code():
-        return jsonify({"error": "unauthorized"}), 401
-
-    if request.method == "GET":
-        return jsonify({"settings": get_settings()})
-
-    payload = request.get_json(silent=True) or {}
-    if not isinstance(payload, dict):
-        return jsonify({"error": "invalid payload"}), 400
-
-    current = get_settings()
-    updates = {}
-
-    if "access_code" in payload:
-        updates["access_code"] = str(payload.get("access_code", "")).strip()
-
-    int_fields = ("auto_cleanup_minutes", "auto_cleanup_days", "auto_cleanup_max_files")
-    for field in int_fields:
-        if field not in payload:
-            continue
-        try:
-            value = int(payload[field])
-            if value < 0:
-                raise ValueError
-            updates[field] = value
-        except (TypeError, ValueError):
-            return jsonify({"error": f"{field} must be a non-negative integer"}), 400
-
-    if "max_upload_gb" in payload:
-        try:
-            value = float(payload["max_upload_gb"])
-            if not 0.01 <= value <= 1024:
-                raise ValueError
-            updates["max_upload_gb"] = round(value, 3)
-        except (TypeError, ValueError):
-            return jsonify({"error": "max_upload_gb must be between 0.01 and 1024"}), 400
-
-    if "launch_browser_on_start" in payload:
-        updates["launch_browser_on_start"] = _coerce_bool(
-            payload.get("launch_browser_on_start"),
-            DEFAULT_SETTINGS["launch_browser_on_start"],
-        )
-
-    if "device_name" in payload:
-        raw_name = payload.get("device_name")
-        if not isinstance(raw_name, str) or not raw_name.strip() or len(raw_name.strip()) > 32:
-            return jsonify({"error": "device_name must contain 1 to 32 characters"}), 400
-        updates["device_name"] = clean_device_name(raw_name)
-
-    if "discoverable" in payload:
-        updates["discoverable"] = _coerce_bool(payload.get("discoverable"), current["discoverable"])
-
-    merged = dict(current)
-    merged.update(updates)
-    try:
-        saved = set_settings(_normalize_settings(merged))
-    except OSError:
-        app.logger.exception("Settings could not be persisted.")
-        return jsonify({"error": "Settings could not be saved to disk. Check that the Drop Air data folder is writable, then try again."}), 500
-    app.config["MAX_CONTENT_LENGTH"] = upload_limit_bytes(saved)
-    cleanup_uploads(force=True)
-    app.logger.info("Updated runtime settings.")
-    return jsonify({"ok": True, "settings": saved})
+    response = Response(chunks(), status, mimetype="application/octet-stream", direct_passthrough=True)
+    response.headers["Content-Length"] = str(length)
+    response.headers["Accept-Ranges"] = "bytes"
+    response.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(name, safe='')}"
+    if status == 206:
+        response.headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    return response
 
 
-@app.route("/api/discovery", methods=["GET", "OPTIONS"])
-def api_discovery():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    if not check_session_key():
-        return jsonify({"error": "This Drop Air link expired. Refresh the page and try again."}), 401
-    if not check_code():
-        return jsonify({"error": "unauthorized"}), 401
-    snapshot = PEER_DISCOVERY.snapshot()
-    if is_admin_request():
-        snapshot["requests"] = PAIRING_REQUESTS.pending()
-    return jsonify(snapshot)
-
-
-def relay_discovered_peer(device_id: str, api_path: str, method: str, payload: dict | None = None):
-    if not re.fullmatch(r"[0-9a-f]{16,32}", device_id):
-        return jsonify({"error": "Invalid nearby device."}), 400
-    peer = PEER_DISCOVERY.get_peer(device_id)
-    if not peer:
-        return jsonify({"error": "That device is no longer nearby. Refresh the list and try again."}), 404
-    body = json.dumps(payload).encode("utf-8") if payload is not None else None
-    peer_request = Request(
-        f"http://{peer['address']}:{peer['port']}{api_path}",
-        data=body,
-        headers={"Content-Type": "application/json"} if body is not None else {},
-        method=method,
-    )
-    try:
-        with urlopen(peer_request, timeout=4) as response:
-            result = json.loads(response.read().decode("utf-8"))
-            return jsonify(result), response.status
-    except HTTPError as exc:
-        try:
-            result = json.loads(exc.read().decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            result = {"error": f"The nearby device returned HTTP {exc.code}."}
-        return jsonify(result), exc.code
-    except (OSError, URLError, TimeoutError, json.JSONDecodeError) as exc:
-        app.logger.info("Could not relay pairing request to %s: %s", peer["device_name"], exc)
-        return jsonify({"error": "Could not reach that device. Check Wi-Fi and Windows Firewall, then refresh."}), 502
-
-
-@app.route("/api/discovery/<device_id>/pair", methods=["POST", "OPTIONS"])
-def api_discovery_pair(device_id: str):
-    if request.method == "OPTIONS":
-        return ("", 204)
-    if not check_session_key():
-        return jsonify({"error": "This Drop Air link expired. Refresh the page and try again."}), 401
-    if not check_code():
-        return jsonify({"error": "unauthorized"}), 401
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return jsonify({"error": "Invalid connection request."}), 400
-    return relay_discovered_peer(device_id, "/api/pair/requests", "POST", payload)
-
-
-@app.route("/api/discovery/<device_id>/pair/<request_id>", methods=["GET", "OPTIONS"])
-def api_discovery_pair_status(device_id: str, request_id: str):
-    if request.method == "OPTIONS":
-        return ("", 204)
-    if not check_session_key():
-        return jsonify({"error": "This Drop Air link expired. Refresh the page and try again."}), 401
-    if not check_code():
-        return jsonify({"error": "unauthorized"}), 401
-    if not re.fullmatch(r"[0-9a-f]{48}", request_id):
-        return jsonify({"error": "Invalid connection request."}), 400
-    return relay_discovered_peer(device_id, f"/api/pair/requests/{request_id}", "GET")
-
-
-@app.route("/api/admin/discovery/retry", methods=["POST", "OPTIONS"])
-def api_admin_retry_discovery():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    admin_error = require_admin()
-    if admin_error:
-        return admin_error
-    if not check_code():
-        return jsonify({"error": "unauthorized"}), 401
-    PEER_DISCOVERY.restart(ACTIVE_PORT)
-    return jsonify({"ok": True, "message": "Local Wi-Fi discovery is restarting."})
-
-
-@app.route("/api/admin/network/firewall", methods=["POST", "OPTIONS"])
-def api_admin_open_firewall():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    admin_error = require_admin()
-    if admin_error:
-        return admin_error
-    if not check_code():
-        return jsonify({"error": "unauthorized"}), 401
-    if os.name != "nt":
-        return jsonify({"error": "Windows Firewall settings are only available on Windows."}), 501
-    try:
-        subprocess.Popen(["control.exe", "firewall.cpl"], close_fds=True)
-    except OSError:
-        app.logger.exception("Could not open Windows Firewall settings.")
-        return jsonify({"error": "Windows Firewall settings could not be opened."}), 500
+@app.delete("/api/files/<name>")
+def api_delete_file(name: str):
+    authorize()
+    if not delete_file(name):
+        raise ApiError(404, "file not found")
     return jsonify({"ok": True})
 
 
-@app.route("/api/admin", methods=["GET", "OPTIONS"])
-def api_admin():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    admin_error = require_admin()
-    if admin_error:
-        return admin_error
-    if not check_code():
-        return jsonify({"error": "unauthorized"}), 401
-    settings = get_settings()
-    session = session_snapshot()
-    public_url = build_public_url(settings["access_code"])
-    return jsonify(
-        {
-            "is_admin": True,
-            "public_url": public_url,
-            "local_url": build_local_url(settings["access_code"]),
-            "qr_url": url_for("qr_png", url=public_url),
-            "qr_svg_url": url_for("qr_code", url=public_url),
-            "session": session,
-            "stats": upload_stats(),
-            "connected_count": active_connection_count(),
-            "settings": settings,
-            "log_file": str(LOG_FILE),
-            "text_ttl_minutes": TEXT_TTL_MINUTES,
-        }
-    )
+@app.post("/api/text")
+def add_text():
+    authorize()
+    text = str(payload().get("text", ""))[:MAX_TEXT_CHARS]
+    if not text.strip():
+        raise ApiError(400, "Paste text before sharing.")
+    item = {"id": secrets.token_hex(8), "text": text, "created": int(time.time())}
+    with LOCK:
+        TEXTS.insert(0, item)
+        del TEXTS[MAX_TEXT_ITEMS:]
+        write_atomic(DATA_DIR / "text_items.json", json.dumps(TEXTS))
+    return jsonify({"ok": True, "item": item})
 
 
-@app.route("/api/admin/discovery", methods=["GET", "OPTIONS"])
-def api_admin_discovery():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    admin_error = require_admin()
-    if admin_error:
-        return admin_error
-    if not check_code():
-        return jsonify({"error": "unauthorized"}), 401
-    return jsonify({**PEER_DISCOVERY.snapshot(), "requests": PAIRING_REQUESTS.pending()})
+@app.delete("/api/text/<item_id>")
+def delete_text(item_id: str):
+    authorize()
+    if not retain_texts(lambda item: item["id"] != item_id):
+        raise ApiError(404, "text item not found")
+    return jsonify({"ok": True})
 
 
-@app.route("/api/admin/discovery/requests/<request_id>", methods=["POST", "OPTIONS"])
-def api_admin_pair_decision(request_id: str):
-    if request.method == "OPTIONS":
-        return ("", 204)
-    admin_error = require_admin()
-    if admin_error:
-        return admin_error
-    if not check_code():
-        return jsonify({"error": "unauthorized"}), 401
-    payload = request.get_json(silent=True) or {}
-    decision = str(payload.get("decision", "")).lower()
-    if decision not in {"accept", "decline"}:
-        return jsonify({"error": "decision must be accept or decline"}), 400
-    settings = get_settings()
-    approved_url = build_public_url(settings["access_code"]) if decision == "accept" else ""
-    if not PAIRING_REQUESTS.decide(request_id, decision == "accept", approved_url):
-        return jsonify({"error": "This request expired or was already handled."}), 404
-    return jsonify({"ok": True, "decision": "accepted" if decision == "accept" else "declined"})
-
-
-@app.route("/api/admin/cleanup", methods=["POST", "OPTIONS"])
-def api_admin_cleanup():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    admin_error = require_admin()
-    if admin_error:
-        return admin_error
-    if not check_code():
-        return jsonify({"error": "unauthorized"}), 401
-    payload = request.get_json(silent=True) or {}
-    target = str(payload.get("target", "")).strip().lower()
-    removed_files = 0
-    cleared_text = False
-    if target in {"uploads", "all"}:
-        removed_files = clear_uploads()
-    if target in {"text", "all"}:
-        clear_text_items()
-        cleared_text = True
-    if target not in {"uploads", "text", "all"}:
-        return jsonify({"error": "target must be uploads, text, or all"}), 400
-    app.logger.info("Admin cleanup target=%s removed_files=%s cleared_text=%s.", target, removed_files, cleared_text)
-    return jsonify({"ok": True, "removed_files": removed_files, "cleared_text": cleared_text, "stats": upload_stats()})
-
-
-@app.route("/api/admin/update", methods=["GET", "POST", "OPTIONS"])
-def api_admin_update():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    admin_error = require_admin()
-    if admin_error:
-        return admin_error
-    if not check_code():
-        return jsonify({"error": "unauthorized"}), 401
-
-    if request.method == "GET":
-        try:
-            return jsonify(latest_release_info())
-        except Exception as exc:
-            return jsonify(
-                {
-                    "configured": bool(UPDATE_REPO),
-                    "repo": UPDATE_REPO,
-                    "current_version": APP_VERSION,
-                    "latest_version": "",
-                    "update_available": False,
-                    "release_url": "",
-                    "message": f"Could not check for updates: {exc}",
-                }
-            ), 502
-
+@app.post("/api/settings")
+def save_settings():
+    require_admin()
+    data = payload()
+    updated = dict(SETTINGS)
+    if "access_code" in data:
+        updated["access_code"] = str(data["access_code"]).strip()
+    for field in ("auto_cleanup_minutes", "auto_cleanup_days", "auto_cleanup_max_files"):
+        if field in data:
+            value = data[field]
+            if type(value) is not int or not 0 <= value <= 1_000_000:
+                raise ApiError(400, f"{field} must be a non-negative integer")
+            updated[field] = value
+    if "max_upload_gb" in data:
+        value = data["max_upload_gb"]
+        if type(value) not in (int, float) or not 0.01 <= value <= 1024:
+            raise ApiError(400, "max_upload_gb must be between 0.01 and 1024")
+        updated["max_upload_gb"] = round(float(value), 3)
+    if "device_name" in data:
+        name = data["device_name"]
+        if not isinstance(name, str) or not 1 <= len(name.strip()) <= 32:
+            raise ApiError(400, "device_name must contain 1 to 32 characters")
+        updated["device_name"] = clean_device_name(name)
+    for field in ("launch_browser_on_start", "discoverable"):
+        if field in data:
+            updated[field] = data[field] is True
     try:
-        result = start_update_install()
-    except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 502
-    if not result.get("ok"):
-        return jsonify(result), 400
+        write_atomic(DATA_DIR / "settings.json", json.dumps(updated, indent=2))
+    except OSError as error:
+        raise ApiError(500, "Settings could not be saved to disk.") from error
+    SETTINGS.update(updated)
+    cleanup()
+    return jsonify({"ok": True, "settings": SETTINGS})
+
+
+@app.post("/api/pair/requests")
+def pair_create():
+    if not SETTINGS["discoverable"]:
+        raise ApiError(404, "this Drop Air device is not discoverable")
+    item, error = PAIRS.create(request.remote_addr or "", payload())
+    if error:
+        raise ApiError(400 if error.startswith("invalid") else 429, error)
+    on_show()
+    return jsonify({"request": item}), 202
+
+
+@app.get("/api/pair/requests/<request_id>")
+def pair_status(request_id: str):
+    result = PAIRS.status(request.remote_addr or "", request_id)
+    if result is None:
+        raise ApiError(404, "request expired or not found")
+    if result["decision"] == "accepted":
+        result["share_url"] = public_url()
     return jsonify(result)
 
 
-@app.route("/api/admin/update/status", methods=["GET", "OPTIONS"])
-def api_admin_update_status():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    admin_error = require_admin()
-    if admin_error:
-        return admin_error
-    if not check_code():
-        return jsonify({"error": "unauthorized"}), 401
-    return jsonify(update_status_snapshot())
+@app.post("/api/admin/pair/<request_id>")
+def pair_decide(request_id: str):
+    require_admin()
+    decision = payload().get("decision")
+    if decision not in ("accept", "decline"):
+        raise ApiError(400, "decision must be accept or decline")
+    accepted = decision == "accept"
+    if not PAIRS.decide(request_id, accepted, public_url() if accepted else ""):
+        raise ApiError(404, "This request expired or was already handled.")
+    return jsonify({"ok": True})
 
 
-@app.route("/api/admin/quit", methods=["POST", "OPTIONS"])
-def api_admin_quit():
-    if request.method == "OPTIONS":
-        return ("", 204)
-    admin_error = require_admin()
-    if admin_error:
-        return admin_error
-    if not check_code():
-        return jsonify({"error": "unauthorized"}), 401
-    app.logger.info("Admin requested server quit.")
-    Timer(0.35, stop_server_process).start()
-    return jsonify({"ok": True, "message": "Drop Air is shutting down."})
+def relay(device: str, path: str, body: dict | None = None):
+    """Forward a pairing call to another Drop Air host that discovery found."""
+    peer = PEERS.get_peer(device)
+    if not peer:
+        raise ApiError(404, "That device is no longer nearby.")
+    outgoing = Request(
+        f"http://{peer['address']}:{peer['port']}{path}",
+        data=None if body is None else json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"} if body is not None else {},
+    )
+    try:
+        with urlopen(outgoing, timeout=4) as response:
+            return jsonify(json.load(response)), response.status
+    except HTTPError as error:
+        try:
+            return jsonify(json.load(error)), error.code
+        except ValueError:
+            raise ApiError(502, f"The nearby device returned HTTP {error.code}.") from error
+    except (OSError, URLError, ValueError) as error:
+        raise ApiError(502, "Could not reach that device. Check Wi-Fi and Windows Firewall.") from error
 
 
-@app.route("/qr.svg", methods=["GET"])
-def qr_code():
-    url = request.args.get("url", build_public_url())
-    response = Response(make_qr_svg(url), mimetype="image/svg+xml")
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
-    return response
+@app.post("/api/discovery/<device>/pair")
+def relay_pair(device: str):
+    authorize()
+    return relay(device, "/api/pair/requests", payload())
 
 
-@app.route("/qr.png", methods=["GET"])
-def qr_png():
-    url = request.args.get("url", build_public_url())
-    response = Response(make_qr_png(url), mimetype="image/png")
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
-    return response
+@app.get("/api/discovery/<device>/pair/<request_id>")
+def relay_status(device: str, request_id: str):
+    authorize()
+    if not re.fullmatch(r"[0-9a-f]{48}", request_id):
+        raise ApiError(400, "Invalid connection request.")
+    return relay(device, f"/api/pair/requests/{request_id}")
 
 
-@app.route("/favicon.ico", methods=["GET"])
-def favicon():
-    return Response(status=204)
+def downloads_folder() -> str:
+    """The real Downloads folder, even when the user moved it."""
+    try:
+        import winreg
+
+        shell_folders = r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, shell_folders) as key:
+            value, _ = winreg.QueryValueEx(key, "{374DE290-123F-4565-9164-39C4925E467B}")
+        return os.path.expandvars(value)
+    except (ImportError, OSError):
+        return str(Path.home() / "Downloads")
 
 
-@app.route("/files/<path:filename>", methods=["GET"])
-def download_file(filename: str):
-    if not check_session_key():
-        return session_error()
-    if not check_code():
-        return code_error()
-    return send_from_directory(UPLOAD_DIR, filename, as_attachment=True)
+@app.post("/api/admin/save/<name>")
+def save_to_downloads(name: str):
+    require_admin()
+    source = file_path(name)
+    if not source:
+        raise ApiError(404, "file not found")
+    folder = Path(os.getenv("DROP_AIR_DOWNLOAD_DIR") or downloads_folder())
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        index = 0
+        while True:
+            candidate = numbered_name(name, index)
+            try:
+                with (folder / candidate).open("xb") as out, source.open("rb") as incoming:
+                    shutil.copyfileobj(incoming, out, BUFFER)
+                return jsonify({"ok": True, "filename": candidate})
+            except FileExistsError:
+                index += 1
+    except OSError as error:
+        raise ApiError(500, f"Could not save the file: {error.strerror or error}") from error
 
 
-def print_qr(url: str):
-    qr = qrcode.QRCode(border=1)
-    qr.add_data(url)
-    qr.make(fit=True)
-    matrix = qr.get_matrix()
-    black = "##"
-    white = "  "
-    print()
-    print("Scan this QR on iPhone/iPad:")
-    for row in matrix:
-        print("".join(black if cell else white for cell in row))
-    print()
-    print(url)
-    print()
+@app.post("/api/admin/reveal")
+def reveal():
+    require_admin()
+    subprocess.Popen(["explorer", str(UPLOAD_DIR)])
+    return jsonify({"ok": True})
+
+
+@app.post("/api/admin/firewall")
+def firewall():
+    require_admin()
+    subprocess.Popen(["control.exe", "firewall.cpl"])
+    return jsonify({"ok": True})
+
+
+@app.post("/api/admin/cleanup")
+def admin_cleanup():
+    require_admin()
+    target = payload().get("target")
+    if target not in ("uploads", "text", "all"):
+        raise ApiError(400, "target must be uploads, text, or all")
+    if target != "text":
+        clear_uploads()
+    if target != "uploads":
+        retain_texts(lambda _item: False)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/admin/rediscover")
+def rediscover():
+    require_admin()
+    PEERS.restart(PORT)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/admin/show")
+def show():
+    require_admin()
+    on_show()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/admin/quit")
+def quit_app():
+    require_admin()
+    threading.Timer(0.5, lambda: on_quit()).start()
+    return jsonify({"ok": True})
+
+
+# --- Switching to the Rust edition ------------------------------------------
+
+
+def find_rust_release() -> dict | None:
+    """Newest 2.x+ installer. The Python edition itself gets no more updates."""
+    outgoing = Request(RELEASES_URL, headers={"Accept": "application/vnd.github+json", "User-Agent": "DropAir"})
+    with urlopen(outgoing, timeout=15) as response:
+        releases = json.load(response)
+    found = []
+    for release in releases:
+        version = tuple(int(n) for n in re.findall(r"\d+", release.get("tag_name", ""))[:3])
+        if release.get("draft") or release.get("prerelease") or not version or version[0] < 2:
+            continue
+        for item in release.get("assets", []):
+            name = item.get("name", "").lower()
+            url = item.get("browser_download_url", "")
+            if name.endswith(".exe") and "setup" in name and url.startswith(ASSET_PREFIX):
+                found.append((version, item))
+                break
+    return max(found, key=lambda pair: pair[0])[1] if found else None
+
+
+@app.get("/api/admin/update")
+def update_info():
+    require_admin()
+    try:
+        item = find_rust_release()
+    except (OSError, ValueError) as error:
+        raise ApiError(502, f"Could not check GitHub: {error}") from error
+    message = "The Rust version is available." if item else "No Rust release found yet."
+    return jsonify({"update_available": bool(item), "message": message, "current_version": APP_VERSION})
+
+
+def switch_to_rust() -> None:
+    try:
+        item = find_rust_release()
+        if not item:
+            raise RuntimeError("No Rust release found yet.")
+        target = Path(tempfile.mkdtemp(prefix="drop-air-rust-")) / Path(item["name"]).name
+        outgoing = Request(item["browser_download_url"], headers={"User-Agent": "DropAir"})
+        with urlopen(outgoing, timeout=30) as response, target.open("wb") as out:
+            done = 0
+            while chunk := response.read(256 * 1024):
+                out.write(chunk)
+                done += len(chunk)
+                UPDATE["percent"] = min(100, done * 100 // max(item.get("size", 0), 1))
+        if item.get("size") and done != item["size"]:
+            raise RuntimeError("The download was incomplete.")
+        os.startfile(target)  # Windows asks for permission to install.
+        UPDATE.update(running=False, percent=100, message="Starting the installer…")
+        on_quit()
+    except Exception as error:  # shown to the user in Settings
+        UPDATE.update(running=False, percent=0, message=f"Switch failed: {error}", error=str(error))
+
+
+@app.post("/api/admin/update")
+def update_start():
+    require_admin()
+    if not UPDATE["running"]:
+        UPDATE.update(running=True, percent=0, message="Downloading the Rust version…", error="")
+        threading.Thread(target=switch_to_rust, daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.get("/api/admin/update/status")
+def update_status():
+    require_admin()
+    return jsonify(UPDATE)
+
+
+# --- Server -----------------------------------------------------------------
+
+
+class QuietHandler(WSGIRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_request(self, *args, **kwargs):
+        pass
+
+
+class LocalServer(ThreadedWSGIServer):
+    daemon_threads = True
+
+    def server_bind(self):
+        # HTTPServer.server_bind calls getfqdn(), which can stall on bad DNS.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = "localhost", self.server_address[1]
+
+
+def port_is_free(port: int) -> bool:
+    with socket.socket() as probe:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        try:
+            probe.bind(("0.0.0.0", port))
+        except OSError:
+            return False
+    return True
+
+
+def port_candidates() -> list[int]:
+    """Each PC gets its own random port and keeps it, so links survive restarts. ``PORT`` overrides it."""
+    forced = int(env_number("PORT", 0))
+    if forced:
+        return list(range(forced, forced + 50))
+    try:
+        saved = [int((DATA_DIR / "preferred-port").read_text(encoding="ascii"))]
+    except (OSError, ValueError):
+        saved = []
+    return saved + [20_000 + secrets.randbelow(29_000) for _ in range(50)]
+
+
+def start_server():
+    """Bind the first free port and serve in a background thread."""
+    global PORT
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)
+    port = next((p for p in port_candidates() if port_is_free(p)), None)
+    if port is None:
+        raise OSError("No free port found.")
+    server = LocalServer("0.0.0.0", port, app, handler=QuietHandler)
+    PORT = server.server_port
+    (DATA_DIR / "port").write_text(str(PORT), encoding="ascii")
+    if not os.getenv("PORT"):
+        (DATA_DIR / "preferred-port").write_text(str(PORT), encoding="ascii")
+    threading.Thread(target=server.serve_forever, name="DropAirWeb", daemon=True).start()
+
+    def maintain():
+        for name in ("rollback", "browser-profile"):  # leftovers of older releases
+            shutil.rmtree(DATA_DIR / name, ignore_errors=True)
+        while True:
+            try:
+                cleanup()
+            except OSError:
+                pass
+            time.sleep(15)
+
+    threading.Thread(target=maintain, name="DropAirCleanup", daemon=True).start()
+    PEERS.start(PORT)
+    return server
 
 
 if __name__ == "__main__":
-    initialize_log_file()
-    _stdio_log_handle = redirect_stdio_to_log_if_windowless()
-    set_console_window_icon()
-    host = "0.0.0.0"
-    port = select_server_port(DEFAULT_PORT)
-    ACTIVE_PORT = port
-    settings = get_settings()
-    access_code = settings["access_code"]
-    url = build_public_url(access_code)
-    local_url = build_local_url(access_code)
-
-    if port != DEFAULT_PORT:
-        print(f"Port {DEFAULT_PORT} is already in use; using {port} instead.")
-    print(f"Drop Air running on {url}")
-    print(f"Admin dashboard on {local_url}")
-    print("Data folder:", DATA_DIR)
-    print("Uploads folder:", UPLOAD_DIR)
-    print("Log file:", LOG_FILE)
-    if (
-        settings["auto_cleanup_minutes"] > 0
-        or settings["auto_cleanup_days"] > 0
-        or settings["auto_cleanup_max_files"] > 0
-    ):
-        print(
-            "Auto-cleanup:",
-            "minutes="
-            f"{settings['auto_cleanup_minutes']}, days={settings['auto_cleanup_days']}, "
-            f"max_files={settings['auto_cleanup_max_files']}",
-        )
-    register_shutdown_cleanup()
-    cleanup_uploads(force=True)
-    start_peer_discovery(port)
-    print_qr(url)
-    if settings["launch_browser_on_start"]:
-        Timer(1.0, lambda: open_admin_browser(local_url)).start()
-    configure_request_logging()
-    start_tray_icon(local_url)
-    app.run(host=host, port=port, debug=False)
+    start_server()
+    print(f"Drop Air {APP_VERSION} on {local_url()}", flush=True)
+    print(public_url(), flush=True)
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        shutdown()

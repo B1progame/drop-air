@@ -1,7 +1,6 @@
 Flask==3.1.0
 Pillow==11.3.0
-PySide6==6.8.3
 pystray==0.19.5
+pywebview==6.1
 qrcode==8.0
-winrt-Windows.Devices.Bluetooth.Advertisement==3.2.1
 zeroconf==0.151.5

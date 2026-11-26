@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#121316">
+<title>Drop Air</title>
+<link rel="icon" href="/assets/logo.png">
+<link rel="stylesheet" href="/assets/app.css">
+<script>
+  try { const t = localStorage.getItem("dropAirTheme"); if (t === "light") document.documentElement.dataset.theme = t; } catch (_) {}
+</script>
+</head>
+<body>
+<div class="splash" id="splash" aria-hidden="true">
+  <div class="splash-mark"><i></i><i></i><img src="/assets/logo.png" alt=""></div>
+  <strong>Drop Air</strong>
+  <div class="splash-bar"><i></i></div>
+</div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m0 0 5 5m-5-5-5 5M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v12m0 0 5-5m-5 5-5-5M5 20h14"/></symbol>
+  <symbol id="i-qr" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 18h2v2h-2zM18 14h2M14 20h2"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 13a7.7 7.7 0 0 0 0-2l2-1.5-2-3.4-2.3.9a7.6 7.6 0 0 0-1.7-1L15 3.5h-4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.3-.9-2 3.4L6.6 11a7.7 7.7 0 0 0 0 2l-2 1.5 2 3.4 2.3-.9a7.6 7.6 0 0 0 1.7 1l.4 2.5h4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.3.9 2-3.4z"/></symbol>
+  <symbol id="i-theme" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4v16a8 8 0 0 0 0-16z" fill="currentColor"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2.5"/><path d="M11 18h2"/></symbol>
+  <symbol id="i-pc" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v4h4"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="1.5"/><path d="m4 18 5-5 4 4 3-3 4 4"/></symbol>
+  <symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m10 9 5 3-5 3z"/></symbol>
+  <symbol id="i-audio" viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></symbol>
+  <symbol id="i-zip" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M12 3v2m0 2v2m0 2v2m-2 2h4v4h-4z"/></symbol>
+  <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 8-4 4 4 4m8-8 4 4-4 4M14 5l-4 14"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 5H6a2 2 0 0 0-2 2v9"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+  <symbol id="i-paste" viewBox="0 0 24 24"><path d="M9 4h6v3H9zM9 5H6v16h12V5h-3"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M4 9a12 12 0 0 1 16 0M7 12.5a7.5 7.5 0 0 1 10 0M10 16a3 3 0 0 1 4 0M12 19.5v.1"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.1"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M21 3 10 14M21 3l-7 18-4-7-7-4z"/></symbol>
+</svg>
+
+<header class="top">
+  <div class="brand"><img src="/assets/logo.png" alt="" width="34" height="34"><div><strong>Drop Air</strong><small id="status" role="status">Connecting…</small></div></div>
+  <nav>
+    <button class="icon" id="themeBtn" title="Change theme" aria-label="Change theme"><svg><use href="#i-theme"/></svg></button>
+    <button class="icon" id="qrBtn" title="Connect a device" aria-label="Connect a device"><svg><use href="#i-qr"/></svg></button>
+    <button class="icon" id="settingsBtn" title="Settings" aria-label="Settings" hidden><svg><use href="#i-gear"/></svg></button>
+  </nav>
+</header>
+
+<main>
+  <div class="notice" id="finalNotice" hidden>
+    <div><strong>This is the last Python version of Drop Air.</strong> <span>It will not get any more updates. The Rust version is faster and much smaller.</span></div>
+    <button class="btn primary" id="switchRust" hidden>Switch to Rust</button>
+  </div>
+  <div id="requests"></div>
+
+  <section class="radar" aria-label="Nearby devices">
+    <div class="rings" aria-hidden="true"><i></i><i></i><i></i></div>
+    <div class="nodes" id="nodes"></div>
+    <p class="radar-hint" id="radarHint"></p>
+  </section>
+
+  <div class="tabs" role="tablist" data-tab="send">
+    <button role="tab" id="tabSend" aria-selected="true">Send</button>
+    <button role="tab" id="tabReceive" aria-selected="false">Receive <span class="badge" id="tabCount" hidden></span></button>
+  </div>
+
+  <div class="lanes" data-tab="send">
+    <section class="lane send" aria-labelledby="sendTitle">
+      <div class="lane-head"><h2 id="sendTitle">Send</h2><span class="muted" id="limit"></span></div>
+      <div class="drop" id="drop">
+        <span class="drop-icon"><svg><use href="#i-upload"/></svg></span>
+        <p class="drop-title">Drop files here</p>
+        <p class="muted" id="targetLabel">Everyone connected can download them</p>
+        <div class="row">
+          <button class="btn primary" id="pickBtn">Choose files</button>
+          <button class="btn" id="pasteBtn"><svg><use href="#i-paste"/></svg>Paste</button>
+        </div>
+        <input type="file" id="picker" multiple hidden>
+      </div>
+      <ul class="list" id="queue" aria-live="polite"></ul>
+      <form class="composer" id="textForm">
+        <label class="sr" for="textInput">Text to share</label>
+        <textarea id="textInput" rows="2" maxlength="20000" placeholder="Send text or a link…"></textarea>
+        <button class="icon accent" title="Send text" aria-label="Send text"><svg><use href="#i-send"/></svg></button>
+      </form>
+    </section>
+
+    <section class="lane receive" aria-labelledby="receiveTitle">
+      <div class="lane-head">
+        <h2 id="receiveTitle">Receive</h2>
+        <div class="row"><button class="btn small" id="allBtn" hidden><svg><use href="#i-download"/></svg>Get all</button>
+        <button class="btn small" id="folderBtn" hidden><svg><use href="#i-folder"/></svg>Open folder</button></div>
+      </div>
+      <ul class="list" id="texts"></ul>
+      <ul class="list" id="files"></ul>
+      <div class="empty" id="emptyReceive"><span class="drop-icon"><svg><use href="#i-download"/></svg></span><p>Nothing here yet</p><p class="muted">Files and text from your devices show up here.</p></div>
+      <p class="muted foot" id="expiry"></p>
+    </section>
+  </div>
+</main>
+
+<dialog id="qrDialog" aria-labelledby="qrTitle">
+  <div class="dialog-head"><h2 id="qrTitle">Connect a device</h2><button class="icon" data-close aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
+  <div class="qr-frame"><img id="qrImage" alt="QR code to open Drop Air on another device" width="224" height="224"></div>
+  <p class="muted">Scan with your phone on the same Wi-Fi.</p>
+  <code id="shareUrl"></code>
+  <button class="btn primary wide" id="copyLink">Copy link</button>
+</dialog>
+
+<dialog id="settingsDialog" class="drawer" aria-labelledby="settingsTitle">
+  <div class="dialog-head"><h2 id="settingsTitle">Settings</h2><button class="icon" data-close aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
+  <form id="settingsForm">
+    <section class="card">
+      <div class="card-head"><svg><use href="#i-pc"/></svg><h3>This PC</h3></div>
+      <label class="field">Device name<input name="device_name" maxlength="32" required></label>
+      <label class="toggle"><span><strong>Visible to nearby PCs</strong><small>Others on this Wi-Fi can ask to connect</small></span><input type="checkbox" name="discoverable" role="switch"></label>
+      <div class="field">Appearance<div class="segment" id="themeChoice"><button type="button" data-theme-value="dark">Dark</button><button type="button" data-theme-value="light">Light</button></div></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><svg><use href="#i-shield"/></svg><h3>Security</h3></div>
+      <label class="field">Access code (empty = no code)<input name="access_code" autocomplete="off" placeholder="No code"></label>
+    </section>
+    <section class="card">
+      <div class="card-head"><svg><use href="#i-clock"/></svg><h3>Sharing</h3></div>
+      <div class="field">Delete shared files after<div class="chips" data-for="auto_cleanup_minutes"><button type="button" data-value="10">10 min</button><button type="button" data-value="60">1 hour</button><button type="button" data-value="1440">1 day</button><button type="button" data-value="0">Never</button></div></div>
+      <div class="field">Largest file<div class="chips" data-for="max_upload_gb"><button type="button" data-value="1">1 GB</button><button type="button" data-value="10">10 GB</button><button type="button" data-value="50">50 GB</button><button type="button" data-value="200">200 GB</button></div></div>
+      <details><summary>Custom values</summary>
+        <label class="field">Delete files after (minutes, 0 = never)<input type="number" name="auto_cleanup_minutes" min="0"></label>
+        <label class="field">Delete files after (days, 0 = never)<input type="number" name="auto_cleanup_days" min="0"></label>
+        <label class="field">Keep newest files (0 = all)<input type="number" name="auto_cleanup_max_files" min="0"></label>
+        <label class="field">Upload limit (GB)<input type="number" name="max_upload_gb" min="0.01" max="1024" step="0.01"></label>
+      </details>
+    </section>
+  </form>
+    <section class="card">
+      <div class="card-head"><svg><use href="#i-wifi"/></svg><h3>Network</h3></div>
+      <p class="muted" id="discoveryStatus"></p>
+      <div class="row"><button class="btn" id="rediscover">Search again</button><button class="btn" id="firewall">Firewall</button></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><svg><use href="#i-trash"/></svg><h3>Cleanup</h3></div>
+      <div class="row"><button class="btn" data-clean="uploads">Clear files</button><button class="btn" data-clean="text">Clear text</button></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><svg><use href="#i-info"/></svg><h3>About</h3></div>
+      <p class="muted" id="about"></p>
+      <p class="muted" id="updateText"></p>
+      <progress id="updateProgress" max="100" hidden></progress>
+      <div class="row"><button class="btn" id="checkUpdate">Check for updates</button><button class="btn primary" id="installUpdate" hidden>Install</button></div>
+    </section>
+  <div class="row"><button class="btn danger wide" id="quitBtn">Quit Drop Air</button></div>
+  <div class="save-bar" id="saveBar" hidden><button class="btn primary wide" form="settingsForm">Save changes</button></div>
+</dialog>
+
+<dialog id="confirmDialog" aria-labelledby="confirmTitle">
+  <h2 id="confirmTitle"></h2>
+  <p class="muted" id="confirmText"></p>
+  <form method="dialog" class="row end"><button class="btn" value="no">Cancel</button><button class="btn primary" value="yes" id="confirmYes"></button></form>
+</dialog>
+
+<div class="gate" id="gate" hidden>
+  <form id="gateForm">
+    <img src="/assets/logo.png" alt="" width="72" height="72">
+    <h2 id="gateTitle">Enter access code</h2>
+    <p class="muted" id="gateText">Ask the person hosting Drop Air for the code.</p>
+    <input id="gateCode" autocomplete="off" aria-label="Access code">
+    <button class="btn primary wide">Continue</button>
+  </form>
+</div>
+
+<div class="toast" id="toast" role="status" hidden></div>
+<script src="/assets/app.js"></script>
+</body>
+</html>

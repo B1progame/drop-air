@@ -1,199 +1,66 @@
 ﻿# Drop Air
 
-Fast local file sharing from a native desktop window to iPhone/iPad (and back) over the same Wi-Fi network.
+Fast local file and text sharing between a Windows PC and any phone, tablet or computer on the same Wi-Fi. No cloud, no account.
 
-Current desktop release: **1.6.16**. QR links and device discovery prefer the usable local Wi-Fi/Ethernet address instead of a VPN tunnel address. The app removes old rollback copies and its dedicated Chromium profile in background cleanup after startup, and the admin browser uses your normal browser profile so Drop Air no longer creates a separate browser cache. All connection, delete, quit, settings, and update confirmations use the custom Drop Air floating dialog.
+> **The Python edition is no longer updated.** 1.7.0 is its final release.
+> New features and fixes only go into the **Rust edition (2.x)**.
+> To switch: open Drop Air → **Switch to Rust**, or run the latest `DropAir-Setup-2.x.exe` from [Releases](https://github.com/B1progame/drop-air/releases). Your settings stay.
 
-## Features
+## Download
 
-- AirDrop-like local transfer (no cloud)
-- Drag-and-drop upload from any device
-- Download files from any connected device
-- Text relay for pasting text on one device and copying it on another
-- Host-only admin panel with QR code, share link, cleanup, and runtime settings
-- Per-launch connection key in QR/share links so old or manual LAN links cannot join the wrong session
-- Shared text keeps line breaks and expires after 10 minutes by default
-- Host-only quit button to stop Drop Air from the admin panel
-- Optional GitHub Releases updater in the host-only admin panel
-- Light, dark, and system theme modes
-- Windows runs in a native PySide desktop window with the Drop Air taskbar icon; the QR link still opens the same web interface on phones and tablets
-- Clipboard paste button for sharing copied images/files or text
-- Optional one-time passcode (`DROP_AIR_CODE`)
-- Phones and tablets open on a QR-first connection screen, with a direct link to the full transfer workspace
-- Dark charcoal interface with cyan accents and the Drop Air paper-plane brand mark
-- Cached upload listings and reduced repeated filesystem scans for faster refreshes
+| Edition | Installer | Installed size | Updates |
+|---|---|---|---|
+| **Rust 2.x** (recommended) | `DropAir-Setup-2.x.exe` | about 9 MB | yes |
+| Python 1.7.0 (final) | `DropAir-Setup-1.7.0.exe` | about 36 MB | none |
 
-## Requirements
+Both need Windows 10 or 11 (64-bit) with Microsoft Edge WebView2, which Windows 11 includes. Older releases were about 450 MB.
 
-- Python 3.10+
-- Same local network (laptop + iPhone/iPad)
+## What it does
 
-Drop Air 1.6.6 discovers other Drop Air hosts on local Wi-Fi using mDNS and uses Bluetooth LE as a nearby-device hint. Give each host a device name and enable **Let others see me on local Wi-Fi** in Settings. Discovery announces only the display name, random device ID, and web port over Wi-Fi; Bluetooth announces only a short device ID and Drop Air marker. Pairing still requires the initiating user to choose Connect and the host user to approve. File transfers use Wi-Fi.
+- Drop, pick or paste files and text; everyone connected can get them
+- Drop files onto a device in the **Nearby** area to send only to it
+- Scan the QR code to connect a phone; no app needed on the phone
+- Find other Drop Air PCs on your Wi-Fi and send to them after they approve
+- Live speed and time left, resumable downloads, up to 4 uploads at once
+- Dark and light theme, optional access code, automatic deletion of old files
+- Closing the window keeps sharing from the tray and frees the window's memory; it exits after 10 minutes if no device is connected
 
-## Run
+Each PC picks its own random port (20000–48999) on first start and keeps it. Set the `PORT` environment variable to choose one yourself. If Windows Firewall asks, allow Drop Air on **private** networks.
+
+## Security
+
+Drop Air is meant for networks you trust: traffic is plain HTTP. Links carry a rotating session key, and an access code can be added in Settings. Host controls only work from this PC. A "private send" is hidden from other devices' lists but is not encrypted.
+
+Shared files and texts are deleted when Drop Air quits, and by default after 10 minutes. Data lives in `%LOCALAPPDATA%\DropAir` (or `data\` next to the program in the portable ZIP).
+
+## Build from source
 
 ```powershell
+# Rust edition (needs Rust and Inno Setup)
+.\build.ps1 -Edition rust
+
+# Python edition
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python desktop_app.py
+.\build.ps1 -Edition python
 ```
 
-The desktop window hosts the local dashboard. Scan its QR code with your phone or tablet to open the mobile connection screen. The Wi-Fi URL includes a temporary `k=...` connection key generated on each launch.
+Run without building: `cargo run --release` in `rust\`, or `python desktop_app.py` after `pip install -r requirements.txt`.
 
-## Optional security
-
-Set a code before starting server:
-
-```powershell
-$env:DROP_AIR_CODE="123456"
-python desktop_app.py
+```
+web\          the interface, shared by both editions
+rust\         Rust server, tray app and window
+app.py        Python server (same HTTP API)
+desktop_app.py  Python tray app and window
+tools\test_api.py, tools\test_peers.py   end-to-end tests
 ```
 
-Then open `http://<server-ip>:8000/?code=123456`.
+Environment variables: `PORT`, `DROP_AIR_DATA_DIR`, `DROP_AIR_CODE`, `DROP_AIR_AUTO_CLEANUP_MINUTES`, `DROP_AIR_AUTO_CLEANUP_DAYS`, `DROP_AIR_AUTO_CLEANUP_MAX_FILES`, `DROP_AIR_MAX_UPLOAD_GB`, `DROP_AIR_TEXT_TTL_MINUTES`.
 
-## Optional auto-cleanup
+## Changes in 2.0.0 / 1.7.0
 
-By default, uploads expire after 10 minutes.
-
-You can enable cleanup with env vars:
-
-```powershell
-$env:DROP_AIR_AUTO_CLEANUP_MINUTES="10"
-$env:DROP_AIR_AUTO_CLEANUP_DAYS="7"
-$env:DROP_AIR_AUTO_CLEANUP_MAX_FILES="300"
-python desktop_app.py
-```
-
-- `DROP_AIR_AUTO_CLEANUP_MINUTES`: delete files older than N minutes (default `10`, `0` disables)
-- `DROP_AIR_AUTO_CLEANUP_DAYS`: delete files older than N days (`0` disables)
-- `DROP_AIR_AUTO_CLEANUP_MAX_FILES`: keep only newest N files (`0` disables)
-- `DROP_AIR_TEXT_TTL_MINUTES`: delete shared text older than N minutes (default `10`, `0` disables)
-
-## Optional updates
-
-Drop Air can check a public GitHub repository release feed from the host admin panel.
-By default it uses `B1progame/drop-air`. If you run from another git checkout, it can also auto-detect the GitHub `origin` remote. You only need `DROP_AIR_UPDATE_REPO` if you want a different repository:
-
-```powershell
-$env:DROP_AIR_UPDATE_REPO="your-github-name/your-repo"
-python desktop_app.py
-```
-
-Create GitHub releases with tags like `1.0.0`, `1.0.1`, etc. The admin panel compares the latest release tag with `VERSION`. Version 1.4 adds a native PySide desktop container and a balanced desktop workspace. Version 1.4.1 fixes Qt DLL lookup in packaged desktop builds. Version 1.4.2 fixes the desktop navigation callback that could leave the embedded page blank. Version 1.4.3 opens the desktop window at 1092×1255 without maximizing. Version 1.4.4 restores the Windows tray icon with Open and Quit actions. Version 1.5 adds a compact scannable QR code at the top of the desktop workspace, refreshes progress animation on the updater page, and updates the desktop app icon. Version 1.5.1 ensures the Windows shortcuts use the updated icon instead of the legacy paper-plane icon. Version 1.6.0 selects the new icon, shows a gray dashboard skeleton while the backend starts, sends file-name clicks straight to Downloads, saves desktop downloads in the Windows Downloads folder, hardens concurrent upload publication and port selection, and moves retention cleanup off startup. Version 1.6.1 adds a startup fallback to the previous working app and one-folder packaging to avoid PyInstaller's slow per-launch extraction. Version 1.6.2 adds a small native Windows launcher that paints the gray loading skeleton before starting the app. Version 1.6.3 removes the intermediate save step, routes desktop downloads straight to the Windows Downloads folder, fixes the early Reload callback crash, hardens clipboard copying with a browser fallback, and prevents download signal errors from terminating the app. Version 1.6.4 prevents duplicate launches from Windows Search, focuses the existing app window from the tray or launcher even when hidden, and keeps a fast native startup check before loading the full desktop app. Version 1.6.5 enables the Qt WebEngine clipboard permission needed by the Copy Link button, tries the synchronous clipboard path before asynchronous fallbacks, retries transfer-session renewal after network failures and when a sleeping tab resumes, preserves the current session key and its existing expiry/grace window across app restarts, and keeps a polished animated startup skeleton visible until the dashboard is ready. Version 1.6.15 removes automatic rollback storage and uses the installed browser's existing profile so Drop Air no longer creates a separate Chromium cache. Version 1.6.16 replaces browser-native confirmation popups with a shared, accessible Drop Air dialog for device pairing, file and text deletion, settings, quitting, and updates.
-For packaged builds, attach the setup installer release asset, for example `Drop-Air-Setup-1.1.0.exe`. The updater downloads that setup file, runs it silently, skips rebuilding Inno locally, and restarts Drop Air.
-
-Release flow:
-
-1. Update `VERSION` in the repo.
-2. Build the desktop app and installer bundle with `.\build_installer.ps1`.
-3. Push the commit and create a matching Git tag such as `1.3.1`.
-4. Create a GitHub Release from that tag and attach the versioned setup installer, portable ZIP, and `SHA256SUMS.txt` from `dist\release\<version>`.
-5. On the host machine, the admin panel will show a red `!` and a rainbow update button when a newer release exists.
-
-What the update button does:
-
-- Checks the latest GitHub Release tag against local `VERSION`
-- Warns before install
-- Clears live files and shared text so connections do not survive a version swap
-- Downloads the release in the terminal with in-place progress
-- Replaces the running app and restarts it
-- Downloads the setup installer from the GitHub release, runs it silently, and restarts Drop Air
-
-## Build Windows EXE
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-.\build_exe.ps1
-```
-
-Output:
-
-- `dist\DropAir.exe`
-
-## Build Windows Installer EXE (Inno Setup)
-
-1. Install Inno Setup 6 (compiler `ISCC.exe`).
-2. Build installer:
-
-```powershell
-.\build_installer.ps1
-```
-
-The installer offers **Normal installation** (Start menu and optional desktop shortcuts, with per-user app data) and **Portable installation** (settings, uploads, and logs stored in a `data` folder beside Drop Air). The portable ZIP uses the same data-folder layout.
-
-Output:
-
-- `dist\DropAir.exe`
-- `dist\DropAir-Setup-<version>.exe`
-- `dist\release\<version>\` with:
-- `DropAir-<version>.exe`
-- `DropAir-Setup-<version>.exe`
-- `DropAir-<version>-portable.zip`
-- `SHA256SUMS.txt`
-- `RELEASE-STEPS.txt`
-- `publish-github-release.ps1`
-
-You can customize metadata/version:
-
-```powershell
-.\build_installer.ps1 -AppVersion "1.3.1" -Publisher "Drop Air" -IconPath "assets\icon\drop_air_brand.ico"
-```
-
-Create a ready-to-publish GitHub draft release in the current repo:
-
-```powershell
-.\build_installer.ps1 -AppVersion "1.3.1" -IconPath "assets\icon\drop_air_brand.ico" -CreateDraftRelease
-```
-
-### Icon styles
-
-Create icon before build:
-
-```powershell
-.\.venv\Scripts\python.exe tools\make_icon.py --style neon --output assets\icon\drop_air.ico
-```
-
-Available styles:
-
-- `neon`
-- `minimal`
-- `retro`
-## Notes
-
-- Files are stored in `uploads/`.
-- This is LAN-only by default.
-- If Windows Firewall asks, allow for Private networks.
-
-## Drop Air 1.6.6
-
-Set a device name and opt into **Let others see me on local Wi-Fi** in Settings to discover nearby Drop Air hosts. Wi-Fi discovery shares the name, random device ID, and web port; Bluetooth LE adds a short device ID hint for nearby devices. No session key or access code is announced. Connecting prompts the initiating user, and the receiving host must approve before a transfer link is returned. File transfers use Wi-Fi.
-
-## Drop Air 1.6.7
-
-Adds a **Find devices** action to the transfer page for desktop and iPhone browsers. The phone can browse the host’s Wi-Fi discovery results and request a connection; each connection still requires the receiving host’s approval. Browser device names are saved locally. Nearby services remain visible in the cache through quiet mDNS intervals, and the admin settings include retry and Windows Firewall actions. Settings now save atomically and report disk errors instead of claiming success, refreshing admin status preserves unsaved edits, and local developer settings are no longer copied into the installer.
-
-## Drop Air 1.6.8
-
-Redesigns both startup skeletons to match the supplied circular-avatar and varied-line reference, with static placeholders that avoid repeated repaint work. Desktop paste now reads text and images from the native clipboard when browser clipboard access is unavailable. Uploads publish staged files atomically without a second full-file copy on filesystems that support hard links, and the transfer progress bar shows percentage, rolling speed, and remaining time. The updater now requests the required Windows elevation, targets the existing install folder, logs installer output, and verifies the installed version before restarting.
-
-## Drop Air 1.6.10
-
-Adds Normal and Portable installation types to the Inno Setup wizard. Portable mode, including the standalone portable ZIP, stores settings, uploads, and logs in a `data` folder beside the launcher. Normal mode retains per-user app data and the Start menu and optional desktop shortcuts.
-
-## Drop Air 1.6.14
-
-Fixes QR links and Wi-Fi discovery advertising a VPN tunnel address when the VPN is the default internet route. Drop Air now checks local IPv4 adapters, keeps an ordinary physical default route when available, and otherwise prefers Wi-Fi or a physical LAN interface. The advertised URL continues to use the selected, actually bound port.
-
-## Drop Air 1.6.13
-
-Automatically exits Drop Air after it has remained hidden in the system tray for ten minutes. Restoring the window before the timeout renews the session and QR immediately; launching again after the timeout starts the server with a fresh QR session.
-
-## Drop Air 1.6.12
-
-Fixes the dashboard becoming stale or frozen after restoring it from the system tray. Tray restore explicitly moves Qt WebEngine back to its Active lifecycle state, refreshes its session and transfer data, waits for an in-progress reload instead of starting overlapping reloads, and recovers the page if its renderer does not answer. The signed session recovery cookie preserves authorized access through a reload.
-
-## Drop Air 1.6.11
-
-Fixes stale or frozen dashboard links after restoring Drop Air from the system tray. The tray restore now explicitly resumes dashboard refreshes, and a signed, HTTP-only recovery cookie lets an already-authorized page renew its session key after background timers have been suspended long enough for the old key to expire.
+- New interface with a start-up animation, nearby-device view, redesigned settings and phone layout
+- Files stream straight to disk
+- Much smaller install: the bundled Qt browser engine is gone
+- Random per-PC port instead of 8000
+- Fixed: other websites open on the host PC could call Drop Air's host controls
+- Removed: Bluetooth hint (Rust edition), the "classic" theme, and the portable choice inside the installer (use the portable ZIP)

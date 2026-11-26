@@ -1,0 +1,38 @@
+[package]
+name = "dropair"
+version = "2.0.0"
+edition = "2021"
+
+[[bin]]
+name = "DropAir"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8"
+dirs = "7.0.0"
+futures-util = "0.3"
+getrandom = "0.2"
+if-addrs = "0.15.0"
+mdns-sd = "0.11"
+percent-encoding = "2.3.2"
+png = "0.18.1"
+qrcode = "0.14"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tao = "0.38.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "net", "time", "io-util", "sync"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tray-icon = "0.27.0"
+ureq = { version = "2", features = ["json"] }
+windows-sys = { version = "0.61.2", features = ["Win32_UI_Shell", "Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+wry = "0.58.2"
+
+[build-dependencies]
+winresource = "0.1.34"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
