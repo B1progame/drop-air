@@ -45,7 +45,7 @@ def read_version() -> str:
             return candidate.read_text(encoding="utf-8").strip().lstrip("v")
         except OSError:
             continue
-    return "1.7.0"
+    return "1.7.1"
 
 
 APP_VERSION = read_version()
@@ -848,6 +848,18 @@ def port_candidates() -> list[int]:
     return saved + [20_000 + secrets.randbelow(29_000) for _ in range(50)]
 
 
+def remove_leftovers() -> None:
+    """Delete what older releases left behind, but never the folder we are running from.
+
+    Some old installs ran from their rollback copy, so their updater installed into it.
+    """
+    program = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve()
+    for name in ("rollback", "browser-profile"):
+        folder = (DATA_DIR / name).resolve()
+        if folder not in program.parents:
+            shutil.rmtree(folder, ignore_errors=True)
+
+
 def start_server():
     """Bind the first free port and serve in a background thread."""
     global PORT
@@ -863,8 +875,7 @@ def start_server():
     threading.Thread(target=server.serve_forever, name="DropAirWeb", daemon=True).start()
 
     def maintain():
-        for name in ("rollback", "browser-profile"):  # leftovers of older releases
-            shutil.rmtree(DATA_DIR / name, ignore_errors=True)
+        remove_leftovers()
         while True:
             try:
                 cleanup()

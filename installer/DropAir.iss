@@ -50,3 +50,13 @@ Name: "{autodesktop}\DropAir"; Filename: "{app}\DropAir.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\DropAir.exe"; Description: "Launch DropAir"; Flags: nowait postinstall skipifsilent runasoriginaluser
+
+[Code]
+// Some old installs ended up inside the data folder (…\DropAir\rollback).
+// A normal, visible install moves back to Program Files. Silent updates keep
+// the folder they were given, because the old updater checks the files there.
+procedure InitializeWizard;
+begin
+  if (not WizardSilent) and (Pos('\dropair\rollback', Lowercase(WizardForm.DirEdit.Text)) > 0) then
+    WizardForm.DirEdit.Text := ExpandConstant('{autopf}\DropAir');
+end;

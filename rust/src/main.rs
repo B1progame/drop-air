@@ -136,10 +136,16 @@ fn shutdown(store: &Store) {
 }
 
 /// Old Python releases kept a ~430 MB rollback copy and a browser profile.
+/// Never delete the folder we run from: some old installs lived in `rollback`.
 fn remove_leftovers(data_dir: std::path::PathBuf) {
     std::thread::spawn(move || {
+        // Unknown program location means nothing can safely be ruled out.
+        let Ok(program) = std::env::current_exe().and_then(std::fs::canonicalize) else { return };
         for name in ["rollback", "browser-profile"] {
-            let _ = std::fs::remove_dir_all(data_dir.join(name));
+            let Ok(folder) = std::fs::canonicalize(data_dir.join(name)) else { continue };
+            if !program.starts_with(&folder) {
+                let _ = std::fs::remove_dir_all(folder);
+            }
         }
     });
 }

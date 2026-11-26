@@ -2,7 +2,7 @@
 
 Fast local file and text sharing between a Windows PC and any phone, tablet or computer on the same Wi-Fi. No cloud, no account.
 
-> **The Python edition is no longer updated.** 1.7.0 is its final release.
+> **The Python edition is no longer updated.** 1.7.1 is its final release.
 > New features and fixes only go into the **Rust edition (2.x)**.
 > To switch: open Drop Air → **Switch to Rust**, or run the latest `DropAir-Setup-2.x.exe` from [Releases](https://github.com/B1progame/drop-air/releases). Your settings stay.
 
@@ -11,7 +11,7 @@ Fast local file and text sharing between a Windows PC and any phone, tablet or c
 | Edition | Installer | Installed size | Updates |
 |---|---|---|---|
 | **Rust 2.x** (recommended) | `DropAir-Setup-2.x.exe` | about 9 MB | yes |
-| Python 1.7.0 (final) | `DropAir-Setup-1.7.0.exe` | about 36 MB | none |
+| Python 1.7.1 (final) | `DropAir-Setup-1.7.1.exe` | about 36 MB | none |
 
 Both need Windows 10 or 11 (64-bit) with Microsoft Edge WebView2, which Windows 11 includes. Older releases were about 450 MB.
 
