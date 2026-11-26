@@ -75,7 +75,7 @@ fn require_admin(address: SocketAddr, headers: &HeaderMap) -> Result<(), ApiErro
 }
 
 fn has_cookie(store: &Store, headers: &HeaderMap) -> bool {
-    let wanted = format!("{COOKIE}={}", store.recovery_secret);
+    let wanted = format!("{COOKIE}={}", lock(&store.recovery_secret));
     header_str(headers, "cookie").split(';').any(|part| part.trim() == wanted)
 }
 
@@ -83,6 +83,9 @@ fn has_cookie(store: &Store, headers: &HeaderMap) -> bool {
 fn authorize(store: &Store, address: SocketAddr, headers: &HeaderMap, query: &HashMap<String, String>) -> Result<(), ApiError> {
     if is_admin(address, headers) {
         return Ok(());
+    }
+    if lock(&store.blocked).contains_key(&address.ip()) {
+        return Err(fail(403, "removed by host"));
     }
     let key = query.get("k").map(String::as_str).unwrap_or_else(|| header_str(headers, "x-drop-air-key"));
     if !(store.is_valid_key(key) || has_cookie(store, headers)) {
@@ -117,6 +120,8 @@ pub fn router(app: App) -> Router {
         .route("/api/discovery/{device}/pair/{id}", get(relay_status))
         .route("/api/admin/pair/{id}", post(pair_decide))
         .route("/api/admin/save/{name}", post(save_to_downloads))
+        .route("/api/admin/kick/{id}", post(kick))
+        .route("/api/admin/unblock", post(unblock))
         .route("/api/admin/reveal", post(reveal))
         .route("/api/admin/cleanup", post(cleanup))
         .route("/api/admin/rediscover", post(rediscover))
@@ -147,6 +152,10 @@ async fn common_headers(request: Request, next: Next) -> Response {
 }
 
 async fn index(State(app): State<App>, ConnectInfo(address): Peer, headers: HeaderMap, Query(query): Params) -> Response {
+    // A removed device gets the page without a cookie, so it can say what happened.
+    if lock(&app.store.blocked).contains_key(&address.ip()) && !is_admin(address, &headers) {
+        return ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], INDEX).into_response();
+    }
     // A missing code is handled by the page itself, which then asks for it.
     let allowed = match authorize(&app.store, address, &headers, &query) {
         Ok(()) => true,
@@ -158,7 +167,7 @@ async fn index(State(app): State<App>, ConnectInfo(address): Peer, headers: Head
             <div><h1>Link not found</h1><p>Scan the current QR code from the host PC.</p></div>";
         return (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/html; charset=utf-8")], page).into_response();
     }
-    let cookie = format!("{COOKIE}={}; Max-Age=2592000; Path=/; HttpOnly; SameSite=Lax", app.store.recovery_secret);
+    let cookie = format!("{COOKIE}={}; Max-Age=2592000; Path=/; HttpOnly; SameSite=Lax", lock(&app.store.recovery_secret));
     ([(header::CONTENT_TYPE, "text/html; charset=utf-8".to_string()), (header::SET_COOKIE, cookie)], INDEX).into_response()
 }
 
@@ -187,9 +196,12 @@ async fn api_state(State(app): State<App>, ConnectInfo(address): Peer, headers: 
     // The host window is not counted as a connected device.
     if !admin && !client_id.is_empty() {
         let name = clean_device_name(query.get("name").map(String::as_str).unwrap_or("Browser"));
+        let text = |key: &str| query.get(key).map(|v| v.chars().filter(|c| !c.is_control()).take(48).collect::<String>()).unwrap_or_default();
         let mut clients = lock(&store.clients);
         if clients.len() < 64 || clients.contains_key(&client_id) {
-            clients.insert(client_id.clone(), Client { name, seen: now() });
+            let since = clients.get(&client_id).map_or_else(now, |c| c.since);
+            let client = Client { name, seen: now(), since, ip: address.ip(), os: text("os"), browser: text("browser"), screen: text("screen") };
+            clients.insert(client_id.clone(), client);
         }
     }
     store.cleanup();
@@ -216,13 +228,14 @@ async fn api_state(State(app): State<App>, ConnectInfo(address): Peer, headers: 
         "text_ttl_minutes": text_ttl_minutes(),
         "files": files,
         "texts": *lock(&store.texts),
-        "clients": store.clients_json(),
+        "clients": store.clients_json(admin),
         "peers": peers,
         "discovery_status": *lock(&store.discovery_status),
     });
     if admin {
         body["settings"] = json!(settings);
         body["requests"] = json!(store.pending_pairs());
+        body["blocked"] = json!(lock(&store.blocked).iter().map(|(ip, name)| json!({ "ip": ip.to_string(), "name": name })).collect::<Vec<_>>());
     }
     Ok(Json(body))
 }
@@ -406,6 +419,9 @@ async fn save_settings(State(app): State<App>, ConnectInfo(address): Peer, heade
 }
 
 async fn pair_create(State(app): State<App>, ConnectInfo(address): Peer, body: Bytes) -> Result<Response, ApiError> {
+    if lock(&app.store.blocked).contains_key(&address.ip()) {
+        return Err(fail(403, "removed by host"));
+    }
     if !app.store.settings().discoverable {
         return Err(fail(404, "this Drop Air device is not discoverable"));
     }
@@ -445,6 +461,18 @@ async fn pair_decide(State(app): State<App>, ConnectInfo(address): Peer, headers
         .find(|p| p.id == id && p.decision == "pending" && p.expires_at > now())
         .ok_or_else(|| fail(404, "This request expired or was already handled."))?;
     request.decision = decision;
+    Ok(ok())
+}
+
+async fn kick(State(app): State<App>, ConnectInfo(address): Peer, headers: HeaderMap, UrlPath(id): UrlPath<String>) -> Result<Json<Value>, ApiError> {
+    require_admin(address, &headers)?;
+    if app.store.kick(&id) { Ok(ok()) } else { Err(fail(404, "That device is no longer connected.")) }
+}
+
+async fn unblock(State(app): State<App>, ConnectInfo(address): Peer, headers: HeaderMap, body: Bytes) -> Result<Json<Value>, ApiError> {
+    require_admin(address, &headers)?;
+    let ip = parse_json(&body)?["ip"].as_str().and_then(|v| v.parse::<std::net::IpAddr>().ok()).ok_or_else(|| fail(400, "invalid address"))?;
+    lock(&app.store.blocked).remove(&ip);
     Ok(ok())
 }
 

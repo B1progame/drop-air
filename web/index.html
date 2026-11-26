@@ -107,15 +107,16 @@
   </div>
 </main>
 
-<dialog id="qrDialog" aria-labelledby="qrTitle">
+<dialog id="qrDialog" aria-labelledby="qrTitle" tabindex="-1">
   <div class="dialog-head"><h2 id="qrTitle">Connect a device</h2><button class="icon" data-close aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
   <div class="qr-frame"><img id="qrImage" alt="QR code to open Drop Air on another device" width="224" height="224"></div>
   <p class="muted">Scan with your phone on the same Wi-Fi.</p>
+  <p class="muted" id="qrTimer"></p>
   <code id="shareUrl"></code>
   <button class="btn primary wide" id="copyLink">Copy link</button>
 </dialog>
 
-<dialog id="settingsDialog" class="drawer" aria-labelledby="settingsTitle">
+<dialog id="settingsDialog" class="drawer" aria-labelledby="settingsTitle" tabindex="-1">
   <div class="dialog-head"><h2 id="settingsTitle">Settings</h2><button class="icon" data-close aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
   <form id="settingsForm">
     <section class="card">
@@ -144,6 +145,7 @@
       <div class="card-head"><svg><use href="#i-wifi"/></svg><h3>Network</h3></div>
       <p class="muted" id="discoveryStatus"></p>
       <div class="row"><button class="btn" id="rediscover">Search again</button><button class="btn" id="firewall">Firewall</button></div>
+      <div id="blockedList"></div>
     </section>
     <section class="card">
       <div class="card-head"><svg><use href="#i-trash"/></svg><h3>Cleanup</h3></div>
@@ -158,6 +160,18 @@
     </section>
   <div class="row"><button class="btn danger wide" id="quitBtn">Quit Drop Air</button></div>
   <div class="save-bar" id="saveBar" hidden><button class="btn primary wide" form="settingsForm">Save changes</button></div>
+</dialog>
+
+<dialog id="deviceDialog" aria-labelledby="deviceName" tabindex="-1">
+  <div class="dialog-head"><h2 id="deviceName"></h2><button class="icon" data-close aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
+  <dl class="facts" id="deviceFacts"></dl>
+  <div class="row"><button class="btn danger" id="kickBtn">Remove device</button><button class="btn primary" id="deviceSend">Send files</button></div>
+</dialog>
+
+<dialog id="pasteDialog" aria-labelledby="pasteTitle" tabindex="-1">
+  <div class="dialog-head"><h2 id="pasteTitle">Paste here</h2><button class="icon" data-close aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
+  <p class="muted">Press and hold inside the box, then choose Paste. Pictures and text are sent right away.</p>
+  <div class="paste-box" id="pasteBox" contenteditable="true" role="textbox" aria-label="Paste target"></div>
 </dialog>
 
 <dialog id="confirmDialog" aria-labelledby="confirmTitle">

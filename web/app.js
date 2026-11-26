@@ -11,9 +11,25 @@ function stored(key, make) {
 }
 const hex = n => [...crypto.getRandomValues(new Uint8Array(n))].map(b => b.toString(16).padStart(2, "0")).join("");
 const clientId = stored("dropAirClientId", () => hex(12));
-const clientName = /iPhone/.test(navigator.userAgent) ? "iPhone" : /iPad|Macintosh.*Mobile/.test(navigator.userAgent) ? "iPad"
-  : /Android/.test(navigator.userAgent) ? "Android" : /Windows/.test(navigator.userAgent) ? "Windows PC" : /Mac/.test(navigator.userAgent) ? "Mac" : "Browser";
-
+function describeDevice() {
+  const ua = navigator.userAgent;
+  const iPad = /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  const name = /iPhone/.test(ua) ? "iPhone" : iPad ? "iPad"
+    : /Android/.test(ua) ? (/Mobile/.test(ua) ? "Android phone" : "Android tablet")
+    : /Windows/.test(ua) ? "Windows PC" : /Macintosh/.test(ua) ? "Mac" : /CrOS/.test(ua) ? "Chromebook" : /Linux/.test(ua) ? "Linux PC" : "Browser";
+  const pick = pattern => (ua.match(pattern) || [])[1] || "";
+  const ios = pick(/(?:iPhone OS|CPU OS) (\d+[_.]\d+)/).replace("_", ".") || (iPad ? pick(/Version\/(\d+\.\d+)/) : "");
+  // Chrome on Android reports the placeholder model "K"; other browsers may give the real one.
+  const model = pick(/Android [\d.]+; (?!K\)|wv\))([^;)]+?)(?: Build|\)|;)/);
+  const android = /; K\)/.test(ua) ? "" : pick(/Android (\d+)/);
+  const os = name === "iPhone" || name === "iPad" ? `iOS ${ios}`.trim()
+    : name.startsWith("Android") ? [`Android ${android}`.trim(), model].filter(Boolean).join(" · ")
+    : name === "Windows PC" ? "Windows" : name === "Mac" ? "macOS" : "";
+  const browser = /SamsungBrowser/.test(ua) ? "Samsung Internet" : /Edg(e|A|iOS)?\//.test(ua) ? "Edge" : /OPR\//.test(ua) ? "Opera"
+    : /Firefox|FxiOS/.test(ua) ? "Firefox" : /Chrome|CriOS/.test(ua) ? "Chrome" : /Safari/.test(ua) ? "Safari" : "Unknown";
+  return { name, os, browser, screen: `${screen.width} × ${screen.height}` };
+}
+const myDevice = describeDevice();
 let key = query.get("k") || "";
 let code = query.get("code") || "";
 let state = null;
@@ -135,7 +151,7 @@ const SPOTS = [[25, 40], [75, 40], [11, 56], [89, 56], [36, 30], [64, 30]];
 
 function renderRadar() {
   const devices = [
-    ...state.clients.filter(c => c.id !== clientId).map(c => ({ kind: "client", id: c.id, name: c.name, sub: "Connected", icon: /PC|Mac|Browser/.test(c.name) ? "pc" : "phone" })),
+    ...state.clients.filter(c => c.id !== clientId).map(c => ({ kind: "client", id: c.id, name: c.name, sub: (c.os || "Connected").split(" · ")[0], icon: /PC|Mac|Browser|Chromebook/.test(c.name) ? "pc" : "phone" })),
     ...state.peers.map(p => ({ kind: "peer", id: p.device_id, name: p.device_name, sub: peerLinks.has(p.device_id) ? "Paired" : "Nearby PC", icon: "pc" })),
   ].slice(0, SPOTS.length);
   if (!state.admin) devices.unshift({ kind: "host", id: "host", name: state.device_name, sub: "Host PC", icon: "pc" });
@@ -156,7 +172,10 @@ function renderRadar() {
     node.style.top = `${SPOTS[index][1]}%`;
     if (enter(seen.nodes, device.id)) node.classList.add("new");
     if (device.kind === "host") { node.onclick = () => $("picker").click(); }
-    else {
+    else if (device.kind === "client" && state.admin) {
+      if (target?.id === device.id) node.classList.add("selected");
+      node.onclick = () => showDevice(device.id);
+    } else {
       if (target?.id === device.id) node.classList.add("selected");
       node.onclick = () => {
         if (target?.id === device.id) return setTarget(null);
@@ -175,6 +194,39 @@ function renderRadar() {
     };
     return node;
   }));
+}
+
+function showDevice(id) {
+  const client = state.clients.find(c => c.id === id);
+  if (!client) return;
+  const minutes = Math.floor(client.connected_seconds / 60);
+  $("deviceName").textContent = client.name;
+  $("deviceFacts").replaceChildren(...[["System", client.os || "Unknown"], ["Browser", client.browser || "Unknown"], ["Screen", client.screen || "Unknown"],
+    ["Address", client.ip], ["Connected", minutes ? `${minutes} min` : "just now"]]
+    .flatMap(([label, value]) => [el("dt", { textContent: label }), el("dd", { textContent: value })]));
+  $("deviceSend").onclick = () => {
+    $("deviceDialog").close();
+    const device = { kind: "client", id, name: client.name };
+    setTarget(device);
+    pickTarget = device;
+    $("picker").click();
+  };
+  $("kickBtn").onclick = async () => {
+    $("deviceDialog").close();
+    if (!await confirmBox(`Remove ${client.name}?`, "It is blocked until you quit Drop Air or allow it again in Settings. The QR code changes.", "Remove")) return;
+    api(`/api/admin/kick/${id}`, { method: "POST" }).then(() => { toast(`${client.name} removed`); setTarget(null); refresh(); }).catch(report);
+  };
+  $("deviceDialog").showModal();
+  $("deviceDialog").focus();
+}
+
+function renderBlocked() {
+  const blocked = state.blocked || [];
+  if (!changed("blocked", blocked)) return;
+  $("blockedList").replaceChildren(...blocked.map(device => el("div", { className: "blocked" },
+    el("span", { textContent: `Removed: ${device.name} (${device.ip})` }),
+    el("button", { className: "btn small", type: "button", textContent: "Allow again",
+      onclick: () => api("/api/admin/unblock", { method: "POST", body: { ip: device.ip } }).then(refresh).catch(report) }))));
 }
 
 function setTarget(device) {
@@ -244,12 +296,15 @@ function render() {
   $("finalNotice").hidden = state.edition !== "python";
   $("switchRust").hidden = !state.admin;
   $("shareUrl").textContent = state.public_url;
+  const left = state.seconds_remaining;
+  $("qrTimer").textContent = `New code in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
   const qr = `/qr.svg?url=${encodeURIComponent(state.public_url)}`;
   if ($("qrImage").getAttribute("src") !== qr) $("qrImage").src = qr;
   renderRadar();
   renderFiles();
   renderTexts();
   renderRequests();
+  renderBlocked();
   const count = state.files.length + state.texts.length;
   $("emptyReceive").hidden = count > 0;
   $("tabCount").hidden = !count;
@@ -278,7 +333,7 @@ async function refresh() {
   if (busy) return;
   busy = true;
   try {
-    state = await api(`/api/state?client_id=${clientId}&name=${encodeURIComponent(clientName)}`);
+    state = await api(`/api/state?${new URLSearchParams({ client_id: clientId, ...myDevice })}`);
     if (state.session_key) key = state.session_key;
     $("gate").hidden = true;
     render();
@@ -287,6 +342,11 @@ async function refresh() {
     if (error.status) hideSplash();
     if (error.message === "code not found") showGate(true);
     else if (error.message === "invalid session link") showGate(false);
+    else if (error.message === "removed by host") {
+      showGate(false);
+      $("gateTitle").textContent = "You were removed";
+      $("gateText").textContent = "The host disconnected this device.";
+    }
     else { $("status").textContent = "Reconnecting…"; $("status").className = ""; }
   } finally {
     busy = false;
@@ -467,26 +527,57 @@ $("textForm").onsubmit = event => {
 $("textInput").onkeydown = event => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) $("textForm").requestSubmit(); };
 
 const stamp = () => new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
-document.addEventListener("paste", event => {
-  if (event.target.closest("input,textarea")) return;
-  const files = [...event.clipboardData.files].map(f => f.name === "image.png" ? new File([f], `pasted-${stamp()}.png`, { type: f.type }) : f);
-  const text = event.clipboardData.getData("text/plain");
+const named = file => file.name === "image.png" || !file.name ? new File([file], `pasted-${stamp()}.${(file.type.split("/")[1] || "bin")}`, { type: file.type }) : file;
+// Sends whatever a paste event carries. Returns false when it carried nothing usable.
+function sendPasted(data) {
+  const files = [...data.files].map(named);
+  const text = data.getData("text/plain");
   if (files.length) send(files);
   else if (text.trim()) sendText(text).catch(report);
+  else return false;
+  return true;
+}
+document.addEventListener("paste", event => {
+  const box = event.target.closest?.("#pasteBox");
+  const typing = !box && event.target.closest?.("input,textarea");
+  // Text typed into a field pastes normally; a picture pasted there is sent.
+  if (typing && !(event.target.id === "textInput" && event.clipboardData.files.length)) return;
+  if (sendPasted(event.clipboardData)) {
+    event.preventDefault();
+    closeDialog($("pasteDialog"));
+  }
 });
+// Some phone browsers insert the picture instead of handing it to the paste event.
+$("pasteBox").addEventListener("input", async () => {
+  const image = $("pasteBox").querySelector("img");
+  if (!image) return;
+  try {
+    const blob = await (await fetch(image.src)).blob();
+    send([named(new File([blob], "image.png", { type: blob.type }))]);
+    closeDialog($("pasteDialog"));
+  } catch (_) { toast("This picture could not be read. Use Choose files."); }
+  $("pasteBox").replaceChildren();
+});
+function openPasteBox() {
+  $("pasteBox").replaceChildren();
+  $("pasteDialog").showModal();
+  $("pasteBox").focus();
+}
 $("pasteBtn").onclick = async () => {
+  // Reading the clipboard from a button only works on the host (http://127.0.0.1).
+  // Phones reach Drop Air over plain http, where browsers do not allow it.
+  if (!window.isSecureContext || !navigator.clipboard) return openPasteBox();
   try {
     const items = navigator.clipboard.read ? await navigator.clipboard.read() : [];
     for (const item of items) {
       const type = item.types.find(t => t.startsWith("image/"));
-      if (type) return send([new File([await item.getType(type)], `pasted-${stamp()}.${type.split("/")[1]}`, { type })]);
+      if (type) return send([named(new File([await item.getType(type)], "image.png", { type }))]);
     }
     const text = await navigator.clipboard.readText();
     if (text.trim()) return await sendText(text);
     toast("Clipboard is empty");
   } catch (_) {
-    toast("Press Ctrl+V, or long-press the text box and paste");
-    $("textInput").focus();
+    openPasteBox();
   }
 };
 
@@ -518,7 +609,7 @@ $("allBtn").onclick = async () => {
     await new Promise(resolve => setTimeout(resolve, 350));
   }
 };
-$("qrBtn").onclick = () => $("qrDialog").showModal();
+$("qrBtn").onclick = () => { $("qrDialog").showModal(); $("qrDialog").focus(); };
 $("copyLink").onclick = () => copy(state.public_url);
 $("gateForm").onsubmit = event => { event.preventDefault(); code = $("gateCode").value.trim(); refresh(); };
 
@@ -551,6 +642,7 @@ $("settingsBtn").onclick = () => {
   setTheme(currentTheme());
   $("saveBar").hidden = true;
   $("settingsDialog").showModal();
+  $("settingsDialog").focus();
 };
 form.onsubmit = async event => {
   event.preventDefault();
@@ -618,6 +710,7 @@ $("installUpdate").onclick = install;
 $("switchRust").onclick = async () => {
   if (!await confirmBox("Switch to the Rust version?", "Drop Air downloads the Rust installer, closes, and starts it. Your settings stay.", "Download and switch")) return;
   $("settingsDialog").showModal();
+  $("settingsDialog").focus();
   $("installUpdate").hidden = true;
   install();
 };

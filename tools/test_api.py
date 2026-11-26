@@ -140,6 +140,31 @@ try:
         status = 413  # server closed the socket while we were still sending
     check("upload limit enforced", status == 413, status)
 
+    # Device details and removing a device.
+    key = json.loads(call("GET", "/api/state")[2])["session_key"]
+    code = quote("pä ss")
+    info = "client_id=kickme&name=iPhone&os=iOS+18.1&browser=Safari&screen=390+x+844"
+    call("GET", f"/api/state?k={key}&code={code}&{info}", host=LAN)
+    device = next(c for c in json.loads(call("GET", "/api/state")[2])["clients"] if c["id"] == "kickme")
+    check("host sees device details", device["os"] == "iOS 18.1" and device["browser"] == "Safari" and device["ip"] == LAN, device)
+    others = json.loads(call("GET", f"/api/state?k={key}&code={code}&client_id=other&name=x", host=LAN)[2])["clients"]
+    check("other devices see no addresses", all("ip" not in c and "screen" not in c for c in others), others)
+    check("phones cannot remove devices", call("POST", f"/api/admin/kick/kickme?k={key}&code={code}", host=LAN)[0] == 403)
+    page = call("GET", f"/?k={key}&code={code}", host=LAN)
+    cookie = page[1].get("set-cookie", "").split(";")[0]
+    check("host removes the device", call("POST", "/api/admin/kick/kickme")[0] == 200)
+    status, _, body = call("GET", f"/api/state?k={key}&code={code}&{info}", host=LAN)
+    check("removed device is refused", status == 403 and json.loads(body)["error"] == "removed by host", body)
+    check("removed device cannot download", call("GET", f"/files/{quote(name)}?k={key}&code={code}", host=LAN)[0] == 403)
+    page = call("GET", f"/?k={key}", headers={"Cookie": cookie}, host=LAN)
+    check("removed device gets no new cookie", "set-cookie" not in page[1], page[1])
+    after = json.loads(call("GET", "/api/state")[2])
+    check("host still works and key changed", after["admin"] and after["session_key"] != key)
+    check("host lists the removed device", [b["ip"] for b in after["blocked"]] == [LAN], after["blocked"])
+    check("host allows it again", call("POST", "/api/admin/unblock", {"ip": LAN})[0] == 200)
+    check("allowed device needs the new link", call("GET", f"/api/state?k={after['session_key']}&code={code}", host=LAN)[0] == 200)
+    check("old cookie no longer works", call("GET", f"/api/state?code={code}", headers={"Cookie": cookie}, host=LAN)[0] == 404)
+
     status, _, body = call("GET", "/api/admin/update/status")
     check("update status", status == 200 and json.loads(body)["running"] is False, body)
     status, _, _ = call("DELETE", f"/api/files/{quote(name)}")
@@ -156,6 +181,27 @@ try:
 finally:
     if server.poll() is None:
         server.kill()
+
+# The QR code's key must rotate, and the old one must stop working after the grace time.
+quick = {**env, "DROP_AIR_DATA_DIR": str(work / "rotate"), "DROP_AIR_SESSION_TTL_SECONDS": "3", "DROP_AIR_SESSION_GRACE_SECONDS": "2"}
+run = subprocess.Popen(command, env=quick, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+try:
+    for _ in range(100):
+        try:
+            first = json.loads(call("GET", "/api/state")[2])
+            break
+        except OSError:
+            time.sleep(0.1)
+    time.sleep(3.5)
+    second = json.loads(call("GET", "/api/state")[2])
+    check("link key rotates", first["session_key"] != second["session_key"])
+    check("QR link carries the new key", second["session_key"] in second["public_url"], second["public_url"])
+    check("old key works during the grace time", call("GET", f"/api/state?k={first['session_key']}", host=LAN)[0] == 200)
+    time.sleep(3)
+    check("old key is refused afterwards", call("GET", f"/api/state?k={first['session_key']}", host=LAN)[0] == 404)
+finally:
+    run.kill()
+    run.wait()
 
 # Without PORT, each data folder gets its own random port and keeps it.
 chosen = []

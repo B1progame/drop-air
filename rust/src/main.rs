@@ -229,7 +229,7 @@ fn main() {
             }
             Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
                 // Stay alive while phones are still connected.
-                if view.is_none() && store.clients_json().is_empty() {
+                if view.is_none() && store.clients_json(false).is_empty() {
                     quit = true;
                 } else {
                     hidden_since = Some(Instant::now());

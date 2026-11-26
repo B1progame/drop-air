@@ -10,8 +10,6 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const STAGING_PREFIX: &str = ".dropair-";
-const SESSION_TTL: u64 = 300;
-const SESSION_GRACE: u64 = 120;
 const CLIENT_TTL: u64 = 30;
 const PAIR_TTL: u64 = 120;
 const MAX_TEXT_ITEMS: usize = 40;
@@ -34,6 +32,15 @@ pub fn random_hex(bytes: usize) -> String {
 
 fn env_number(name: &str, fallback: u64) -> u64 {
     std::env::var(name).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(fallback)
+}
+
+/// The link key changes every 5 minutes; the old one keeps working 2 more.
+fn session_ttl() -> u64 {
+    env_number("DROP_AIR_SESSION_TTL_SECONDS", 300)
+}
+
+fn session_grace() -> u64 {
+    env_number("DROP_AIR_SESSION_GRACE_SECONDS", 120)
 }
 
 pub fn clean_device_name(value: &str) -> String {
@@ -149,6 +156,12 @@ struct SessionState {
 pub struct Client {
     pub name: String,
     pub seen: u64,
+    pub since: u64,
+    pub ip: IpAddr,
+    /// self-reported by the page: operating system, browser, screen size
+    pub os: String,
+    pub browser: String,
+    pub screen: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -185,7 +198,9 @@ pub struct Store {
     pub data_dir: PathBuf,
     pub upload_dir: PathBuf,
     pub device_id: String,
-    pub recovery_secret: String,
+    pub recovery_secret: Mutex<String>,
+    /// devices the host removed, until Drop Air quits: address -> name
+    pub blocked: Mutex<HashMap<IpAddr, String>>,
     pub settings: Mutex<Settings>,
     pub texts: Mutex<Vec<TextItem>>,
     session: Mutex<SessionState>,
@@ -251,12 +266,13 @@ impl Store {
             .ok()
             .and_then(|b| serde_json::from_slice::<SessionState>(&b).ok())
             .filter(|s| s.key.len() == 32)
-            .unwrap_or_else(|| SessionState { key: random_hex(16), expires_at: now() + SESSION_TTL, previous: HashMap::new() });
+            .unwrap_or_else(|| SessionState { key: random_hex(16), expires_at: now() + session_ttl(), previous: HashMap::new() });
         let store = Store {
             data_dir,
             upload_dir,
             device_id,
-            recovery_secret,
+            recovery_secret: Mutex::new(recovery_secret),
+            blocked: Default::default(),
             settings: Mutex::new(settings),
             texts: Mutex::new(texts),
             session: Mutex::new(session),
@@ -303,11 +319,28 @@ impl Store {
         session.previous.retain(|_, expires| *expires > time);
         if time >= session.expires_at {
             let old = std::mem::replace(&mut session.key, random_hex(16));
-            session.previous.insert(old, time + SESSION_GRACE);
-            session.expires_at = time + SESSION_TTL;
+            session.previous.insert(old, time + session_grace());
+            session.expires_at = time + session_ttl();
             self.persist_session(&session);
         }
         (session.key.clone(), session.expires_at.saturating_sub(time))
+    }
+
+    /// Remove a device: block its address and replace the secrets it has seen.
+    /// Other devices pick up the new key on their next refresh.
+    pub fn kick(&self, client_id: &str) -> bool {
+        let Some(client) = lock(&self.clients).remove(client_id) else { return false };
+        lock(&self.blocked).insert(client.ip, client.name);
+        lock(&self.clients).retain(|_, c| c.ip != client.ip);
+        let secret = random_hex(32);
+        let _ = std::fs::write(self.data_dir.join("session-recovery.secret"), &secret);
+        *lock(&self.recovery_secret) = secret;
+        let mut session = lock(&self.session);
+        let old = std::mem::replace(&mut session.key, random_hex(16));
+        session.previous.insert(old, now() + session_grace());
+        session.expires_at = now() + session_ttl();
+        self.persist_session(&session);
+        true
     }
 
     pub fn is_valid_key(&self, supplied: &str) -> bool {
@@ -427,15 +460,25 @@ impl Store {
         lock(&self.clients).retain(|_, c| c.seen + CLIENT_TTL >= time);
     }
 
-    pub fn clients_json(&self) -> Vec<Value> {
+    /// Addresses and device details are only for the host.
+    pub fn clients_json(&self, details: bool) -> Vec<Value> {
         let time = now();
-        let mut clients: Vec<(String, String)> = lock(&self.clients)
-            .iter()
-            .filter(|(_, c)| c.seen + CLIENT_TTL >= time)
-            .map(|(id, c)| (id.clone(), c.name.clone()))
-            .collect();
-        clients.sort();
-        clients.into_iter().map(|(id, name)| json!({ "id": id, "name": name })).collect()
+        let clients = lock(&self.clients);
+        let mut active: Vec<(&String, &Client)> = clients.iter().filter(|(_, c)| c.seen + CLIENT_TTL >= time).collect();
+        active.sort_by_key(|(id, _)| *id);
+        active
+            .into_iter()
+            .map(|(id, c)| {
+                let mut entry = json!({ "id": id, "name": c.name, "os": c.os });
+                if details {
+                    entry["ip"] = json!(c.ip.to_string());
+                    entry["browser"] = json!(c.browser);
+                    entry["screen"] = json!(c.screen);
+                    entry["connected_seconds"] = json!(time.saturating_sub(c.since));
+                }
+                entry
+            })
+            .collect()
     }
 
     pub fn create_pair(&self, address: IpAddr, device_id: &str, name: &str) -> Result<PairRequest, (u16, &'static str)> {

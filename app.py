@@ -45,7 +45,7 @@ def read_version() -> str:
             return candidate.read_text(encoding="utf-8").strip().lstrip("v")
         except OSError:
             continue
-    return "1.7.1"
+    return "1.7.2"
 
 
 APP_VERSION = read_version()
@@ -67,8 +67,6 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 STAGING_PREFIX = ".dropair-"
 BUFFER = 1024 * 1024
-SESSION_TTL = 300
-SESSION_GRACE = 120
 CLIENT_TTL = 30
 MAX_TEXT_ITEMS = 40
 MAX_TEXT_CHARS = 20_000
@@ -84,6 +82,9 @@ def env_number(name: str, fallback: float) -> float:
         return fallback
 
 
+# The link key changes every 5 minutes; the old one keeps working 2 more.
+SESSION_TTL = int(env_number("DROP_AIR_SESSION_TTL_SECONDS", 300))
+SESSION_GRACE = int(env_number("DROP_AIR_SESSION_GRACE_SECONDS", 120))
 TEXT_TTL_MINUTES = int(env_number("DROP_AIR_TEXT_TTL_MINUTES", 10))
 DEFAULT_SETTINGS = {
     "access_code": os.getenv("DROP_AIR_CODE", "").strip(),
@@ -139,7 +140,8 @@ SESSION = (
     if len(str(_saved.get("key", ""))) == 32
     else {"key": secrets.token_hex(16), "expires_at": time.time() + SESSION_TTL, "previous": {}}
 )
-CLIENTS: dict[str, tuple[str, float]] = {}
+CLIENTS: dict[str, dict] = {}
+BLOCKED: dict[str, str] = {}  # devices the host removed, until Drop Air quits: address -> name
 ROUTES: dict[str, tuple[str, str]] = {}  # file name -> (recipient, sender) for private sends
 PUBLISHING: set[str] = set()
 UPDATE = {"running": False, "percent": 0, "message": "", "error": ""}
@@ -264,8 +266,8 @@ def cleanup() -> None:
     if TEXT_TTL_MINUTES > 0:
         retain_texts(lambda item: item["created"] >= now - TEXT_TTL_MINUTES * 60)
     with LOCK:
-        for key, (_, seen) in list(CLIENTS.items()):
-            if now - seen > CLIENT_TTL:
+        for key, client in list(CLIENTS.items()):
+            if now - client["seen"] > CLIENT_TTL:
                 del CLIENTS[key]
 
 
@@ -315,6 +317,8 @@ def require_admin() -> None:
 def authorize() -> None:
     if is_admin():
         return
+    if request.remote_addr in BLOCKED:
+        raise ApiError(403, "removed by host")
     key = request.args.get("k") or request.headers.get("X-Drop-Air-Key", "")
     current, _ = session()
     cookie_ok = secrets.compare_digest(request.cookies.get(COOKIE, "").encode(), RECOVERY_SECRET.encode())
@@ -350,6 +354,9 @@ def common_headers(response):
 
 @app.get("/")
 def index():
+    # A removed device gets the page without a cookie, so it can say what happened.
+    if request.remote_addr in BLOCKED and not is_admin():
+        return send_from_directory(WEB_DIR, "index.html")
     try:
         authorize()
     except ApiError as error:
@@ -390,15 +397,38 @@ def qr_svg():
     return Response(buffer.getvalue(), mimetype="image/svg+xml")
 
 
+def clients_list(details: bool) -> list[dict]:
+    """Addresses and device details are only for the host."""
+    result = []
+    for key, client in sorted(CLIENTS.copy().items()):
+        entry = {"id": key, "name": client["name"], "os": client["os"]}
+        if details:
+            entry.update(ip=client["ip"], browser=client["browser"], screen=client["screen"],
+                         connected_seconds=int(time.time() - client["since"]))
+        result.append(entry)
+    return result
+
+
 @app.get("/api/state")
 def api_state():
     authorize()
     admin = is_admin()
     client_id = re.sub(r"[^A-Za-z0-9]", "", request.args.get("client_id", ""))[:64]
     if not admin and client_id:
+        def text(field: str) -> str:
+            return "".join(c for c in request.args.get(field, "") if c.isprintable())[:48]
+
         with LOCK:
             if len(CLIENTS) < 64 or client_id in CLIENTS:
-                CLIENTS[client_id] = (clean_device_name(request.args.get("name", "Browser")), time.time())
+                CLIENTS[client_id] = {
+                    "name": clean_device_name(request.args.get("name", "Browser")),
+                    "seen": time.time(),
+                    "since": CLIENTS.get(client_id, {}).get("since", time.time()),
+                    "ip": request.remote_addr,
+                    "os": text("os"),
+                    "browser": text("browser"),
+                    "screen": text("screen"),
+                }
     cleanup()
     key, remaining = session()
     gb = float(SETTINGS["max_upload_gb"])
@@ -418,13 +448,14 @@ def api_state():
         "text_ttl_minutes": TEXT_TTL_MINUTES,
         "files": [f for f in list_files() if admin or not f["to"] or client_id in (f["to"], f["from"])],
         "texts": TEXTS,
-        "clients": sorted(({"id": k, "name": v[0]} for k, v in list(CLIENTS.items())), key=lambda c: c["id"]),
+        "clients": clients_list(admin),
         "peers": discovery["peers"],
         "discovery_status": discovery["status"],
     }
     if admin:
         body["settings"] = SETTINGS
         body["requests"] = PAIRS.pending()
+        body["blocked"] = [{"ip": ip, "name": name} for ip, name in list(BLOCKED.items())]
     return jsonify(body)
 
 
@@ -586,6 +617,8 @@ def save_settings():
 
 @app.post("/api/pair/requests")
 def pair_create():
+    if request.remote_addr in BLOCKED:
+        raise ApiError(403, "removed by host")
     if not SETTINGS["discoverable"]:
         raise ApiError(404, "this Drop Air device is not discoverable")
     item, error = PAIRS.create(request.remote_addr or "", payload())
@@ -614,6 +647,33 @@ def pair_decide(request_id: str):
     accepted = decision == "accept"
     if not PAIRS.decide(request_id, accepted, public_url() if accepted else ""):
         raise ApiError(404, "This request expired or was already handled.")
+    return jsonify({"ok": True})
+
+
+@app.post("/api/admin/kick/<client_id>")
+def kick(client_id: str):
+    """Block the device's address and replace the secrets it has seen."""
+    global RECOVERY_SECRET
+    require_admin()
+    with LOCK:
+        client = CLIENTS.get(client_id)
+        if not client:
+            raise ApiError(404, "That device is no longer connected.")
+        BLOCKED[client["ip"]] = client["name"]
+        for key, other in list(CLIENTS.items()):
+            if other["ip"] == client["ip"]:
+                del CLIENTS[key]
+        RECOVERY_SECRET = secrets.token_hex(32)
+        (DATA_DIR / "session-recovery.secret").write_text(RECOVERY_SECRET, encoding="utf-8")
+        SESSION["expires_at"] = 0  # the next session() call rotates the key
+    session()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/admin/unblock")
+def unblock():
+    require_admin()
+    BLOCKED.pop(str(payload().get("ip", "")), None)
     return jsonify({"ok": True})
 
 
