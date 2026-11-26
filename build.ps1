@@ -39,6 +39,9 @@ if ($Edition -in "rust", "all") {
   $version = (Select-String -Path rust\Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
   # Keep the multi-gigabyte build cache out of synced folders.
   if (-not $env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR = Join-Path $env:LOCALAPPDATA "dropair-build" }
+  # Keep the builder's user folder out of the paths baked into the program.
+  # RUSTFLAGS replaces .cargo\config.toml, so the static runtime is repeated here.
+  $env:RUSTFLAGS = "-C target-feature=+crt-static --remap-path-prefix=$($env:USERPROFILE)=~"
   Push-Location rust
   try { Invoke-Checked "cargo" @("build", "--release") } finally { Pop-Location }
   $stage = "dist\rust"
