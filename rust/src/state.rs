@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
@@ -492,25 +492,44 @@ impl Store {
         lock(&self.clients).retain(|_, c| c.seen + CLIENT_TTL >= time);
     }
 
-    /// Addresses and device details are only for the host.
+    /// Every page id that belongs to the same device as `client_id`.
+    pub fn same_device(&self, client_id: &str) -> HashSet<String> {
+        let clients = lock(&self.clients);
+        let mut ids = HashSet::from([client_id.to_string()]);
+        if let Some(me) = clients.get(client_id) {
+            ids.extend(clients.iter().filter(|(_, c)| c.ip == me.ip && c.name == me.name).map(|(id, _)| id.clone()));
+        }
+        ids
+    }
+
+    /// One entry per device: pages with the same name and address (a second
+    /// browser or private tab) are merged. Addresses and details are only for the host.
     pub fn clients_json(&self, details: bool) -> Vec<Value> {
         let time = now();
         let clients = lock(&self.clients);
-        let mut active: Vec<(&String, &Client)> = clients.iter().filter(|(_, c)| c.seen + CLIENT_TTL >= time).collect();
-        active.sort_by_key(|(id, _)| *id);
-        active
-            .into_iter()
-            .map(|(id, c)| {
-                let mut entry = json!({ "id": id, "name": c.name, "os": c.os });
+        let mut devices: BTreeMap<(IpAddr, &str), Vec<(&String, &Client)>> = BTreeMap::new();
+        for (id, client) in clients.iter().filter(|(_, c)| c.seen + CLIENT_TTL >= time) {
+            devices.entry((client.ip, client.name.as_str())).or_default().push((id, client));
+        }
+        let mut entries: Vec<(&String, Value)> = devices
+            .into_values()
+            .filter_map(|pages| {
+                // The newest page that told us about itself stands for the device.
+                let (id, c) = *pages.iter().max_by_key(|(id, c)| (!c.os.is_empty(), c.since, *id))?;
+                let ids: Vec<&String> = pages.iter().map(|(id, _)| *id).collect();
+                let mut entry = json!({ "id": id, "ids": ids, "name": c.name, "os": c.os });
                 if details {
                     entry["ip"] = json!(c.ip.to_string());
                     entry["browser"] = json!(c.browser);
                     entry["screen"] = json!(c.screen);
-                    entry["connected_seconds"] = json!(time.saturating_sub(c.since));
+                    let since = pages.iter().map(|(_, c)| c.since).min().unwrap_or(c.since);
+                    entry["connected_seconds"] = json!(time.saturating_sub(since));
                 }
-                entry
+                Some((id, entry))
             })
-            .collect()
+            .collect();
+        entries.sort_by_key(|(id, _)| *id);
+        entries.into_iter().map(|(_, entry)| entry).collect()
     }
 
     pub fn create_pair(&self, address: IpAddr, device_id: &str, name: &str) -> Result<PairRequest, (u16, &'static str)> {

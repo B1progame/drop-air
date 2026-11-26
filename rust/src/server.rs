@@ -210,7 +210,8 @@ async fn api_state(State(app): State<App>, ConnectInfo(address): Peer, headers: 
     store.cleanup();
     let settings = store.settings();
     let (key, remaining) = store.session();
-    let files: Vec<_> = store.files().into_iter().filter(|f| admin || f.to.is_empty() || f.to == client_id || f.from == client_id).collect();
+    let mine = store.same_device(&client_id);
+    let files: Vec<_> = store.files().into_iter().filter(|f| admin || f.to.is_empty() || mine.contains(&f.to) || mine.contains(&f.from)).collect();
     let peers: Vec<_> = {
         let mut peers: Vec<_> = lock(&store.peers).values().cloned().collect();
         peers.sort_by_key(|p| p.device_name.to_lowercase());

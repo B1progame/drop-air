@@ -152,12 +152,14 @@ const SPOTS = [[25, 40], [75, 40], [11, 56], [89, 56], [36, 30], [64, 30]];
 
 function renderRadar() {
   const devices = [
-    ...state.clients.filter(c => c.id !== clientId).map(c => ({ kind: "client", id: c.id, name: c.name, sub: (c.os || "Connected").split(" · ")[0], icon: /PC|Mac|Browser|Chromebook/.test(c.name) ? "pc" : "phone" })),
+    ...state.clients.filter(c => !c.ids.includes(clientId)).map(c => ({ kind: "client", ids: c.ids, id: c.id, name: c.name, sub: (c.os || "Connected").split(" · ")[0], icon: /PC|Mac|Browser|Chromebook/.test(c.name) ? "pc" : "phone" })),
     ...state.peers.map(p => ({ kind: "peer", id: p.device_id, name: p.device_name, sub: peerLinks.has(p.device_id) ? "Paired" : "Nearby PC", icon: "pc" })),
   ].slice(0, SPOTS.length);
   if (!state.admin) devices.unshift({ kind: "host", id: "host", name: state.device_name, sub: "Host PC", icon: "pc" });
   // A host cannot send to itself, e.g. a choice left over from using the phone view.
   if (target?.kind === "host" && state.admin) target = null;
+  const moved = target && devices.find(d => d.id !== target.id && d.ids?.includes(target.id));
+  if (moved) target.id = moved.id;
   renderTargets(devices);
 
   $("radarHint").textContent = target ? `Files go only to ${target.name} until you unselect it`
@@ -300,7 +302,7 @@ function renderRequests() {
 }
 
 function render() {
-  const others = state.clients.filter(c => c.id !== clientId).length;
+  const others = state.clients.filter(c => !c.ids.includes(clientId)).length;
   $("status").textContent = others ? `${others} device${others > 1 ? "s" : ""} connected` : "Ready on your Wi-Fi";
   $("status").className = others ? "on" : "ready";
   $("limit").textContent = `Up to ${state.limit_label}`;

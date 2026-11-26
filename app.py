@@ -45,7 +45,7 @@ def read_version() -> str:
             return candidate.read_text(encoding="utf-8").strip().lstrip("v")
         except OSError:
             continue
-    return "1.7.2"
+    return "1.7.3"
 
 
 APP_VERSION = read_version()
@@ -422,16 +422,33 @@ def qr_svg():
     return Response(buffer.getvalue(), mimetype="image/svg+xml")
 
 
+def same_device(client_id: str) -> set[str]:
+    """Every page id that belongs to the same device as ``client_id``."""
+    clients = CLIENTS.copy()
+    me = clients.get(client_id)
+    ids = {client_id}
+    if me:
+        ids.update(k for k, c in clients.items() if (c["ip"], c["name"]) == (me["ip"], me["name"]))
+    return ids
+
+
 def clients_list(details: bool) -> list[dict]:
-    """Addresses and device details are only for the host."""
+    """One entry per device: pages with the same name and address (a second browser or
+    private tab) are merged. Addresses and details are only for the host."""
+    devices: dict[tuple, list] = {}
+    for key, client in CLIENTS.copy().items():
+        devices.setdefault((client["ip"], client["name"]), []).append((key, client))
     result = []
-    for key, client in sorted(CLIENTS.copy().items()):
-        entry = {"id": key, "name": client["name"], "os": client["os"]}
+    for pages in devices.values():
+        # The newest page that told us about itself stands for the device.
+        key, client = max(pages, key=lambda page: (bool(page[1]["os"]), page[1]["since"], page[0]))
+        entry = {"id": key, "ids": [k for k, _ in pages], "name": client["name"], "os": client["os"]}
         if details:
+            since = min(c["since"] for _, c in pages)
             entry.update(ip=client["ip"], browser=client["browser"], screen=client["screen"],
-                         connected_seconds=int(time.time() - client["since"]))
+                         connected_seconds=int(time.time() - since))
         result.append(entry)
-    return result
+    return sorted(result, key=lambda entry: entry["id"])
 
 
 @app.get("/api/state")
@@ -455,6 +472,7 @@ def api_state():
                     "screen": text("screen"),
                 }
     cleanup()
+    mine = same_device(client_id)
     key, remaining = session()
     gb = float(SETTINGS["max_upload_gb"])
     discovery = PEERS.snapshot()
@@ -471,7 +489,7 @@ def api_state():
         "limit_label": f"{gb:g} GB" if gb >= 1 else f"{gb * 1024:.0f} MB",
         "cleanup_minutes": SETTINGS["auto_cleanup_minutes"],
         "text_ttl_minutes": TEXT_TTL_MINUTES,
-        "files": [f for f in list_files() if admin or not f["to"] or client_id in (f["to"], f["from"])],
+        "files": [f for f in list_files() if admin or not f["to"] or mine & {f["to"], f["from"]}],
         "texts": TEXTS,
         "clients": clients_list(admin),
         "peers": discovery["peers"],

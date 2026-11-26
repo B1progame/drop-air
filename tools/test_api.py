@@ -104,9 +104,21 @@ try:
     check("upload path is flattened", json.loads(body)["filename"] == "evil.txt", body)
 
     call("POST", f"/api/upload?name=private.txt&to=phone2&from=pc&k={key}", b"secret", host=LAN)
-    seen = lambda client: [f["name"] for f in json.loads(call("GET", f"/api/state?k={key}&client_id={client}", host=LAN)[2])["files"]]
+    seen = lambda client: [f["name"] for f in json.loads(call("GET", f"/api/state?k={key}&client_id={client}&name={client}", host=LAN)[2])["files"]]
     check("private send reaches its device", "private.txt" in seen("phone2"))
     check("private send hidden from others", "private.txt" not in seen("phone1"))
+
+    # One phone with two pages (second tab storage, second browser) is one device.
+    call("GET", f"/api/state?k={key}&client_id=tabA&name=Pixel", host=LAN)
+    time.sleep(1.1)
+    call("GET", f"/api/state?k={key}&client_id=tabB&name=Pixel&os=Android+15", host=LAN)
+    pixels = [c for c in json.loads(call("GET", "/api/state")[2])["clients"] if c["name"] == "Pixel"]
+    check("one device is listed once", len(pixels) == 1, pixels)
+    check("the entry with details wins", pixels[0]["id"] == "tabB" and pixels[0]["os"] == "Android 15", pixels)
+    check("it knows all its pages", sorted(pixels[0].get("ids", [])) == ["tabA", "tabB"], pixels)
+    call("POST", f"/api/upload?name=forpixel.txt&to=tabB&from=pc&k={key}", b"x", host=LAN)
+    files = json.loads(call("GET", f"/api/state?k={key}&client_id=tabA&name=Pixel", host=LAN)[2])["files"]
+    check("a private file reaches either page", "forpixel.txt" in [f["name"] for f in files], files)
 
     # A sender that disconnects halfway must leave nothing behind.
     connection = http.client.HTTPConnection("127.0.0.1", PORT, timeout=10)
