@@ -87,6 +87,9 @@ fn authorize(store: &Store, address: SocketAddr, headers: &HeaderMap, query: &Ha
     if lock(&store.blocked).contains_key(&address.ip()) {
         return Err(fail(403, "removed by host"));
     }
+    if store.is_asleep() {
+        return Err(fail(503, "sharing is off"));
+    }
     let key = query.get("k").map(String::as_str).unwrap_or_else(|| header_str(headers, "x-drop-air-key"));
     if !(store.is_valid_key(key) || has_cookie(store, headers)) {
         return Err(fail(404, "invalid session link"));
@@ -153,7 +156,7 @@ async fn common_headers(request: Request, next: Next) -> Response {
 
 async fn index(State(app): State<App>, ConnectInfo(address): Peer, headers: HeaderMap, Query(query): Params) -> Response {
     // A removed device gets the page without a cookie, so it can say what happened.
-    if lock(&app.store.blocked).contains_key(&address.ip()) && !is_admin(address, &headers) {
+    if (app.store.is_asleep() || lock(&app.store.blocked).contains_key(&address.ip())) && !is_admin(address, &headers) {
         return ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], INDEX).into_response();
     }
     // A missing code is handled by the page itself, which then asks for it.
@@ -394,6 +397,7 @@ async fn save_settings(State(app): State<App>, ConnectInfo(address): Peer, heade
         ("auto_cleanup_minutes", &mut settings.auto_cleanup_minutes),
         ("auto_cleanup_days", &mut settings.auto_cleanup_days),
         ("auto_cleanup_max_files", &mut settings.auto_cleanup_max_files),
+        ("tray_sleep_minutes", &mut settings.tray_sleep_minutes),
     ] {
         if let Some(value) = payload.get(key) {
             *field = value.as_u64().filter(|v| *v <= 1_000_000).ok_or_else(|| fail(400, format!("{key} must be a non-negative integer")))?;
@@ -421,6 +425,9 @@ async fn save_settings(State(app): State<App>, ConnectInfo(address): Peer, heade
 async fn pair_create(State(app): State<App>, ConnectInfo(address): Peer, body: Bytes) -> Result<Response, ApiError> {
     if lock(&app.store.blocked).contains_key(&address.ip()) {
         return Err(fail(403, "removed by host"));
+    }
+    if app.store.is_asleep() {
+        return Err(fail(503, "sharing is off"));
     }
     if !app.store.settings().discoverable {
         return Err(fail(404, "this Drop Air device is not discoverable"));

@@ -11,8 +11,6 @@ import time
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-TRAY_IDLE_EXIT_SECONDS = 600
-
 
 def dark_title_bar() -> None:
     handle = ctypes.windll.user32.FindWindowW(None, "Drop Air")
@@ -54,6 +52,7 @@ class Shell:
     def show(self, *_args) -> None:
         with self.lock:
             self.hidden_since = None
+            self.backend.wake()
             if self.window_open():
                 user32 = ctypes.windll.user32
                 handle = user32.FindWindowW(None, "Drop Air")
@@ -74,14 +73,17 @@ class Shell:
         os._exit(0)
 
     def watch(self) -> None:
-        """Exit after ten minutes hidden, unless phones are still connected."""
+        """Turn sharing off when hidden in the tray for the chosen time."""
         while True:
-            time.sleep(5)
-            if self.window_open():
-                continue
-            self.hidden_since = self.hidden_since or time.monotonic()
-            if time.monotonic() - self.hidden_since > TRAY_IDLE_EXIT_SECONDS and not self.backend.CLIENTS:
-                self.quit()
+            time.sleep(2)
+            with self.lock:
+                if self.window_open():
+                    self.hidden_since = None
+                    continue
+                self.hidden_since = self.hidden_since or time.monotonic()
+                minutes = self.backend.SETTINGS["tray_sleep_minutes"]
+                if minutes and not self.backend.ASLEEP.is_set() and time.monotonic() - self.hidden_since >= minutes * 60:
+                    self.backend.sleep()
 
 
 def main() -> int:

@@ -95,6 +95,7 @@ DEFAULT_SETTINGS = {
     "launch_browser_on_start": True,
     "device_name": "Drop Air device",
     "discoverable": False,
+    "tray_sleep_minutes": 10,  # hidden this long: sharing turns off; 0 = never
 }
 
 
@@ -144,6 +145,7 @@ CLIENTS: dict[str, dict] = {}
 BLOCKED: dict[str, str] = {}  # devices the host removed, until Drop Air quits: address -> name
 ROUTES: dict[str, tuple[str, str]] = {}  # file name -> (recipient, sender) for private sends
 PUBLISHING: set[str] = set()
+ASLEEP = threading.Event()  # sharing is off while the app has been in the tray too long
 UPDATE = {"running": False, "percent": 0, "message": "", "error": ""}
 
 PORT = 0  # chosen when the server starts
@@ -159,11 +161,32 @@ def session() -> tuple[str, int]:
         now = time.time()
         SESSION["previous"] = {k: e for k, e in SESSION.get("previous", {}).items() if e > now}
         if now >= SESSION.get("expires_at", 0):
-            SESSION["previous"][SESSION["key"]] = now + SESSION_GRACE
+            # Grace counts from when the key expired, not from when somebody next asked.
+            expired_at = SESSION.get("expires_at", 0)
+            if expired_at + SESSION_GRACE > now:
+                SESSION["previous"][SESSION["key"]] = expired_at + SESSION_GRACE
             SESSION["key"] = secrets.token_hex(16)
             SESSION["expires_at"] = now + SESSION_TTL
             write_atomic(DATA_DIR / "session-state.json", json.dumps(SESSION))
         return SESSION["key"], int(SESSION["expires_at"] - now)
+
+
+def sleep() -> None:
+    """Turn sharing off. Every link handed out so far stops working."""
+    ASLEEP.set()
+    with LOCK:
+        SESSION.update(key=secrets.token_hex(16), previous={}, expires_at=time.time() + SESSION_TTL)
+        write_atomic(DATA_DIR / "session-state.json", json.dumps(SESSION))
+        CLIENTS.clear()
+
+
+def wake() -> None:
+    """Sharing is back at once, with a QR code that has its full time left."""
+    if ASLEEP.is_set():
+        ASLEEP.clear()
+        with LOCK:
+            SESSION["expires_at"] = time.time() + SESSION_TTL
+            write_atomic(DATA_DIR / "session-state.json", json.dumps(SESSION))
 
 
 def public_url() -> str:
@@ -319,6 +342,8 @@ def authorize() -> None:
         return
     if request.remote_addr in BLOCKED:
         raise ApiError(403, "removed by host")
+    if ASLEEP.is_set():
+        raise ApiError(503, "sharing is off")
     key = request.args.get("k") or request.headers.get("X-Drop-Air-Key", "")
     current, _ = session()
     cookie_ok = secrets.compare_digest(request.cookies.get(COOKIE, "").encode(), RECOVERY_SECRET.encode())
@@ -355,7 +380,7 @@ def common_headers(response):
 @app.get("/")
 def index():
     # A removed device gets the page without a cookie, so it can say what happened.
-    if request.remote_addr in BLOCKED and not is_admin():
+    if (ASLEEP.is_set() or request.remote_addr in BLOCKED) and not is_admin():
         return send_from_directory(WEB_DIR, "index.html")
     try:
         authorize()
@@ -587,7 +612,7 @@ def save_settings():
     updated = dict(SETTINGS)
     if "access_code" in data:
         updated["access_code"] = str(data["access_code"]).strip()
-    for field in ("auto_cleanup_minutes", "auto_cleanup_days", "auto_cleanup_max_files"):
+    for field in ("auto_cleanup_minutes", "auto_cleanup_days", "auto_cleanup_max_files", "tray_sleep_minutes"):
         if field in data:
             value = data[field]
             if type(value) is not int or not 0 <= value <= 1_000_000:
@@ -619,6 +644,8 @@ def save_settings():
 def pair_create():
     if request.remote_addr in BLOCKED:
         raise ApiError(403, "removed by host")
+    if ASLEEP.is_set():
+        raise ApiError(503, "sharing is off")
     if not SETTINGS["discoverable"]:
         raise ApiError(404, "this Drop Air device is not discoverable")
     item, error = PAIRS.create(request.remote_addr or "", payload())
@@ -665,7 +692,7 @@ def kick(client_id: str):
                 del CLIENTS[key]
         RECOVERY_SECRET = secrets.token_hex(32)
         (DATA_DIR / "session-recovery.secret").write_text(RECOVERY_SECRET, encoding="utf-8")
-        SESSION["expires_at"] = 0  # the next session() call rotates the key
+        SESSION["expires_at"] = time.time()  # rotate now; others get the grace time
     session()
     return jsonify({"ok": True})
 

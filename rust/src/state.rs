@@ -89,6 +89,8 @@ pub struct Settings {
     pub launch_browser_on_start: bool,
     pub device_name: String,
     pub discoverable: bool,
+    /// minutes hidden in the tray before sharing turns off; 0 = never
+    pub tray_sleep_minutes: u64,
 }
 
 impl Default for Settings {
@@ -102,6 +104,7 @@ impl Default for Settings {
             launch_browser_on_start: true,
             device_name: "Drop Air device".into(),
             discoverable: false,
+            tray_sleep_minutes: 10,
         }
     }
 }
@@ -216,6 +219,8 @@ pub struct Store {
     pub publishing: Mutex<HashSet<String>>,
     pub update: Mutex<UpdateStatus>,
     pub port: std::sync::atomic::AtomicU16,
+    /// sharing is off while the app has been in the tray too long
+    pub asleep: std::sync::atomic::AtomicBool,
 }
 
 pub fn data_dir() -> PathBuf {
@@ -286,6 +291,7 @@ impl Store {
             publishing: Default::default(),
             update: Default::default(),
             port: Default::default(),
+            asleep: Default::default(),
         };
         store.persist_session(&lock(&store.session));
         Ok(store)
@@ -319,7 +325,9 @@ impl Store {
         session.previous.retain(|_, expires| *expires > time);
         if time >= session.expires_at {
             let old = std::mem::replace(&mut session.key, random_hex(16));
-            session.previous.insert(old, time + session_grace());
+            let expired_at = session.expires_at;
+            session.previous.insert(old, expired_at + session_grace());
+            session.previous.retain(|_, expires| *expires > time);
             session.expires_at = time + session_ttl();
             self.persist_session(&session);
         }
@@ -341,6 +349,30 @@ impl Store {
         session.expires_at = now() + session_ttl();
         self.persist_session(&session);
         true
+    }
+
+    pub fn is_asleep(&self) -> bool {
+        self.asleep.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Turn sharing off. Every link handed out so far stops working.
+    pub fn sleep(&self) {
+        self.asleep.store(true, std::sync::atomic::Ordering::Relaxed);
+        let mut session = lock(&self.session);
+        session.key = random_hex(16);
+        session.previous.clear();
+        session.expires_at = now() + session_ttl();
+        self.persist_session(&session);
+        lock(&self.clients).clear();
+    }
+
+    /// Sharing is back at once, with a QR code that has its full time left.
+    pub fn wake(&self) {
+        if self.asleep.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            let mut session = lock(&self.session);
+            session.expires_at = now() + session_ttl();
+            self.persist_session(&session);
+        }
     }
 
     pub fn is_valid_key(&self, supplied: &str) -> bool {

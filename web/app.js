@@ -355,6 +355,11 @@ async function refresh() {
     if (error.status) hideSplash();
     if (error.message === "code not found") showGate(true);
     else if (error.message === "invalid session link") showGate(false);
+    else if (error.message === "sharing is off") {
+      showGate(false);
+      $("gateTitle").textContent = "Sharing is off";
+      $("gateText").textContent = "Open Drop Air on the PC. This page continues by itself if it was connected before, otherwise scan the new QR code.";
+    }
     else if (error.message === "removed by host") {
       showGate(false);
       $("gateTitle").textContent = "You were removed";

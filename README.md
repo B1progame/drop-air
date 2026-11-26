@@ -26,7 +26,7 @@ Both need Windows 10 or 11 (64-bit) with Microsoft Edge WebView2, which Windows 
 - Find other Drop Air PCs on your Wi-Fi and send to them after they approve
 - Live speed and time left, resumable downloads, up to 4 uploads at once
 - Dark and light theme, optional access code, automatic deletion of old files
-- Closing the window keeps sharing from the tray and frees the window's memory; it exits after 10 minutes if no device is connected
+- Closing the window keeps sharing from the tray and frees the window's memory. After 10 minutes in the tray (changeable in Settings) sharing turns off and old links stop working; opening Drop Air turns it on again at once
 
 Each PC picks its own random port (20000–48999) on first start and keeps it. Set the `PORT` environment variable to choose one yourself. If Windows Firewall asks, allow Drop Air on **private** networks.
 

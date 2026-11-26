@@ -134,7 +134,9 @@
       <div class="card-head"><svg><use href="#i-clock"/></svg><h3>Sharing</h3></div>
       <div class="field">Delete shared files after<div class="chips" data-for="auto_cleanup_minutes"><button type="button" data-value="10">10 min</button><button type="button" data-value="60">1 hour</button><button type="button" data-value="1440">1 day</button><button type="button" data-value="0">Never</button></div></div>
       <div class="field">Largest file<div class="chips" data-for="max_upload_gb"><button type="button" data-value="1">1 GB</button><button type="button" data-value="10">10 GB</button><button type="button" data-value="50">50 GB</button><button type="button" data-value="200">200 GB</button></div></div>
+      <div class="field">Turn sharing off after this long in the tray<div class="chips" data-for="tray_sleep_minutes"><button type="button" data-value="5">5 min</button><button type="button" data-value="10">10 min</button><button type="button" data-value="30">30 min</button><button type="button" data-value="0">Never</button></div></div>
       <details><summary>Custom values</summary>
+        <label class="field">Turn sharing off after (minutes in the tray, 0 = never)<input type="number" name="tray_sleep_minutes" min="0"></label>
         <label class="field">Delete files after (minutes, 0 = never)<input type="number" name="auto_cleanup_minutes" min="0"></label>
         <label class="field">Delete files after (days, 0 = never)<input type="number" name="auto_cleanup_days" min="0"></label>
         <label class="field">Keep newest files (0 = all)<input type="number" name="auto_cleanup_max_files" min="0"></label>

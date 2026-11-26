@@ -199,6 +199,9 @@ try:
     check("old key works during the grace time", call("GET", f"/api/state?k={first['session_key']}", host=LAN)[0] == 200)
     time.sleep(3)
     check("old key is refused afterwards", call("GET", f"/api/state?k={first['session_key']}", host=LAN)[0] == 404)
+    idle = json.loads(call("GET", "/api/state")[2])["session_key"]
+    time.sleep(6)  # nobody asks while the key expires, as in the tray
+    check("a long-expired key gets no grace", call("GET", f"/api/state?k={idle}", host=LAN)[0] == 404)
 finally:
     run.kill()
     run.wait()

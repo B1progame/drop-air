@@ -19,7 +19,6 @@ use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use wry::{WebContext, WebView, WebViewBuilder};
 
-const TRAY_IDLE_EXIT: Duration = Duration::from_secs(600);
 const LOGO: &[u8] = include_bytes!("../../web/logo.png");
 
 pub enum UserEvent {
@@ -150,6 +149,12 @@ fn remove_leftovers(data_dir: std::path::PathBuf) {
     });
 }
 
+/// When sharing should turn off, if the window is hidden and the setting asks for it.
+fn sleep_at(store: &Store, hidden_since: Option<Instant>) -> Option<Instant> {
+    let minutes = store.settings().tray_sleep_minutes;
+    hidden_since.filter(|_| minutes > 0 && !store.is_asleep()).map(|since| since + Duration::from_secs(minutes * 60))
+}
+
 fn logo_rgba() -> (Vec<u8>, u32, u32) {
     let mut reader = png::Decoder::new(std::io::Cursor::new(LOGO)).read_info().expect("embedded logo");
     let mut pixels = vec![0; reader.output_buffer_size().expect("embedded logo")];
@@ -209,8 +214,8 @@ fn main() {
     let mut hidden_since: Option<Instant> = None;
 
     event_loop.run(move |event, target, control_flow| {
-        *control_flow = match hidden_since {
-            Some(since) => ControlFlow::WaitUntil(since + TRAY_IDLE_EXIT),
+        *control_flow = match sleep_at(&store, hidden_since) {
+            Some(time) => ControlFlow::WaitUntil(time),
             None => ControlFlow::Wait,
         };
         let mut show = false;
@@ -227,19 +232,19 @@ fn main() {
                     .ok();
                 show = true;
             }
-            Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
-                // Stay alive while phones are still connected.
-                if view.is_none() && store.clients_json(false).is_empty() {
-                    quit = true;
-                } else {
-                    hidden_since = Some(Instant::now());
-                }
+            // Hidden long enough: stop sharing, but stay in the tray.
+            Event::NewEvents(StartCause::ResumeTimeReached { .. }) if view.is_none() => {
+                store.sleep();
+                hidden_since = None;
+                *control_flow = ControlFlow::Wait;
             }
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                 view = None;
                 if tray.is_some() {
                     hidden_since = Some(Instant::now());
-                    *control_flow = ControlFlow::WaitUntil(Instant::now() + TRAY_IDLE_EXIT);
+                    if let Some(time) = sleep_at(&store, hidden_since) {
+                        *control_flow = ControlFlow::WaitUntil(time);
+                    }
                 } else {
                     quit = true;
                 }
@@ -255,6 +260,7 @@ fn main() {
             _ => {}
         }
         if show {
+            store.wake();
             hidden_since = None;
             *control_flow = ControlFlow::Wait;
             if let Some((window, _)) = &view {
