@@ -75,7 +75,8 @@
   <div class="lanes" data-tab="send">
     <section class="lane send" aria-labelledby="sendTitle">
       <div class="lane-head"><h2 id="sendTitle">Send</h2><span class="muted" id="limit"></span></div>
-      <div class="drop" id="drop">
+      <div class="to" id="toBar" role="group" aria-label="Send to"></div>
+        <div class="drop" id="drop">
         <span class="drop-icon"><svg><use href="#i-upload"/></svg></span>
         <p class="drop-title">Drop files here</p>
         <p class="muted" id="targetLabel">Everyone connected can download them</p>
@@ -165,7 +166,7 @@
 <dialog id="deviceDialog" aria-labelledby="deviceName" tabindex="-1">
   <div class="dialog-head"><h2 id="deviceName"></h2><button class="icon" data-close aria-label="Close"><svg><use href="#i-x"/></svg></button></div>
   <dl class="facts" id="deviceFacts"></dl>
-  <div class="row"><button class="btn danger" id="kickBtn">Remove device</button><button class="btn primary" id="deviceSend">Send files</button></div>
+  <div class="row"><button class="btn danger" id="kickBtn">Remove device</button><button class="btn" id="deviceSelect">Always send here</button><button class="btn primary" id="deviceSend">Send files</button></div>
 </dialog>
 
 <dialog id="pasteDialog" aria-labelledby="pasteTitle" tabindex="-1">

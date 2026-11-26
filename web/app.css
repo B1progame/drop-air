@@ -114,6 +114,13 @@ button.node:hover b,.node.over b{transform:scale(1.12) translateY(-2px);box-shad
 .lane{background:var(--panel);border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow);padding:18px;animation:rise .55s .08s var(--ease) both}
 .lane.receive{animation-delay:.16s}
 .lane-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:32px;margin-bottom:14px}
+.to{display:flex;align-items:center;gap:6px;margin-bottom:12px;padding:2px;overflow-x:auto;scrollbar-width:none}
+.to span{flex:none;margin-right:2px;font-size:12px;font-weight:650;color:var(--muted)}
+.to button{flex:none;display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:0 13px;border:1px solid var(--line);border-radius:999px;background:var(--raised);font-size:13px;font-weight:650;transition:background .2s,border-color .2s,transform .2s var(--spring)}
+.to button:active{transform:scale(.95)}
+.to button svg{width:16px;height:16px}
+.to button[aria-pressed=true]{border-color:var(--blue);background:var(--blue);color:#fff}
+.to button.offline{opacity:.7;border-style:dashed}
 .drop{position:relative;display:flex;flex-direction:column;align-items:center;text-align:center;gap:4px;padding:32px 16px;border-radius:18px;background:var(--raised);transition:background .25s,transform .25s var(--spring)}
 .drop::before{content:"";position:absolute;inset:0;border:2px dashed color-mix(in srgb,var(--blue) 55%,transparent);border-radius:inherit;pointer-events:none;transition:border-color .2s}
 .drop-icon{display:grid;place-items:center;width:62px;height:62px;border-radius:20px;background:var(--tint);color:var(--accent);transition:transform .3s var(--spring)}
@@ -190,7 +197,7 @@ code{display:block;margin:12px 0;padding:10px 12px;border-radius:12px;background
 .facts{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 16px;margin:0 0 4px;padding:14px;border-radius:16px;background:var(--raised)}
 .facts dt{color:var(--muted);font-size:12px}
 .facts dd{margin:0;font-weight:650;font-size:13px;overflow-wrap:anywhere}
-#deviceDialog .row .btn{flex:1}
+#deviceDialog .row .btn{flex:1 1 auto}
 .paste-box{margin-top:12px;min-height:130px;max-height:40vh;overflow:auto;padding:14px;border:2px dashed var(--blue);border-radius:16px;background:var(--raised);font-size:16px;user-select:text;-webkit-user-select:text}
 .paste-box:focus{outline:none;box-shadow:0 0 0 4px var(--glow)}
 .blocked{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;font-size:13px}

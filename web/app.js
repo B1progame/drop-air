@@ -33,7 +33,8 @@ const myDevice = describeDevice();
 let key = query.get("k") || "";
 let code = query.get("code") || "";
 let state = null;
-let target = null; // {kind:"client"|"peer", id, name}
+let target = null; // {kind:"host"|"client"|"peer", id, name, icon}; remembered until unselected
+try { target = JSON.parse(localStorage.getItem("dropAirTarget")) || null; } catch (_) {}
 let pickTarget = null;
 const peerLinks = new Map();
 
@@ -155,10 +156,12 @@ function renderRadar() {
     ...state.peers.map(p => ({ kind: "peer", id: p.device_id, name: p.device_name, sub: peerLinks.has(p.device_id) ? "Paired" : "Nearby PC", icon: "pc" })),
   ].slice(0, SPOTS.length);
   if (!state.admin) devices.unshift({ kind: "host", id: "host", name: state.device_name, sub: "Host PC", icon: "pc" });
-  if (target && !devices.some(d => d.id === target.id)) setTarget(null);
+  // A host cannot send to itself, e.g. a choice left over from using the phone view.
+  if (target?.kind === "host" && state.admin) target = null;
+  renderTargets(devices);
 
-  $("radarHint").textContent = target ? `Next files go only to ${target.name}. Tap it again to send to everyone.`
-    : devices.length ? (matchMedia("(pointer: coarse)").matches ? "Tap a device to send only to it" : "Drop files on a device to send only to it") : "No devices yet. Tap the QR button to connect your phone.";
+  $("radarHint").textContent = target ? `Files go only to ${target.name} until you unselect it`
+    : devices.length ? (matchMedia("(pointer: coarse)").matches || !state.admin ? "Tap a device to always send to it" : "Drop files on a device to send only to it") : "No devices yet. Tap the QR button to connect your phone.";
   if (!changed("radar", [devices, target, state.admin])) return;
 
   const me = el("div", { className: "node me" }, el("b", {}, icon(state.admin ? "pc" : "phone")),
@@ -171,26 +174,16 @@ function renderRadar() {
     node.style.left = `${SPOTS[index][0]}%`;
     node.style.top = `${SPOTS[index][1]}%`;
     if (enter(seen.nodes, device.id)) node.classList.add("new");
-    if (device.kind === "host") { node.onclick = () => $("picker").click(); }
-    else if (device.kind === "client" && state.admin) {
-      if (target?.id === device.id) node.classList.add("selected");
-      node.onclick = () => showDevice(device.id);
-    } else {
-      if (target?.id === device.id) node.classList.add("selected");
-      node.onclick = () => {
-        if (target?.id === device.id) return setTarget(null);
-        setTarget(device);
-        pickTarget = device;
-        $("picker").click();
-      };
-    }
+    if (target?.id === device.id) node.classList.add("selected");
+    // The host gets a details sheet for connected devices; everywhere else a tap selects or unselects.
+    node.onclick = device.kind === "client" && state.admin ? () => showDevice(device.id) : () => toggleTarget(device);
     node.ondragover = event => { event.preventDefault(); event.stopPropagation(); node.classList.add("over"); };
     node.ondragleave = () => node.classList.remove("over");
     node.ondrop = event => {
       event.preventDefault();
       event.stopPropagation();
       node.classList.remove("over");
-      send([...event.dataTransfer.files], device.kind === "host" ? null : device);
+      send([...event.dataTransfer.files], device);
     };
     return node;
   }));
@@ -204,17 +197,18 @@ function showDevice(id) {
   $("deviceFacts").replaceChildren(...[["System", client.os || "Unknown"], ["Browser", client.browser || "Unknown"], ["Screen", client.screen || "Unknown"],
     ["Address", client.ip], ["Connected", minutes ? `${minutes} min` : "just now"]]
     .flatMap(([label, value]) => [el("dt", { textContent: label }), el("dd", { textContent: value })]));
+  const device = { kind: "client", id, name: client.name, icon: /PC|Mac|Browser|Chromebook/.test(client.name) ? "pc" : "phone" };
+  $("deviceSelect").textContent = target?.id === id ? "Stop sending here" : "Always send here";
+  $("deviceSelect").onclick = () => { $("deviceDialog").close(); toggleTarget(device); };
   $("deviceSend").onclick = () => {
     $("deviceDialog").close();
-    const device = { kind: "client", id, name: client.name };
-    setTarget(device);
     pickTarget = device;
     $("picker").click();
   };
   $("kickBtn").onclick = async () => {
     $("deviceDialog").close();
     if (!await confirmBox(`Remove ${client.name}?`, "It is blocked until you quit Drop Air or allow it again in Settings. The QR code changes.", "Remove")) return;
-    api(`/api/admin/kick/${id}`, { method: "POST" }).then(() => { toast(`${client.name} removed`); setTarget(null); refresh(); }).catch(report);
+    api(`/api/admin/kick/${id}`, { method: "POST" }).then(() => { toast(`${client.name} removed`); if (target?.id === id) setTarget(null); refresh(); }).catch(report);
   };
   $("deviceDialog").showModal();
   $("deviceDialog").focus();
@@ -230,10 +224,29 @@ function renderBlocked() {
 }
 
 function setTarget(device) {
-  target = device && device.kind !== "host" ? device : null;
-  $("targetLabel").textContent = target ? `Only for ${target.name}` : "Everyone connected can download them";
-  signatures.radar = "";
+  target = device ? { kind: device.kind, id: device.id, name: device.name, icon: device.icon } : null;
+  try { localStorage.setItem("dropAirTarget", JSON.stringify(target)); } catch (_) {}
+  signatures.radar = signatures.targets = "";
   if (state) renderRadar();
+}
+const toggleTarget = device => setTarget(target?.id === device.id ? null : device);
+
+// "Send to" buttons above the drop zone. A chosen device that went away stays chosen,
+// so files meant for one person are never quietly shared with everyone.
+function renderTargets(devices) {
+  const online = !target || devices.some(d => d.id === target.id);
+  $("targetLabel").textContent = !target ? "Everyone connected can download them"
+    : online ? `Only for ${target.name}` : `Only for ${target.name}, which is not connected right now`;
+  if (!changed("targets", [devices.map(d => [d.id, d.name]), target, online])) return;
+  const choices = online ? devices : [...devices, target];
+  const chip = (label, iconName, pressed, onclick, offline) => {
+    const button = el("button", { type: "button", onclick, className: offline ? "offline" : "" }, iconName && icon(iconName), label);
+    button.setAttribute("aria-pressed", pressed);
+    return button;
+  };
+  $("toBar").hidden = !choices.length;
+  $("toBar").replaceChildren(el("span", { textContent: "Send to" }), chip("Everyone", "", !target, () => setTarget(null)),
+    ...choices.map(device => chip(device.name, device.icon, target?.id === device.id, () => toggleTarget(device), target?.id === device.id && !online)));
 }
 
 function renderFiles() {
@@ -399,6 +412,7 @@ async function send(files, to = target) {
   const tooBig = files.find(file => file.size > state.limit_bytes);
   if (tooBig) return toast(`${tooBig.name} is larger than ${state.limit_label}`);
   let peer = null;
+  if (to?.kind === "peer" && !state.peers.some(p => p.device_id === to.id)) return toast(`${to.name} is not nearby right now`);
   if (to?.kind === "peer") {
     try { peer = await pairWith(to); } catch (error) { return report(error); }
   }
@@ -464,7 +478,7 @@ function upload(job) {
   const { file, to, peer } = job;
   const xhr = job.xhr = new XMLHttpRequest();
   const params = new URLSearchParams({ name: file.name, from: clientId });
-  if (to?.kind === "client") params.set("to", to.id);
+  if (to && !peer) params.set("to", to.id);
   if (peer) { params.set("k", peer.key); if (peer.code) params.set("code", peer.code); }
   xhr.open("POST", `${peer ? peer.origin : ""}/api/upload?${params}`);
   xhr.setRequestHeader("Content-Type", "application/octet-stream");
