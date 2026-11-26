@@ -1901,11 +1901,72 @@
     .nearby-modal-controls button { min-height: 42px; padding: 8px 12px; }
     .nearby-modal-card .discovery-list { min-height: 70px; max-height: 36vh; overflow: auto; }
     .nearby-modal-help { margin: 0; color: var(--muted); font-size: .82rem; line-height: 1.45; }
+    .confirm-dialog {
+      width: min(460px, calc(100vw - 28px));
+      max-width: calc(100vw - 28px);
+      max-height: min(84dvh, 520px);
+      margin: auto;
+      padding: 0;
+      overflow: visible;
+      color: var(--ink);
+      border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line));
+      border-radius: 18px;
+      background: transparent;
+      box-shadow: 0 28px 90px rgba(0, 0, 0, .48), 0 4px 18px rgba(0, 0, 0, .18);
+    }
+    .confirm-dialog[open] { animation: confirm-dialog-float-in .2s cubic-bezier(.2,.8,.2,1) both; }
+    .confirm-dialog::backdrop {
+      background: rgba(5, 9, 12, .68);
+      backdrop-filter: blur(5px);
+      animation: confirm-backdrop-in .16s ease both;
+    }
+    .confirm-dialog-card {
+      position: relative;
+      display: grid;
+      gap: 16px;
+      max-height: min(84dvh, 520px);
+      overflow: auto;
+      padding: 22px;
+      border-radius: inherit;
+      background: var(--surface);
+      scrollbar-gutter: stable;
+    }
+    .confirm-dialog-card::before {
+      position: absolute;
+      inset: 0 18px auto;
+      height: 2px;
+      border-radius: 0 0 3px 3px;
+      background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 38%, var(--mint)));
+      content: "";
+    }
+    .confirm-dialog-heading { display: grid; grid-template-columns: 42px minmax(0, 1fr) 36px; gap: 12px; align-items: center; }
+    .confirm-dialog-brand {
+      display: grid;
+      width: 42px;
+      height: 42px;
+      place-items: center;
+      border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--line));
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--accent) 10%, var(--surface-soft));
+    }
+    .confirm-dialog-brand img { width: 27px; height: 27px; object-fit: contain; }
+    .confirm-dialog-kicker { margin: 0 0 3px; color: var(--accent-strong); font-size: .68rem; font-weight: 900; letter-spacing: .11em; text-transform: uppercase; }
+    .confirm-dialog-title { margin: 0; color: var(--ink); font-size: 1.1rem; font-weight: 850; letter-spacing: -.025em; line-height: 1.2; }
+    .confirm-dialog-message { margin: 0; max-width: 62ch; color: var(--muted); font-size: .93rem; font-weight: 600; line-height: 1.55; overflow-wrap: anywhere; }
+    .confirm-dialog-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; padding-top: 2px; }
+    .confirm-dialog-actions > button { min-height: 44px; width: 100%; }
+    .confirm-dialog[data-intent="danger"] { border-color: color-mix(in srgb, var(--danger) 38%, var(--line)); }
+    .confirm-dialog[data-intent="danger"] .confirm-dialog-card::before { background: var(--danger); }
+    .confirm-dialog[data-intent="danger"] .confirm-dialog-brand { border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); background: color-mix(in srgb, var(--danger) 12%, var(--surface)); }
+    @keyframes confirm-dialog-float-in { from { opacity: 0; transform: translateY(9px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
+    @keyframes confirm-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
     @media (max-width: 560px) {
       .nearby-modal-card { padding: 16px; }
       .nearby-modal-controls { grid-template-columns: 1fr 1fr; }
       .nearby-modal-controls label { grid-column: 1 / -1; }
       .nearby-modal-controls button { width: 100%; }
+      .confirm-dialog-card { gap: 14px; padding: 19px; }
+      .confirm-dialog-actions { gap: 8px; }
     }
 
     .drawer {
@@ -2603,6 +2664,24 @@
     </section>
   </div>
 
+  <dialog id="confirmDialog" class="confirm-dialog" aria-labelledby="confirmDialogTitle" aria-describedby="confirmDialogMessage">
+    <section class="confirm-dialog-card">
+      <div class="confirm-dialog-heading">
+        <span class="confirm-dialog-brand" aria-hidden="true"><img src="{{ url_for('static', filename='brand/drop-air-logo.png') }}" alt="" /></span>
+        <div>
+          <p class="confirm-dialog-kicker">Drop Air · Confirm</p>
+          <h2 id="confirmDialogTitle" class="confirm-dialog-title">Confirm action</h2>
+        </div>
+        <button class="icon-btn" type="button" data-confirm-close aria-label="Close confirmation">×</button>
+      </div>
+      <p id="confirmDialogMessage" class="confirm-dialog-message"></p>
+      <div class="confirm-dialog-actions">
+        <button class="secondary-btn" type="button" data-confirm-cancel>Cancel</button>
+        <button class="primary-btn" type="button" data-confirm-accept>Continue</button>
+      </div>
+    </section>
+  </dialog>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   {% if request.args.get('desktop') == '1' %}<script src="qrc:///qtwebchannel/qwebchannel.js"></script>{% endif %}
@@ -2722,8 +2801,73 @@
       name: document.getElementById("nearbyDeviceName"),
       saveName: document.getElementById("saveNearbyNameBtn")
     };
+    const confirmEls = {
+      dialog: document.getElementById("confirmDialog"),
+      title: document.getElementById("confirmDialogTitle"),
+      message: document.getElementById("confirmDialogMessage"),
+      close: document.querySelector("[data-confirm-close]"),
+      cancel: document.querySelector("[data-confirm-cancel]"),
+      accept: document.querySelector("[data-confirm-accept]")
+    };
+    const confirmQueue = [];
+    let activeConfirmation = null;
     const dirtySettings = new Set();
     let lastDiscoveryState = "";
+
+    function showConfirmDialog(message, options = {}) {
+      return new Promise(resolve => {
+        confirmQueue.push({ message, options, resolve });
+        presentNextConfirmation();
+      });
+    }
+
+    function presentNextConfirmation() {
+      if (activeConfirmation || !confirmQueue.length) return;
+      activeConfirmation = confirmQueue.shift();
+      const { options } = activeConfirmation;
+      confirmEls.title.textContent = options.title || "Confirm action";
+      confirmEls.message.textContent = activeConfirmation.message;
+      confirmEls.cancel.textContent = options.cancelLabel || "Cancel";
+      confirmEls.accept.textContent = options.confirmLabel || "Continue";
+      confirmEls.dialog.dataset.intent = options.intent === "danger" ? "danger" : "default";
+      confirmEls.accept.classList.toggle("danger-btn", options.intent === "danger");
+      if (!confirmEls.dialog?.isConnected || typeof confirmEls.dialog.showModal !== "function") {
+        const unavailable = activeConfirmation;
+        activeConfirmation = null;
+        unavailable.resolve(false);
+        queueMicrotask(presentNextConfirmation);
+        return;
+      }
+      try {
+        confirmEls.dialog.showModal();
+        requestAnimationFrame(() => confirmEls.cancel.focus({ preventScroll: true }));
+      } catch (_) {
+        const unavailable = activeConfirmation;
+        activeConfirmation = null;
+        unavailable.resolve(false);
+        queueMicrotask(presentNextConfirmation);
+      }
+    }
+
+    function finishConfirmation(accepted) {
+      if (!activeConfirmation) return;
+      const completed = activeConfirmation;
+      activeConfirmation = null;
+      confirmEls.dialog.close(accepted ? "confirm" : "cancel");
+      completed.resolve(accepted);
+      queueMicrotask(presentNextConfirmation);
+    }
+
+    confirmEls.accept.addEventListener("click", () => finishConfirmation(true));
+    confirmEls.cancel.addEventListener("click", () => finishConfirmation(false));
+    confirmEls.close.addEventListener("click", () => finishConfirmation(false));
+    confirmEls.dialog.addEventListener("cancel", event => {
+      event.preventDefault();
+      finishConfirmation(false);
+    });
+    confirmEls.dialog.addEventListener("click", event => {
+      if (event.target === confirmEls.dialog) finishConfirmation(false);
+    });
 
     function codeQuery() {
       const params = new URLSearchParams();
@@ -3366,7 +3510,10 @@
         for (const incoming of data.requests || []) {
           if (handledPairRequests.has(incoming.id)) continue;
           handledPairRequests.add(incoming.id);
-          const accepted = confirm(`Allow ${incoming.device_name} (${incoming.address}) to connect and see files shared by this Drop Air? The transfer link is only sent after you approve.`);
+          const accepted = await showConfirmDialog(
+            `Allow ${incoming.device_name} (${incoming.address}) to connect and see files shared by this Drop Air? The transfer link is only sent after you approve.`,
+            { title: "Connection request", confirmLabel: "Allow device", cancelLabel: "Decline" }
+          );
           try {
             await decidePairRequest(incoming.id, accepted ? "accept" : "decline");
             showToast(accepted ? `${incoming.device_name} connected` : "Connection declined");
@@ -3439,7 +3586,10 @@
       const peerUrl = `http://${peer.address}:${Number(peer.port)}`;
       const relayUrl = `/api/discovery/${encodeURIComponent(peer.device_id)}/pair`;
       const displayName = peer.device_name || "Drop Air device";
-      if (!confirm(`Connect to ${displayName} at ${peer.address}? Its owner will be asked before the transfer link is shared.`)) return;
+      if (!(await showConfirmDialog(
+        `Connect to ${displayName} at ${peer.address}? Its owner will be asked before the transfer link is shared.`,
+        { title: `Connect to ${displayName}?`, confirmLabel: "Request connection" }
+      ))) return;
       button.disabled = true;
       const previousLabel = button.textContent;
       button.textContent = "Waiting…";
@@ -3573,7 +3723,10 @@
         };
         const currentLimit = Number(initialSettings.max_upload_gb ?? 10);
         if (nextSettings.max_upload_gb !== currentLimit) {
-          const ok = confirm(`Change upload limit from ${uploadLimitLabel(currentLimit)} to ${uploadLimitLabel(nextSettings.max_upload_gb)}? Large limits can use a lot of disk space and may fail on some devices.`);
+          const ok = await showConfirmDialog(
+            `Change upload limit from ${uploadLimitLabel(currentLimit)} to ${uploadLimitLabel(nextSettings.max_upload_gb)}? Large limits can use a lot of disk space and may fail on some devices.`,
+            { title: "Change upload limit?", confirmLabel: "Change limit" }
+          );
           if (!ok) return;
         }
         const r = await fetch(`/api/settings${codeQuery()}`, {
@@ -3620,7 +3773,9 @@
     }
 
     async function deleteFile(name, confirmFirst = true) {
-      if (!name || (confirmFirst && !confirm(`Delete ${name}?`))) return;
+      if (!name || (confirmFirst && !(await showConfirmDialog(`Delete ${name}? This will remove the file from this Drop Air.`, {
+        title: "Delete file?", confirmLabel: "Delete", intent: "danger"
+      })))) return;
       const r = await fetch(`/api/files/${encodeURIComponent(name)}${codeQuery()}`, {
         method: "DELETE",
         headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {}
@@ -3633,7 +3788,9 @@
     }
 
     async function animateDeleteFile(name, trigger) {
-      if (!name || !confirm(`Delete ${name}?`)) return;
+      if (!name || !(await showConfirmDialog(`Delete ${name}? This will remove the file from this Drop Air.`, {
+        title: "Delete file?", confirmLabel: "Delete", intent: "danger"
+      }))) return;
       const row = trigger?.closest?.("tr");
       if (row) {
         row.classList.add("removing");
@@ -3643,7 +3800,9 @@
     }
 
     async function deleteTextItem(id, confirmFirst = true) {
-      if (!id || (confirmFirst && !confirm("Delete this shared text?"))) return;
+      if (!id || (confirmFirst && !(await showConfirmDialog("Delete this shared text from Drop Air?", {
+        title: "Delete shared text?", confirmLabel: "Delete", intent: "danger"
+      })))) return;
       const r = await fetch(`/api/text/${encodeURIComponent(id)}${codeQuery()}`, {
         method: "DELETE",
         headers: accessCode ? { "X-Drop-Air-Code": accessCode } : {}
@@ -3656,7 +3815,9 @@
     }
 
     async function quitServer() {
-      if (!isAdmin || !confirm("Quit Drop Air on this computer?")) return;
+      if (!isAdmin || !(await showConfirmDialog("This stops Drop Air on this computer. Connected devices will lose access until you start it again.", {
+        title: "Stop Drop Air?", confirmLabel: "Stop Drop Air", intent: "danger"
+      }))) return;
       adminEls.quit.disabled = true;
       showToast("Stopping Drop Air...");
       try {
@@ -3724,7 +3885,9 @@
         await checkUpdates();
         return;
       }
-      const ok = confirm("Install this update now? Every connection will be lost, shared files and text will be cleaned up, and Drop Air will restart.");
+      const ok = await showConfirmDialog("Every connection will be lost, shared files and text will be cleared, and Drop Air will restart.", {
+        title: "Install this update?", confirmLabel: "Update now", intent: "danger"
+      });
       if (!ok) return;
       adminEls.update.disabled = true;
       adminEls.updateStatus.textContent = "Starting updater...";
@@ -4040,7 +4203,9 @@
       del.setAttribute("aria-label", "Delete shared text");
       del.innerHTML = trashIcon();
       del.addEventListener("click", async () => {
-        if (!confirm("Delete this shared text?")) return;
+        if (!(await showConfirmDialog("Delete this shared text from Drop Air?", {
+          title: "Delete shared text?", confirmLabel: "Delete", intent: "danger"
+        }))) return;
         card.classList.add("removing");
         await new Promise(resolve => setTimeout(resolve, 160));
         deleteTextItem(item.id, false).catch(err => showToast(err.message));

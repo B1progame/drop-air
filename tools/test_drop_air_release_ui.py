@@ -953,8 +953,18 @@ class DropAirReleaseUiTests(unittest.TestCase):
         self.assertIn('id="nearbyModal"', source)
         self.assertIn('step="0.001"', source)
         self.assertIn('id="retryDiscoveryBtn"', source)
-        self.assertIn("confirm(`Connect to ${displayName}", source)
+        self.assertIn("showConfirmDialog(", source)
+        self.assertIn('id="confirmDialog"', source)
+        self.assertIn("confirmEls.dialog.showModal()", source)
         self.assertIn("Allow ${incoming.device_name}", source)
+        self.assertNotRegex(source, r"\bconfirm\s*\(")
+
+    def test_native_javascript_prompts_are_replaced_by_the_drop_air_dialog(self):
+        self.assertIn('class="confirm-dialog"', self.template_source)
+        self.assertIn('aria-labelledby="confirmDialogTitle"', self.template_source)
+        self.assertIn('aria-describedby="confirmDialogMessage"', self.template_source)
+        self.assertIn("event.preventDefault();\n      finishConfirmation(false);", self.template_source)
+        self.assertNotRegex(self.template_source, r"\b(?:alert|confirm|prompt)\s*\(")
 
     def test_runtime_upload_limit_is_enforced_before_saving(self):
         previous = app.get_settings()
