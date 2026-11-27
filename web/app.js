@@ -235,6 +235,15 @@ function renderBlocked() {
       onclick: () => api("/api/admin/unblock", { method: "POST", body: { ip: device.ip } }).then(refresh).catch(report) }))));
 }
 
+function renderTrusted() {
+  const trusted = state.trusted || [];
+  if (!changed("trusted", trusted)) return;
+  $("trustedList").replaceChildren(...trusted.map(pc => el("div", { className: "blocked" },
+    el("span", { textContent: `Always allowed: ${pc.name}` }),
+    el("button", { className: "btn small", type: "button", textContent: "Remove",
+      onclick: () => api("/api/admin/untrust", { method: "POST", body: { device_id: pc.device_id } }).then(refresh).catch(report) }))));
+}
+
 function setTargets(next) {
   targets = next.map(device => ({ kind: device.kind, id: device.id, name: device.name, icon: device.icon }));
   try {
@@ -266,53 +275,129 @@ function renderTargets(devices) {
     ...choices.map(device => chip(device.name, device.icon, isTarget(device.id), () => toggleTarget(device), !here.has(device.id))));
 }
 
-function renderFiles() {
-  if (!changed("files", [state.files, state.admin, Math.floor(Date.now() / 60000)])) return;
-  $("files").replaceChildren(...state.files.map(file => {
-    const url = `/files/${encodeURIComponent(file.name)}?${authQuery()}`;
-    let get;
-    if (state.admin) {
-      get = iconButton("download", `Save ${file.name} to Downloads`, () =>
-        api(`/api/admin/save/${encodeURIComponent(file.name)}`, { method: "POST" })
-          .then(result => toast(`Saved to Downloads as ${result.filename}`)).catch(report));
-    } else {
-      get = el("a", { className: "icon accent", href: url, download: file.name, title: `Download ${file.name}`,
-        onclick: () => toast(`Downloading ${file.name}. Check your browser's downloads.`) }, icon("download"));
-      get.setAttribute("aria-label", `Download ${file.name}`);
-    }
-    const route = routeLabel(file.to);
-    const row = el("li", { className: "item" }, el("span", { className: `type ${typeIcon(file.name)}` }, icon(typeIcon(file.name))),
-      el("div", { className: "meta" }, el("span", { className: "name", textContent: file.name, title: file.name }),
-        el("span", { className: "sub", textContent: `${human(file.size)} · ${ago(file.modified)}${route}` })),
-      el("div", { className: "actions" }, get,
-        iconButton("copy", "Copy download link", () => copy(new URL(url, state.public_url).href), "copy-link"),
-        iconButton("trash", `Delete ${file.name}`, event => remove(event.currentTarget, `/api/files/${encodeURIComponent(file.name)}`), "del")));
-    if (enter(seen.files, file.name)) row.classList.add("enter");
-    return row;
-  }));
+// Who an id belongs to, for "to iPhone and iPad" under things you sent.
+function recipients(to) {
+  if (!to) return "everyone";
+  const names = to.split(",").map(id => id === "host" ? state.device_name : state.clients.find(c => c.ids.includes(id))?.name || "a device");
+  return namesOf([...new Set(names)].map(name => ({ name })));
 }
 
-function renderTexts() {
-  if (!changed("texts", [state.texts, Math.floor(Date.now() / 60000)])) return;
-  $("texts").replaceChildren(...state.texts.map(item => {
-    const row = el("li", { className: "item text-item" },
-      el("div", { className: "meta" }, el("div", { className: "text-body", textContent: item.text }), el("span", { className: "sub", textContent: ago(item.created) + routeLabel(item.to) })),
-      el("div", { className: "actions" }, iconButton("copy", "Copy text", () => copy(item.text)),
-        iconButton("trash", "Delete text", event => remove(event.currentTarget, `/api/text/${encodeURIComponent(item.id)}`), "del")));
-    if (enter(seen.texts, item.id)) row.classList.add("enter");
-    return row;
-  }));
+const fileUrl = file => `/files/${encodeURIComponent(file.name)}?${authQuery()}`;
+
+// Pictures show themselves; everything else gets an icon for its type.
+function fileBadge(file) {
+  const type = typeIcon(file.name);
+  const badge = el("span", { className: `type ${type}` });
+  if (type === "image" && file.size < 8 * 1024 * 1024 && !/\.(heic|svg)$/i.test(file.name)) {
+    const picture = el("img", { src: fileUrl(file), alt: "", loading: "lazy", onerror: () => { badge.classList.remove("thumb"); badge.replaceChildren(icon(type)); } });
+    badge.classList.add("thumb");
+    badge.append(picture);
+  } else badge.append(icon(type));
+  return badge;
+}
+
+const trash = (label, path) => iconButton("trash", label, event => remove(event.currentTarget, path), "del");
+let arrivals = []; // things from other people that showed up in this refresh
+
+function markNew(row, set, id, item) {
+  if (!enter(set, id)) return row;
+  row.classList.add(item.mine ? "enter" : "fresh");
+  if (!item.mine) arrivals.push(item);
+  return row;
+}
+
+function fileRow(file) {
+  const url = fileUrl(file);
+  let get;
+  if (state.admin) {
+    get = iconButton("download", `Save ${file.name} to Downloads`, () =>
+      api(`/api/admin/save/${encodeURIComponent(file.name)}`, { method: "POST" })
+        .then(result => toast(`Saved to Downloads as ${result.filename}`)).catch(report));
+  } else {
+    get = el("a", { className: "icon accent", href: url, download: file.name, title: `Download ${file.name}`,
+      onclick: () => toast(`Downloading ${file.name}. Check your browser's downloads.`) }, icon("download"));
+    get.setAttribute("aria-label", `Download ${file.name}`);
+  }
+  const who = file.mine ? ` · to ${recipients(file.to)}` : `${file.from_name ? ` · from ${file.from_name}` : ""}${routeLabel(file.to)}`;
+  const row = el("li", { className: "item" }, fileBadge(file),
+    el("div", { className: "meta" }, el("span", { className: "name", textContent: file.name, title: file.name }),
+      el("span", { className: "sub", textContent: `${human(file.size)} · ${ago(file.modified)}${who}` })),
+    el("div", { className: "actions" }, file.mine ? null : get,
+      file.mine ? null : iconButton("copy", "Copy download link", () => copy(new URL(url, state.public_url).href), "copy-link"),
+      trash(`Delete ${file.name}`, `/api/files/${encodeURIComponent(file.name)}`)));
+  return markNew(row, seen.files, `${file.name}|${file.modified}`, file);
+}
+
+function textRow(item) {
+  const who = item.mine ? ` · to ${recipients(item.to)}` : `${item.from_name ? ` · from ${item.from_name}` : ""}${routeLabel(item.to)}`;
+  const row = el("li", { className: "item text-item" },
+    el("div", { className: "meta" }, el("div", { className: "text-body", textContent: item.text }), el("span", { className: "sub", textContent: ago(item.created) + who })),
+    el("div", { className: "actions" }, iconButton("copy", "Copy text", () => copy(item.text)), trash("Delete text", `/api/text/${encodeURIComponent(item.id)}`)));
+  return markNew(row, seen.texts, item.id, item);
+}
+
+function renderLists() {
+  const names = state.clients.map(c => [c.id, c.name]);
+  if (!changed("lists", [state.files, state.texts, state.admin, names, Math.floor(Date.now() / 60000)])) return;
+  arrivals = [];
+  $("texts").replaceChildren(...state.texts.filter(t => !t.mine).map(textRow));
+  $("files").replaceChildren(...state.files.filter(f => !f.mine).map(fileRow));
+  const sent = [...state.texts.filter(t => t.mine).map(t => [t.created, textRow, t]), ...state.files.filter(f => f.mine).map(f => [f.modified, fileRow, f])]
+    .sort((a, b) => b[0] - a[0]);
+  $("sent").replaceChildren(...sent.map(([, row, item]) => row(item)));
+  $("sentHead").hidden = !sent.length;
+  $("sentCount").textContent = sent.length;
+  if (arrivals.length) announce(arrivals);
+}
+
+// A card drops in from the top and paper planes fly in from the sender.
+function announce(items) {
+  const first = items[0];
+  const from = first.from_name || "another device";
+  const isText = first.text !== undefined;
+  const card = $("incoming");
+  const title = items.length > 1 ? `${items.length} new items from ${from}` : isText ? `Message from ${from}` : `File from ${from}`;
+  card.replaceChildren(el("span", { className: "type" }, icon(isText ? "send" : typeIcon(first.name))),
+    el("span", {}, el("strong", { textContent: title }), el("small", { textContent: isText ? first.text : first.name })));
+  card.className = "incoming";
+  card.hidden = false;
+  card.onclick = () => { card.hidden = true; $("tabReceive").click(); $("receiveTitle").scrollIntoView({ behavior: "smooth", block: "start" }); };
+  clearTimeout(announce.timer);
+  announce.timer = setTimeout(() => {
+    card.classList.add("leaving");
+    announce.timer = setTimeout(() => { card.hidden = true; }, 320);
+  }, 4500);
+  if (!motion() || document.hidden) return;
+  const me = $("nodes").querySelector(".me b");
+  if (!me) return;
+  const sender = [...$("nodes").querySelectorAll(".node:not(.me)")].find(node => node.querySelector("span").textContent === from);
+  const end = center(me);
+  const start = sender ? center(sender.querySelector("b")) : [end[0], -30];
+  const bend = [(start[0] + end[0]) / 2, Math.max(start[1], end[1]) + 70];
+  const angle = Math.atan2(end[1] - start[1], end[0] - start[0]) * 180 / Math.PI + 45;
+  for (let trail = 0; trail < 4; trail++) {
+    const size = 1 - trail * .2;
+    effect("plane", start, [
+      { at: start, transform: `rotate(${angle}deg) scale(.4)`, opacity: 0 },
+      { at: bend, transform: `rotate(${angle}deg) scale(${1.5 * size})`, opacity: 1 - trail * .27, offset: .5 },
+      { at: end, transform: `rotate(${angle}deg) scale(${.5 * size})`, opacity: 0 },
+    ], { duration: 850, delay: trail * 55, easing: "cubic-bezier(.45,.05,.35,1)" });
+  }
+  [800, 940, 1080].forEach(delay => ripple(end, delay, 3));
+  me.animate([{ transform: "scale(1)" }, { transform: "scale(1.35)" }, { transform: "scale(.9)" }, { transform: "scale(1)" }],
+    { duration: 520, delay: 800, easing: "ease-out" });
 }
 
 function renderRequests() {
   const requests = state.requests || [];
   if (!changed("requests", requests)) return;
   $("requests").replaceChildren(...requests.map(request => {
-    const decide = decision => api(`/api/admin/pair/${request.id}`, { method: "POST", body: { decision } }).then(refresh).catch(report);
+    const decide = (decision, always = false) => api(`/api/admin/pair/${request.id}`, { method: "POST", body: { decision, always } }).then(refresh).catch(report);
     return el("div", { className: "notice" },
       el("div", {}, el("strong", { textContent: `${request.device_name} wants to connect.` }), el("span", { textContent: ` ${request.address}` })),
       el("div", { className: "row" }, el("button", { className: "btn", textContent: "Decline", onclick: () => decide("decline") }),
-        el("button", { className: "btn primary", textContent: "Allow", onclick: () => decide("accept") })));
+        el("button", { className: "btn", textContent: "Allow once", onclick: () => decide("accept") }),
+        el("button", { className: "btn primary", textContent: "Always allow", onclick: () => decide("accept", true) })));
   }));
 }
 
@@ -322,7 +407,7 @@ function render() {
   $("status").className = others ? "on" : "ready";
   $("limit").textContent = `Up to ${state.limit_label}`;
   $("settingsBtn").hidden = $("folderBtn").hidden = !state.admin;
-  $("allBtn").hidden = state.files.length < 2;
+  $("allBtn").hidden = state.files.filter(f => !f.mine).length < 2;
   $("finalNotice").hidden = state.edition !== "python";
   $("switchRust").hidden = !state.admin;
   $("shareUrl").textContent = state.public_url;
@@ -331,11 +416,11 @@ function render() {
   const qr = `/qr.svg?url=${encodeURIComponent(state.public_url)}`;
   if ($("qrImage").getAttribute("src") !== qr) $("qrImage").src = qr;
   renderRadar();
-  renderFiles();
-  renderTexts();
+  renderLists();
   renderRequests();
   renderBlocked();
-  const count = state.files.length + state.texts.length;
+  renderTrusted();
+  const count = state.files.filter(f => !f.mine).length + state.texts.filter(t => !t.mine).length;
   $("emptyReceive").hidden = count > 0;
   $("tabCount").hidden = !count;
   $("tabCount").textContent = count;
@@ -410,18 +495,29 @@ window.dropAirResume = refresh;
 const queue = [];
 let active = 0;
 
+// The secret a PC gave us after "Always allow", so it does not have to ask again.
+function trustStore(deviceId, token) {
+  try {
+    const all = JSON.parse(localStorage.getItem("dropAirTrust")) || {};
+    if (token) { all[deviceId] = token; localStorage.setItem("dropAirTrust", JSON.stringify(all)); }
+    return all[deviceId] || "";
+  } catch (_) { return ""; }
+}
+
 async function pairWith(device) {
   if (peerLinks.has(device.id)) return peerLinks.get(device.id);
-  toast(`Asking ${device.name} to accept…`);
   const base = `/api/discovery/${device.id}/pair`;
-  const { request } = await api(base, { method: "POST", body: { device_id: state.device_id, device_name: state.device_name } });
+  const body = { device_id: state.device_id, device_name: state.device_name, trust_token: trustStore(device.id) };
+  const { request } = await api(base, { method: "POST", body });
+  if (request.decision === "pending") toast(`Asking ${device.name} to accept…`);
   for (let tries = 0; tries < 80; tries++) {
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    if (tries || request.decision === "pending") await new Promise(resolve => setTimeout(resolve, 1500));
     const result = await api(`${base}/${request.id}`);
     if (result.decision === "accepted") {
       const url = new URL(result.share_url);
       const link = { origin: url.origin, key: url.searchParams.get("k"), code: url.searchParams.get("code") || "" };
       peerLinks.set(device.id, link);
+      if (result.trust_token) trustStore(device.id, result.trust_token);
       return link;
     }
     if (result.decision === "declined") break;
@@ -601,7 +697,7 @@ async function sendText(text) {
   launch(wanted.flatMap(route => route.devices));
   for (const { ids, devices, peer } of wanted) {
     if (!peer) {
-      await api("/api/text", { method: "POST", body: ids ? { text, to: ids, from: clientId } : { text } });
+      await api("/api/text", { method: "POST", body: { text, to: ids, from: clientId } });
       continue;
     }
     const query = `k=${encodeURIComponent(peer.key)}${peer.code ? `&code=${encodeURIComponent(peer.code)}` : ""}`;

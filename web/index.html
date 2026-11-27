@@ -92,6 +92,8 @@
         <textarea id="textInput" rows="2" maxlength="20000" placeholder="Send text or a link…"></textarea>
         <button class="icon accent" title="Send text" aria-label="Send text"><svg><use href="#i-send"/></svg></button>
       </form>
+      <div class="sent-head" id="sentHead" hidden><h3>Sent by you</h3><span class="muted" id="sentCount"></span></div>
+      <ul class="list" id="sent"></ul>
     </section>
 
     <section class="lane receive" aria-labelledby="receiveTitle">
@@ -149,6 +151,7 @@
       <p class="muted" id="discoveryStatus"></p>
       <div class="row"><button class="btn" id="rediscover">Search again</button><button class="btn" id="firewall">Firewall</button></div>
       <div id="blockedList"></div>
+      <div id="trustedList"></div>
     </section>
     <section class="card">
       <div class="card-head"><svg><use href="#i-trash"/></svg><h3>Cleanup</h3></div>
@@ -193,6 +196,7 @@
   </form>
 </div>
 
+<button type="button" class="incoming" id="incoming" aria-live="polite" hidden></button>
 <div class="toast" id="toast" role="status" hidden></div>
 <script src="/assets/app.js"></script>
 </body>

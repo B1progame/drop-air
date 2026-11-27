@@ -150,6 +150,24 @@ pub struct TextItem {
     pub to: String,
     #[serde(default)]
     pub from: String,
+    /// the sender's device name when it was sent
+    #[serde(default)]
+    pub from_name: String,
+}
+
+/// Who sent a file and who may see it. An empty `to` means everyone.
+#[derive(Clone, Default)]
+pub struct Route {
+    pub to: String,
+    pub from: String,
+    pub from_name: String,
+}
+
+/// A PC that was allowed with "Always allow"; each approval has its own secret.
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct Trusted {
+    pub name: String,
+    pub tokens: Vec<String>,
 }
 
 // Older Python versions wrote numeric ids.
@@ -168,6 +186,7 @@ pub struct FileEntry {
     pub to: String,
     #[serde(skip)]
     pub from: String,
+    pub from_name: String,
 }
 
 struct SessionState {
@@ -196,6 +215,9 @@ pub struct PairRequest {
     pub created_at: u64,
     pub expires_at: u64,
     pub decision: &'static str,
+    /// handed to the requester once, after "Always allow"
+    #[serde(skip)]
+    pub trust_token: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -229,7 +251,9 @@ pub struct Store {
     session: Mutex<SessionState>,
     pub clients: Mutex<HashMap<String, Client>>,
     /// file name -> (recipient client id, sender client id) for private sends
-    pub routes: Mutex<HashMap<String, (String, String)>>,
+    pub routes: Mutex<HashMap<String, Route>>,
+    /// device id -> PC allowed without asking
+    pub trusted: Mutex<HashMap<String, Trusted>>,
     pub pairs: Mutex<Vec<PairRequest>>,
     pub pair_attempts: Mutex<HashMap<String, Vec<Instant>>>,
     pub peers: Mutex<HashMap<String, Peer>>,
@@ -289,6 +313,10 @@ impl Store {
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
         let session = SessionState { key: random_hex(16), expires_at: now() + session_ttl(), previous: HashMap::new() };
+        let trusted: HashMap<String, Trusted> = std::fs::read(data_dir.join("trusted.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
         let store = Store {
             data_dir,
             upload_dir,
@@ -300,6 +328,7 @@ impl Store {
             session: Mutex::new(session),
             clients: Default::default(),
             routes: Default::default(),
+            trusted: Mutex::new(trusted),
             pairs: Default::default(),
             pair_attempts: Default::default(),
             peers: Default::default(),
@@ -412,9 +441,9 @@ impl Store {
                 }
                 let meta = entry.metadata().ok().filter(|m| m.is_file())?;
                 let modified = meta.modified().ok()?;
-                let (to, from) = routes.get(&name).cloned().unwrap_or_default();
+                let Route { to, from, from_name } = routes.get(&name).cloned().unwrap_or_default();
                 let seconds = modified.duration_since(UNIX_EPOCH).ok()?.as_secs();
-                Some((modified, FileEntry { name, size: meta.len(), modified: seconds, to, from }))
+                Some((modified, FileEntry { name, size: meta.len(), modified: seconds, to, from, from_name }))
             })
             .collect();
         files.sort_by(|a, b| b.0.cmp(&a.0));
@@ -451,13 +480,12 @@ impl Store {
         }
     }
 
-    pub fn add_text(&self, text: &str, to: String, from: String) -> Option<TextItem> {
+    pub fn add_text(&self, text: &str, to: String, from: String, from_name: String) -> Option<TextItem> {
         let text: String = text.chars().take(MAX_TEXT_CHARS).collect();
         if text.trim().is_empty() {
             return None;
         }
-        let from = if to.is_empty() { String::new() } else { from };
-        let item = TextItem { id: random_hex(8), text, created: now(), to, from };
+        let item = TextItem { id: random_hex(8), text, created: now(), to, from, from_name };
         let mut texts = lock(&self.texts);
         texts.insert(0, item.clone());
         texts.truncate(MAX_TEXT_ITEMS);
@@ -538,7 +566,7 @@ impl Store {
         entries.into_iter().map(|(_, entry)| entry).collect()
     }
 
-    pub fn create_pair(&self, address: IpAddr, device_id: &str, name: &str) -> Result<PairRequest, (u16, &'static str)> {
+    pub fn create_pair(&self, address: IpAddr, device_id: &str, name: &str, token: &str) -> Result<PairRequest, (u16, &'static str)> {
         let valid_id = (16..=32).contains(&device_id.len()) && device_id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
         if !valid_id {
             return Err((400, "invalid device"));
@@ -566,6 +594,7 @@ impl Store {
             return Err((429, "a request from this device is already waiting for approval"));
         }
         mine.push(Instant::now());
+        let known = !token.is_empty() && lock(&self.trusted).get(device_id).is_some_and(|t| t.tokens.iter().any(|k| k == token));
         let request = PairRequest {
             id: random_hex(24),
             device_id: device_id.into(),
@@ -573,10 +602,45 @@ impl Store {
             address,
             created_at: time,
             expires_at: time + PAIR_TTL,
-            decision: "pending",
+            decision: if known { "accepted" } else { "pending" },
+            trust_token: String::new(),
         };
         pairs.push(request.clone());
         Ok(request)
+    }
+
+    /// What the sender is called, for "message from ..." on the receiving side.
+    pub fn sender_name(&self, client_id: &str, host: bool) -> String {
+        if host {
+            return self.settings().device_name;
+        }
+        lock(&self.clients).get(client_id).map(|c| c.name.clone()).unwrap_or_default()
+    }
+
+    fn save_trusted(&self, trusted: &HashMap<String, Trusted>) {
+        if let Ok(data) = serde_json::to_vec(trusted) {
+            let _ = write_atomic(&self.data_dir.join("trusted.json"), &data);
+        }
+    }
+
+    /// Remember a PC and return the secret it can use next time.
+    pub fn trust(&self, device_id: &str, name: &str) -> String {
+        let token = random_hex(24);
+        let mut trusted = lock(&self.trusted);
+        let entry = trusted.entry(device_id.to_string()).or_default();
+        entry.name = name.to_string();
+        entry.tokens.push(token.clone());
+        if entry.tokens.len() > 8 {
+            entry.tokens.remove(0);
+        }
+        self.save_trusted(&trusted);
+        token
+    }
+
+    pub fn untrust(&self, device_id: &str) {
+        let mut trusted = lock(&self.trusted);
+        trusted.remove(device_id);
+        self.save_trusted(&trusted);
     }
 
     pub fn pending_pairs(&self) -> Vec<PairRequest> {

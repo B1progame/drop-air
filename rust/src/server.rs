@@ -125,6 +125,7 @@ pub fn router(app: App) -> Router {
         .route("/api/admin/save/{name}", post(save_to_downloads))
         .route("/api/admin/kick/{id}", post(kick))
         .route("/api/admin/unblock", post(unblock))
+        .route("/api/admin/untrust", post(untrust))
         .route("/api/admin/reveal", post(reveal))
         .route("/api/admin/cleanup", post(cleanup))
         .route("/api/admin/rediscover", post(rediscover))
@@ -211,7 +212,27 @@ async fn api_state(State(app): State<App>, ConnectInfo(address): Peer, headers: 
     let settings = store.settings();
     let (key, remaining) = store.session();
     let mine = store.same_device(&client_id);
-    let files: Vec<_> = store.files().into_iter().filter(|f| admin || f.to.is_empty() || addressed_to(&f.to, &mine) || mine.contains(&f.from)).collect();
+    // "mine" lets every page tell what it sent from what it received.
+    let own = |from: &str| !from.is_empty() && mine.contains(from);
+    let files: Vec<Value> = store
+        .files()
+        .into_iter()
+        .filter(|f| admin || f.to.is_empty() || addressed_to(&f.to, &mine) || own(&f.from))
+        .map(|f| {
+            let mut entry = json!(f);
+            entry["mine"] = json!(own(&f.from));
+            entry
+        })
+        .collect();
+    let texts: Vec<Value> = lock(&store.texts)
+        .iter()
+        .filter(|t| admin || t.to.is_empty() || addressed_to(&t.to, &mine) || own(&t.from))
+        .map(|t| {
+            let mut entry = json!(t);
+            entry["mine"] = json!(own(&t.from));
+            entry
+        })
+        .collect();
     let peers: Vec<_> = {
         let mut peers: Vec<_> = lock(&store.peers).values().cloned().collect();
         peers.sort_by_key(|p| p.device_name.to_lowercase());
@@ -231,7 +252,7 @@ async fn api_state(State(app): State<App>, ConnectInfo(address): Peer, headers: 
         "cleanup_minutes": settings.auto_cleanup_minutes,
         "text_ttl_minutes": text_ttl_minutes(),
         "files": files,
-        "texts": lock(&store.texts).iter().filter(|t| admin || t.to.is_empty() || addressed_to(&t.to, &mine) || mine.contains(&t.from)).cloned().collect::<Vec<_>>(),
+        "texts": texts,
         "clients": store.clients_json(admin),
         "peers": peers,
         "discovery_status": *lock(&store.discovery_status),
@@ -239,6 +260,7 @@ async fn api_state(State(app): State<App>, ConnectInfo(address): Peer, headers: 
     if admin {
         body["settings"] = json!(settings);
         body["requests"] = json!(store.pending_pairs());
+        body["trusted"] = json!(lock(&store.trusted).iter().map(|(id, t)| json!({ "device_id": id, "name": t.name })).collect::<Vec<_>>());
         body["blocked"] = json!(lock(&store.blocked).iter().map(|(ip, name)| json!({ "ip": ip.to_string(), "name": name })).collect::<Vec<_>>());
     }
     Ok(Json(body))
@@ -305,11 +327,9 @@ async fn upload(
     drop(staging);
     let field = |key: &str| query.get(key).map(|v| v.chars().filter(char::is_ascii_alphanumeric).take(64).collect::<String>()).unwrap_or_default();
     let to = clean_ids(query.get("to").map(String::as_str).unwrap_or(""));
-    if to.is_empty() {
-        lock(&store.routes).remove(&stored);
-    } else {
-        lock(&store.routes).insert(stored.clone(), (to, field("from")));
-    }
+    let from = field("from");
+    let from_name = store.sender_name(&from, is_admin(address, &headers));
+    lock(&store.routes).insert(stored.clone(), Route { to, from, from_name });
     store.cleanup();
     Ok(Json(json!({ "ok": true, "filename": stored, "size": size })))
 }
@@ -379,7 +399,12 @@ async fn add_text(State(app): State<App>, ConnectInfo(address): Peer, headers: H
     authorize(&app.store, address, &headers, &query)?;
     let payload = parse_json(&body)?;
     let id = |key: &str| payload[key].as_str().unwrap_or("").chars().filter(char::is_ascii_alphanumeric).take(64).collect::<String>();
-    let item = app.store.add_text(payload["text"].as_str().unwrap_or(""), clean_ids(payload["to"].as_str().unwrap_or("")), id("from")).ok_or_else(|| fail(400, "Paste text before sharing."))?;
+    let from = id("from");
+    let from_name = app.store.sender_name(&from, is_admin(address, &headers));
+    let item = app
+        .store
+        .add_text(payload["text"].as_str().unwrap_or(""), clean_ids(payload["to"].as_str().unwrap_or("")), from, from_name)
+        .ok_or_else(|| fail(400, "Paste text before sharing."))?;
     Ok(Json(json!({ "ok": true, "item": item })))
 }
 
@@ -438,28 +463,35 @@ async fn pair_create(State(app): State<App>, ConnectInfo(address): Peer, body: B
     let device_id = payload["device_id"].as_str().unwrap_or("").to_lowercase();
     let request = app
         .store
-        .create_pair(address.ip(), &device_id, payload["device_name"].as_str().unwrap_or(""))
+        .create_pair(address.ip(), &device_id, payload["device_name"].as_str().unwrap_or(""), payload["trust_token"].as_str().unwrap_or(""))
         .map_err(|(status, message)| fail(status, message))?;
-    app.ui.attention();
+    // A trusted PC does not need to bring the window up.
+    if request.decision == "pending" {
+        app.ui.attention();
+    }
     Ok((StatusCode::ACCEPTED, Json(json!({ "request": request }))).into_response())
 }
 
 async fn pair_status(State(app): State<App>, ConnectInfo(address): Peer, UrlPath(id): UrlPath<String>) -> Result<Json<Value>, ApiError> {
-    let decision = lock(&app.store.pairs)
+    let (decision, token) = lock(&app.store.pairs)
         .iter()
         .find(|p| p.id == id && p.address == address.ip().to_string() && p.expires_at > now())
-        .map(|p| p.decision)
+        .map(|p| (p.decision, p.trust_token.clone()))
         .ok_or_else(|| fail(404, "request expired or not found"))?;
     let mut body = json!({ "decision": decision });
     if decision == "accepted" {
         body["share_url"] = json!(app.store.public_url());
+        if !token.is_empty() {
+            body["trust_token"] = json!(token);
+        }
     }
     Ok(Json(body))
 }
 
 async fn pair_decide(State(app): State<App>, ConnectInfo(address): Peer, headers: HeaderMap, UrlPath(id): UrlPath<String>, body: Bytes) -> Result<Json<Value>, ApiError> {
     require_admin(address, &headers)?;
-    let decision = match parse_json(&body)?["decision"].as_str() {
+    let payload = parse_json(&body)?;
+    let decision = match payload["decision"].as_str() {
         Some("accept") => "accepted",
         Some("decline") => "declined",
         _ => return Err(fail(400, "decision must be accept or decline")),
@@ -470,6 +502,15 @@ async fn pair_decide(State(app): State<App>, ConnectInfo(address): Peer, headers
         .find(|p| p.id == id && p.decision == "pending" && p.expires_at > now())
         .ok_or_else(|| fail(404, "This request expired or was already handled."))?;
     request.decision = decision;
+    if decision == "accepted" && payload["always"] == true {
+        request.trust_token = app.store.trust(&request.device_id, &request.device_name);
+    }
+    Ok(ok())
+}
+
+async fn untrust(State(app): State<App>, ConnectInfo(address): Peer, headers: HeaderMap, body: Bytes) -> Result<Json<Value>, ApiError> {
+    require_admin(address, &headers)?;
+    app.store.untrust(parse_json(&body)?["device_id"].as_str().unwrap_or(""));
     Ok(ok())
 }
 

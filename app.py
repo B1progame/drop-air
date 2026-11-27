@@ -45,7 +45,7 @@ def read_version() -> str:
             return candidate.read_text(encoding="utf-8").strip().lstrip("v")
         except OSError:
             continue
-    return "1.7.4"
+    return "1.7.5"
 
 
 APP_VERSION = read_version()
@@ -133,14 +133,17 @@ SETTINGS = {**DEFAULT_SETTINGS, **{k: v for k, v in read_json(DATA_DIR / "settin
 SETTINGS["device_name"] = clean_device_name(SETTINGS["device_name"])
 TEXTS = [
     {"id": str(item["id"]), "text": str(item.get("text", "")), "created": int(item.get("created", 0)),
-     "to": str(item.get("to", "")), "from": str(item.get("from", ""))}
+     "to": str(item.get("to", "")), "from": str(item.get("from", "")), "from_name": str(item.get("from_name", ""))}
     for item in read_json(DATA_DIR / "text_items.json", [])
     if isinstance(item, dict) and "id" in item
 ]
 SESSION = {"key": secrets.token_hex(16), "expires_at": time.time() + SESSION_TTL, "previous": {}}
 CLIENTS: dict[str, dict] = {}
 BLOCKED: dict[str, str] = {}  # devices the host removed, until Drop Air quits: address -> name
-ROUTES: dict[str, tuple[str, str]] = {}  # file name -> (recipient, sender) for private sends
+ROUTES: dict[str, tuple[str, str, str]] = {}  # file name -> (recipients, sender, sender name)
+# PCs allowed with "Always allow": device id -> {"name", "tokens"}
+TRUSTED: dict[str, dict] = read_json(DATA_DIR / "trusted.json", {})
+PAIR_TOKENS: dict[str, str] = {}  # request id -> new secret to hand to the requester
 PUBLISHING: set[str] = set()
 ASLEEP = threading.Event()  # sharing is off while the app has been in the tray too long
 UPDATE = {"running": False, "percent": 0, "message": "", "error": ""}
@@ -225,7 +228,18 @@ def clean_ids(value: str) -> str:
 
 
 def addressed_to(item: dict, ids: set[str]) -> bool:
-    return not item["to"] or item["from"] in ids or not ids.isdisjoint(item["to"].split(","))
+    return not item["to"] or is_own(item, ids) or not ids.isdisjoint(item["to"].split(","))
+
+
+def is_own(item: dict, ids: set[str]) -> bool:
+    return bool(item["from"]) and item["from"] in ids
+
+
+def sender_name(client_id: str) -> str:
+    """What the sender is called, for "message from ..." on the receiving side."""
+    if is_admin():
+        return SETTINGS["device_name"]
+    return CLIENTS.get(client_id, {}).get("name", "")
 
 
 def list_files() -> list[dict]:
@@ -239,9 +253,10 @@ def list_files() -> list[dict]:
             except OSError:
                 continue
             if stat.S_ISREG(info.st_mode):
-                to, sender = ROUTES.get(entry.name, ("", ""))
+                to, sender, sender_name = ROUTES.get(entry.name, ("", "", ""))
                 files.append(
-                    {"name": entry.name, "size": info.st_size, "modified": int(info.st_mtime), "to": to, "from": sender}
+                    {"name": entry.name, "size": info.st_size, "modified": int(info.st_mtime), "to": to, "from": sender,
+                     "from_name": sender_name}
                 )
     files.sort(key=lambda item: item["modified"], reverse=True)
     return files
@@ -493,8 +508,9 @@ def api_state():
         "limit_label": f"{gb:g} GB" if gb >= 1 else f"{gb * 1024:.0f} MB",
         "cleanup_minutes": SETTINGS["auto_cleanup_minutes"],
         "text_ttl_minutes": TEXT_TTL_MINUTES,
-        "files": [f for f in list_files() if admin or addressed_to(f, mine)],
-        "texts": [t for t in list(TEXTS) if admin or addressed_to(t, mine)],
+        # "mine" lets every page tell what it sent from what it received.
+        "files": [{**f, "mine": is_own(f, mine)} for f in list_files() if admin or addressed_to(f, mine)],
+        "texts": [{**t, "mine": is_own(t, mine)} for t in list(TEXTS) if admin or addressed_to(t, mine)],
         "clients": clients_list(admin),
         "peers": discovery["peers"],
         "discovery_status": discovery["status"],
@@ -502,6 +518,7 @@ def api_state():
     if admin:
         body["settings"] = SETTINGS
         body["requests"] = PAIRS.pending()
+        body["trusted"] = [{"device_id": key, "name": value["name"]} for key, value in list(TRUSTED.items())]
         body["blocked"] = [{"ip": ip, "name": name} for ip, name in list(BLOCKED.items())]
     return jsonify(body)
 
@@ -552,11 +569,7 @@ def upload():
     def clean(field: str) -> str:
         return re.sub(r"[^A-Za-z0-9]", "", request.args.get(field, ""))[:64]
 
-    to = clean_ids(request.args.get("to", ""))
-    if to:
-        ROUTES[candidate] = (to, clean("from"))
-    else:
-        ROUTES.pop(candidate, None)
+    ROUTES[candidate] = (clean_ids(request.args.get("to", "")), clean("from"), sender_name(clean("from")))
     cleanup()
     return jsonify({"ok": True, "filename": candidate, "size": size})
 
@@ -615,7 +628,8 @@ def add_text():
         raise ApiError(400, "Paste text before sharing.")
     to = clean_ids(str(data.get("to", "")))
     sender = re.sub(r"[^A-Za-z0-9]", "", str(data.get("from", "")))[:64]
-    item = {"id": secrets.token_hex(8), "text": text, "created": int(time.time()), "to": to, "from": sender if to else ""}
+    item = {"id": secrets.token_hex(8), "text": text, "created": int(time.time()), "to": to, "from": sender,
+            "from_name": sender_name(sender)}
     with LOCK:
         TEXTS.insert(0, item)
         del TEXTS[MAX_TEXT_ITEMS:]
@@ -674,10 +688,16 @@ def pair_create():
         raise ApiError(503, "sharing is off")
     if not SETTINGS["discoverable"]:
         raise ApiError(404, "this Drop Air device is not discoverable")
-    item, error = PAIRS.create(request.remote_addr or "", payload())
+    data = payload()
+    item, error = PAIRS.create(request.remote_addr or "", data)
     if error:
         raise ApiError(400 if error.startswith("invalid") else 429, error)
-    on_show()
+    token = data.get("trust_token")
+    if token and token in TRUSTED.get(item["device_id"], {}).get("tokens", []):
+        PAIRS.decide(item["id"], True, public_url())  # trusted: no need to ask or show the window
+        item["decision"] = "accepted"
+    else:
+        on_show()
     return jsonify({"request": item}), 202
 
 
@@ -688,18 +708,36 @@ def pair_status(request_id: str):
         raise ApiError(404, "request expired or not found")
     if result["decision"] == "accepted":
         result["share_url"] = public_url()
+        if request_id in PAIR_TOKENS:
+            result["trust_token"] = PAIR_TOKENS[request_id]
     return jsonify(result)
 
 
 @app.post("/api/admin/pair/<request_id>")
 def pair_decide(request_id: str):
     require_admin()
-    decision = payload().get("decision")
+    data = payload()
+    decision = data.get("decision")
     if decision not in ("accept", "decline"):
         raise ApiError(400, "decision must be accept or decline")
     accepted = decision == "accept"
+    asking = next((item for item in PAIRS.pending() if item["id"] == request_id), None)
     if not PAIRS.decide(request_id, accepted, public_url() if accepted else ""):
         raise ApiError(404, "This request expired or was already handled.")
+    if accepted and data.get("always") is True and asking:
+        entry = TRUSTED.setdefault(asking["device_id"], {"name": "", "tokens": []})
+        entry["name"] = asking["device_name"]
+        entry["tokens"] = (entry["tokens"] + [secrets.token_hex(24)])[-8:]
+        PAIR_TOKENS[request_id] = entry["tokens"][-1]
+        write_atomic(DATA_DIR / "trusted.json", json.dumps(TRUSTED))
+    return jsonify({"ok": True})
+
+
+@app.post("/api/admin/untrust")
+def untrust():
+    require_admin()
+    TRUSTED.pop(str(payload().get("device_id", "")), None)
+    write_atomic(DATA_DIR / "trusted.json", json.dumps(TRUSTED))
     return jsonify({"ok": True})
 
 

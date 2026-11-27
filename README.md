@@ -2,7 +2,7 @@
 
 Fast local file and text sharing between a Windows PC and any phone, tablet or computer on the same Wi-Fi. No cloud, no account.
 
-> **The Python edition is no longer updated.** 1.7.4 is its final release.
+> **The Python edition is no longer updated.** 1.7.5 is its final release.
 > New features and fixes only go into the **Rust edition (2.x)**.
 > To switch: open Drop Air → **Switch to Rust**, or run the latest `DropAir-Setup-2.x.exe` from [Releases](https://github.com/B1progame/drop-air/releases). Your settings stay.
 
@@ -11,7 +11,7 @@ Fast local file and text sharing between a Windows PC and any phone, tablet or c
 | Edition | Installer | Installed size | Updates |
 |---|---|---|---|
 | **Rust 2.x** (recommended) | `DropAir-Setup-2.x.exe` | about 9 MB | yes |
-| Python 1.7.4 (final) | `DropAir-Setup-1.7.4.exe` | about 36 MB | none |
+| Python 1.7.5 (final) | `DropAir-Setup-1.7.5.exe` | about 36 MB | none |
 
 Both need Windows 10 or 11 (64-bit) with Microsoft Edge WebView2, which Windows 11 includes. Older releases were about 450 MB.
 
@@ -23,7 +23,8 @@ Both need Windows 10 or 11 (64-bit) with Microsoft Edge WebView2, which Windows 
 - The host can see each device's system, browser and address, and remove it
 - On phones, **Paste** opens a box where you long-press and choose Paste
 - Scan the QR code to connect a phone; no app needed on the phone
-- Find other Drop Air PCs on your Wi-Fi and send to them after they approve
+- Find other Drop Air PCs on your Wi-Fi and send to them after they approve, once or with **Always allow**
+- A card and animation announce what arrives; **Sent by you** lists what you sent, with picture previews
 - Live speed and time left, resumable downloads, up to 4 uploads at once
 - Dark and light theme, optional access code, automatic deletion of old files
 - Closing the window keeps sharing from the tray and frees the window's memory. After 10 minutes in the tray (changeable in Settings) sharing turns off and old links stop working; opening Drop Air turns it on again at once

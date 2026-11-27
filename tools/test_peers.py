@@ -50,12 +50,28 @@ def run(sender, sender_port, receiver, receiver_port):
     peer = wait_for(lambda: next((p for p in call(a + "/api/state")["peers"] if p["device_name"] == name), None))
     print(f"ok   {sender} discovered {receiver}")
     base = f"{a}/api/discovery/{peer['device_id']}/pair"
-    request = call(base, {"device_id": me["device_id"], "device_name": f"{sender} sender"})["request"]
+    ask = {"device_id": me["device_id"], "device_name": f"{sender} sender"}
+    request = call(base, ask)["request"]
     pending = wait_for(lambda: call(b + "/api/state")["requests"])
-    call(f"{b}/api/admin/pair/{pending[0]['id']}", {"decision": "accept"})
+    call(f"{b}/api/admin/pair/{pending[0]['id']}", {"decision": "accept", "always": True})
     result = call(f"{base}/{request['id']}")
-    assert result["decision"] == "accepted", result
-    print(f"ok   {receiver} approved the request")
+    assert result["decision"] == "accepted" and result.get("trust_token"), result
+    print(f"ok   {receiver} approved the request with Always allow")
+
+    again = call(base, {**ask, "trust_token": result["trust_token"]})["request"]
+    assert call(f"{base}/{again['id']}")["decision"] == "accepted" and not call(b + "/api/state")["requests"]
+    print(f"ok   {receiver} let it in again without asking")
+    wrong = call(base, {**ask, "trust_token": "0" * 48})["request"]
+    assert call(f"{base}/{wrong['id']}")["decision"] == "pending", "a made-up token must not work"
+    call(f"{b}/api/admin/pair/{wrong['id']}", {"decision": "decline"})
+    print(f"ok   {receiver} still asks when the secret is wrong")
+    trusted = call(b + "/api/state")["trusted"]
+    assert [t["device_id"] for t in trusted] == [me["device_id"]], trusted
+    call(b + "/api/admin/untrust", {"device_id": me["device_id"]})
+    later = call(base, {**ask, "trust_token": result["trust_token"]})["request"]
+    assert call(f"{base}/{later['id']}")["decision"] == "pending"
+    print(f"ok   {receiver} asks again after removing the trust")
+    result = call(f"{base}/{request['id']}")
     share = urllib.parse.urlsplit(result["share_url"])
     key = urllib.parse.parse_qs(share.query)["k"][0]
     sent = call(f"{share.scheme}://{share.netloc}/api/upload?name=peer.txt&k={key}", raw=b"over the network")

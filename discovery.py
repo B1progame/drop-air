@@ -141,7 +141,8 @@ class PairingRequests:
                 return None, "too many recent connection requests"
             if len(self._requests) >= PAIR_MAX_PENDING:
                 return None, "the host has too many pending requests"
-            if any(item["address"] == address and item["device_id"] == device_id for item in self._requests.values()):
+            if any(item["address"] == address and item["device_id"] == device_id and item["decision"] == "pending"
+                   for item in self._requests.values()):
                 return None, "a request from this device is already waiting for approval"
             attempts.append(now)
             request_id = secrets.token_hex(24)

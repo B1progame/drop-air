@@ -143,6 +143,21 @@ try:
         check(f"{who} {'gets' if expected else 'does not get'} the two-device send",
               ("for two" in texts) == expected and ("for-two.txt" in files) == expected, (texts, files))
 
+    # Everyone can tell their own uploads from other people's, and who sent what.
+    state_of("iphone1"), state_of("ipad1")
+    call("POST", f"/api/upload?name=from-phone.txt&from=iphone1&k={key}", b"x", host=LAN)
+    call("POST", f"/api/text?k={key}", {"text": "hello all", "from": "iphone1"}, host=LAN)
+    call("POST", "/api/upload?name=from-host.txt&from=hostpage", b"x")
+    pick = lambda body, kind, field, value: next((i for i in body[kind] if i[field] == value), {})
+    for who, mine in [("iphone1", True), ("ipad1", False)]:
+        body = state_of(who)
+        file, text = pick(body, "files", "name", "from-phone.txt"), pick(body, "texts", "text", "hello all")
+        check(f"{who}: upload marked mine={mine} with sender", file.get("mine") is mine and file.get("from_name") == "iphone1", file)
+        check(f"{who}: text marked mine={mine} with sender", text.get("mine") is mine and text.get("from_name") == "iphone1", text)
+    host_view = json.loads(call("GET", "/api/state?client_id=hostpage")[2])
+    check("host sees its own upload as sent", pick(host_view, "files", "name", "from-host.txt").get("mine") is True, host_view["files"][:2])
+    check("host upload carries the PC name", pick(host_view, "files", "name", "from-host.txt").get("from_name") == host_view["device_name"])
+
     # A sender that disconnects halfway must leave nothing behind.
     connection = http.client.HTTPConnection("127.0.0.1", PORT, timeout=10)
     connection.putrequest("POST", "/api/upload?name=half.bin")
